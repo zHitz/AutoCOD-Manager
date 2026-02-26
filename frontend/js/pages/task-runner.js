@@ -56,8 +56,10 @@ const TaskRunnerPage = {
                 </div>
                 <div class="card" style="padding:0;overflow:hidden">
                     <div class="live-feed" id="live-feed">
-                        <div class="text-muted text-sm" style="padding:24px;text-align:center">
-                            Select emulators → run actions to see progress here
+                        <div class="feed-item">
+                            <span class="feed-dot active"></span>
+                            <span class="text-xs text-muted" style="min-width:60px">${new Date().toLocaleTimeString()}</span>
+                            <span>Select emulators → run actions to see progress here</span>
                         </div>
                     </div>
                 </div>
@@ -105,7 +107,9 @@ const TaskRunnerPage = {
                         </button>
                     </div>
                 </div>
-                <div id="emu-checklist" class="emu-checklist"></div>
+                <div class="tab-panel-body" style="padding: 0;">
+                    <div id="emu-checklist" class="emu-checklist"></div>
+                </div>
                 <div class="tab-panel-footer">
                     <span class="text-xs text-muted" id="emu-selected-count">${this._selectedEmus.size} selected</span>
                 </div>
@@ -349,7 +353,10 @@ const TaskRunnerPage = {
                         btn.disabled = false;
                         btn.innerHTML = '<svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Script';
                     }
-                    this.addFeed('done', `✓ Macro "${name}" completed (≈${durationText})`);
+                    // Ghi lại log hoàn thành cho TỪNG emulator
+                    for (const idx of indices) {
+                        this.addFeed('done', `✓ Macro "${name}" completed on Emulator #${idx} (≈${durationText})`);
+                    }
                 }, totalDuration);
             } else {
                 // No duration info — reset after 3s
@@ -450,8 +457,12 @@ const TaskRunnerPage = {
     addFeed(dotClass, text) {
         const feed = document.getElementById('live-feed');
         if (!feed) return;
-        const placeholder = feed.querySelector('.text-muted');
-        if (placeholder) placeholder.remove();
+
+        // Remove the initial placeholder if it exists (by checking if the first child is our hardcoded placeholder msg)
+        const firstChildSpan = feed.querySelector('.feed-item:last-child span:last-child');
+        if (firstChildSpan && firstChildSpan.textContent.includes('Select emulators → run actions')) {
+            feed.removeChild(feed.lastChild);
+        }
 
         const item = document.createElement('div');
         item.className = 'feed-item feed-item-enter';

@@ -9,6 +9,7 @@ const router = {
         runner: TaskRunnerPage,
         history: HistoryPage,
         emulators: EmulatorsPage,
+        accounts: AccountsPage,
         settings: SettingsPage,
     },
 
@@ -17,6 +18,7 @@ const router = {
         runner: 'Actions',
         history: 'History',
         emulators: 'Emulators',
+        accounts: 'Accounts',
         settings: 'Settings',
     },
 
