@@ -1,0 +1,60 @@
+{
+    "version": "v1",
+    "resolution": "960x540",
+    "game": "COD_Mobile",
+    "regions": {
+        "profile_name":   [100, 320, 275, 370],
+        "profile_power":  [100, 405, 250, 435],
+        "res_gold_item":  [360, 130, 540, 180],
+        "res_wood_item":  [360, 210, 540, 260],
+        "res_ore_item":   [360, 290, 540, 340],
+        "res_mana_item":  [360, 370, 540, 420],
+        "res_gold_total": [580, 130, 740, 180],
+        "res_wood_total": [580, 210, 740, 260],
+        "res_ore_total":  [580, 290, 740, 340],
+        "res_mana_total": [580, 370, 740, 420],
+        "pet_token":      [875, 0, 960, 50],
+        "building_level": [550, 250, 600, 275]
+    },
+    "navigation": {
+        "profile": {
+            "steps": [
+                {"action": "tap", "x": 18, "y": 10, "wait": 5.0},
+                {"action": "tap", "x": 550, "y": 200, "wait": 0.5},
+                {"action": "tap", "x": 550, "y": 200, "wait": 3.0}
+            ],
+            "exit_backs": 2
+        },
+        "resources": {
+            "steps": [
+                {"action": "tap", "x": 925, "y": 500, "wait": 5.0},
+                {"action": "tap", "x": 780, "y": 500, "wait": 5.0},
+                {"action": "tap", "x": 75, "y": 180, "wait": 5.0},
+                {"action": "tap", "x": 620, "y": 100, "wait": 5.0}
+            ],
+            "exit_backs": 2
+        },
+        "hall": {
+            "steps": [
+                {"action": "tap", "x": 456, "y": 111, "wait": 5.0},
+                {"action": "tap", "x": 380, "y": 116, "wait": 5.0}
+            ],
+            "exit_backs": 1
+        },
+        "market": {
+            "steps": [
+                {"action": "tap", "x": 639, "y": 232, "wait": 5.0},
+                {"action": "tap", "x": 545, "y": 267, "wait": 5.0}
+            ],
+            "exit_backs": 1
+        },
+        "pet": {
+            "steps": [
+                {"action": "tap", "x": 750, "y": 80, "wait": 5.0},
+                {"action": "swipe", "x1": 100, "y1": 450, "x2": 100, "y2": 100, "duration": 500, "repeat": 3, "wait": 1.0},
+                {"action": "tap", "x": 100, "y": 375, "wait": 5.0}
+            ],
+            "exit_backs": 1
+        }
+    }
+}

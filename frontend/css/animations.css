@@ -1,0 +1,215 @@
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATIONS — Subtle, Clean (SAMPLE-inspired)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Page Transition ── */
+.page-enter {
+    animation: fadeSlideUp 200ms ease-out forwards;
+}
+
+@keyframes fadeSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Slide in from top (notification dropdown) ── */
+@keyframes slideInFromTop {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Slide in from bottom (user popup) ── */
+@keyframes slideInFromBottom {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Toast Animations ── */
+.toast-enter {
+    animation: toastIn 250ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.toast-exit {
+    animation: toastOut 150ms ease-out forwards;
+}
+
+@keyframes toastIn {
+    from {
+        opacity: 0;
+        transform: translateX(100%) scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes toastOut {
+    from {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateX(100%) scale(0.95);
+    }
+}
+
+/* ── Progress Shimmer ── */
+.progress-bar-fill {
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, hsla(0, 0%, 100%, 0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        left: -100%;
+    }
+
+    100% {
+        left: 200%;
+    }
+}
+
+/* ── Busy Badge Pulse ── */
+.badge-busy {
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 hsla(38, 92%, 50%, 0.3);
+    }
+
+    50% {
+        box-shadow: 0 0 8px 2px hsla(38, 92%, 50%, 0.15);
+    }
+}
+
+/* ── Card Stagger ── */
+.device-card {
+    animation: cardFadeIn 200ms ease-out backwards;
+}
+
+.device-card:nth-child(1) {
+    animation-delay: 0ms;
+}
+
+.device-card:nth-child(2) {
+    animation-delay: 40ms;
+}
+
+.device-card:nth-child(3) {
+    animation-delay: 80ms;
+}
+
+.device-card:nth-child(4) {
+    animation-delay: 120ms;
+}
+
+.device-card:nth-child(5) {
+    animation-delay: 160ms;
+}
+
+.device-card:nth-child(6) {
+    animation-delay: 200ms;
+}
+
+@keyframes cardFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Feed Item Appear ── */
+.feed-item-enter {
+    animation: feedIn 200ms ease-out forwards;
+}
+
+@keyframes feedIn {
+    from {
+        opacity: 0;
+        transform: translateX(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* ── Status Dot Pulse (online) ── */
+.status-dot.online {
+    animation: dotPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes dotPulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 3px 0 var(--emerald-500);
+    }
+
+    50% {
+        box-shadow: 0 0 8px 2px var(--emerald-500);
+    }
+}
+
+/* ── Live indicator pulse ── */
+.live-pulse {
+    animation: livePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}

@@ -1,0 +1,8 @@
+adb_path: "C:\\LDPlayer\\LDPlayer9\\adb.exe"
+tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+resolution: "960x540"
+coordinate_map: "960x540_v1"
+work_dir: "f:\\COD_CHECK"
+debug_screenshots: true
+db_path: "data/cod_manager.db"
+server_port: 8000
