@@ -1,6 +1,3 @@
-OK, giờ mình **bỏ hẳn UI**, chuyển sang **phân tích logic nghiệp vụ (business logic)** của app **một cách có hệ thống**, để bạn kiểm tra **đã đủ chức năng chưa, thiếu gì, cần hoàn thiện gì**.
-
-Mình sẽ nói như đang **spec một app hoàn chỉnh**, không dính code chi tiết, không dính UI.
 
 ---
 
@@ -222,37 +219,5 @@ Ngay cả nếu hiện tại:
 * Read-only vs Execute
 * Manual vs Scheduled
 * Auto retry vs Manual retry
-
----
-
-# 🧠 TÓM TẮT KIẾN TRÚC NGHIỆP VỤ (MENTAL MODEL)
-
-```
-Emulator
-  └── Task
-        ├── Navigation
-        ├── Screenshot
-        ├── OCR
-        ├── Parse
-        ├── Validate
-        └── Result
-```
-
-OCR = **1 node**, không phải trung tâm.
-
----
-
-# ✅ CHECKLIST: APP BẠN ĐÃ / CHƯA ĐỦ?
-
-| Mục                    | Có? |
-| ---------------------- | --- |
-| Emulator state machine | ⬜   |
-| Task atomic logic      | ⬜   |
-| Data normalization     | ⬜   |
-| OCR validation         | ⬜   |
-| Retry / fallback       | ⬜   |
-| Multi-emulator lock    | ⬜   |
-| Task composition       | ⬜   |
-| Logging / history      | ⬜   |
 
 ---
