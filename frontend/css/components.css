@@ -688,7 +688,7 @@
     padding: 48px;
     color: var(--muted-foreground);
     text-align: center;
-    gap: 8px;
+    gap: 10px;
 }
 
 .empty-state-icon {
@@ -1097,7 +1097,7 @@
 ════════════════════════════════════════════ */
 .chrome-tabbar-wrap {
     position: relative;
-    margin-top: 14px;
+    margin-top: 20px;
     margin-bottom: 0;
 }
 

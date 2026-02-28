@@ -48,78 +48,38 @@ const EmulatorsPage = {
         <div class="page-enter">
 
             <!-- Page Header -->
-            <div class="page-header">
+            <div class="page-header emu-dashboard-header">
                 <div class="page-header-info">
                     <h2>Emulator Instances</h2>
                     <p>Infrastructure control panel — start, stop, restart and inspect all LDPlayer instances.</p>
                 </div>
             </div>
 
-            <!-- Stats Row -->
-            <div class="stats-row" id="emu-stats">
-                <div class="card stat-card-indigo" style="padding:16px;">
-                    <div class="card-header-row" style="padding:0; padding-bottom:8px;">
-                        <span class="card-title">Total Instances</span>
-                        <span class="card-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                                <line x1="8" y1="21" x2="16" y2="21"/>
-                                <line x1="12" y1="17" x2="12" y2="21"/>
-                            </svg>
-                        </span>
-                    </div>
-                    <div class="card-content" style="padding:0;">
-                        <div class="card-value" id="emu-stat-total" style="font-size:20px;">0</div>
-                    </div>
+            <!-- Stats + Primary Actions -->
+            <div class="emu-header-summary" id="emu-stats">
+                <div class="emu-stats-inline" role="status" aria-label="Emulator instance summary">
+                    <span class="emu-stat-inline emu-stat-total">Total <strong id="emu-stat-total">0</strong></span>
+                    <span class="emu-stat-separator" aria-hidden="true">|</span>
+                    <span class="emu-stat-inline emu-stat-running">Running <strong id="emu-stat-running">0</strong></span>
+                    <span class="emu-stat-separator" aria-hidden="true">|</span>
+                    <span class="emu-stat-inline emu-stat-stopped">Stopped <strong id="emu-stat-stopped">0</strong></span>
                 </div>
 
-                <div class="card stat-card-emerald" style="padding:16px;">
-                    <div class="card-header-row" style="padding:0; padding-bottom:8px;">
-                        <span class="card-title">Running</span>
-                        <span class="card-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polygon points="5 3 19 12 5 21 5 3"/>
-                            </svg>
-                        </span>
-                    </div>
-                    <div class="card-content" style="padding:0;">
-                        <div class="card-value" id="emu-stat-running" style="font-size:20px;">0</div>
-                    </div>
-                </div>
-
-                <div class="card stat-card-orange" style="padding:16px;">
-                    <div class="card-header-row" style="padding:0; padding-bottom:8px;">
-                        <span class="card-title">Stopped</span>
-                        <span class="card-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="6" y="6" width="12" height="12" rx="2"/>
-                            </svg>
-                        </span>
-                    </div>
-                    <div class="card-content" style="padding:0;">
-                        <div class="card-value" id="emu-stat-stopped" style="font-size:20px;">0</div>
-                    </div>
-                </div>
-
-                <!-- NEW: Quick Infrastructure Actions stat card -->
-                <div class="card" style="padding:16px; display:flex; flex-direction:column; gap:8px; min-width:200px;">
-                    <span class="card-title" style="font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted-foreground);">Quick Actions</span>
-                    <div style="display:flex; gap:8px;">
-                        <button class="btn btn-default btn-sm" style="flex:1; justify-content:center;" onclick="EmulatorsPage.startAll()" id="btn-start-all">
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                            Start All
-                        </button>
-                        <button class="btn btn-secondary btn-sm" style="flex:1; justify-content:center; color:var(--destructive);" onclick="EmulatorsPage.stopAll()" id="btn-stop-all">
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                            Stop All
-                        </button>
-                    </div>
+                <div class="emu-primary-actions">
+                    <button class="btn btn-default btn-sm emu-btn-priority" onclick="EmulatorsPage.startAll()" id="btn-start-all">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        Start All
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="EmulatorsPage.stopAll()" id="btn-stop-all">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        Stop All
+                    </button>
                 </div>
             </div>
 
             <!-- Control Toolbar -->
-            <div class="toolbar" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:16px; flex-wrap:wrap;">
-                <div style="display:flex; align-items:center; gap:12px; flex:1; min-width:0;">
+            <div class="toolbar emu-toolbar">
+                <div class="emu-toolbar-search">
 
                     <!-- Search -->
                     <div class="search-wrapper" style="max-width:280px; width:100%;">
@@ -127,13 +87,13 @@ const EmulatorsPage = {
                             <circle cx="11" cy="11" r="8"/>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                         </svg>
-                        <input type="text" class="form-input search-input" placeholder="Search by name or index…"
+                        <input type="text" class="form-input search-input emu-search-input" placeholder="Search by name or index…"
                                oninput="EmulatorsPage.setSearch(this.value)"
                                style="height:36px;" id="emu-search-input" />
                     </div>
 
                     <!-- Filter tabs -->
-                    <div class="tabs" style="display:flex; background:var(--card); border:1px solid var(--border); border-radius:var(--radius-md); padding:2px; gap:1px;">
+                    <div class="tabs emu-filter-group" style="display:flex; background:var(--card); border:1px solid var(--border); border-radius:var(--radius-md); padding:2px; gap:1px;">
                         <button class="tab-btn active" id="filter-btn-all"
                                 onclick="EmulatorsPage.setFilter('all')"
                                 style="padding:6px 12px; font-size:13px; font-weight:500; border-radius:var(--radius-sm); border:none; background:transparent; cursor:pointer;">
@@ -152,20 +112,7 @@ const EmulatorsPage = {
                     </div>
                 </div>
 
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <!-- Bulk actions -->
-                    <button class="btn btn-default btn-sm" id="btn-start-selected" onclick="EmulatorsPage.startSelected()" disabled>
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        Start (<span id="selected-count-start">0</span>)
-                    </button>
-                    <button class="btn btn-secondary btn-sm" style="color:var(--destructive);" id="btn-stop-selected" onclick="EmulatorsPage.stopSelected()" disabled>
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-                        Stop (<span id="selected-count-stop">0</span>)
-                    </button>
-
-                    <!-- Divider -->
-                    <div style="width:1px; height:24px; background:var(--border);"></div>
-
+                <div class="emu-system-controls">
                     <!-- Manual refresh + last-refresh time -->
                     <div style="display:flex; align-items:center; gap:8px;">
                         <button class="btn btn-secondary btn-sm" onclick="EmulatorsPage.manualRefresh()" title="Refresh now" id="btn-manual-refresh">
@@ -175,8 +122,7 @@ const EmulatorsPage = {
                         <span id="emu-last-refresh" style="font-size:11px; color:var(--muted-foreground); white-space:nowrap; display:none;">—</span>
                     </div>
 
-                    <!-- Divider -->
-                    <div style="width:1px; height:24px; background:var(--border);"></div>
+                    <div class="emu-system-divider"></div>
 
                     <!-- Auto Refresh toggle + countdown -->
                     <div style="display:flex; align-items:center; gap:8px;">
@@ -213,7 +159,8 @@ const EmulatorsPage = {
             <!-- Content Area -->
             <div class="tab-content-area">
                 <!-- Select-all row -->
-                <div style="display:flex; align-items:center; padding:10px 16px 8px 16px; gap:12px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 16px 8px 16px; gap:12px; flex-wrap:wrap;">
+                    <div style="display:flex; align-items:center; gap:12px;">
                     <input type="checkbox" id="select-all-cb" onchange="EmulatorsPage.toggleSelectAll(this.checked)"
                            style="margin-right:4px; cursor:pointer;" />
                     <label for="select-all-cb" style="font-size:13px; font-weight:500; color:var(--muted-foreground); cursor:pointer;">
@@ -222,6 +169,17 @@ const EmulatorsPage = {
                     <span id="emu-selection-hint" style="font-size:12px; color:var(--muted-foreground); display:none;">
                         — <strong id="emu-selected-label">0</strong> selected
                     </span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button class="btn btn-default btn-sm" id="btn-start-selected" onclick="EmulatorsPage.startSelected()" disabled>
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Start (<span id="selected-count-start">0</span>)
+                        </button>
+                        <button class="btn btn-outline btn-sm" style="color:var(--destructive);" id="btn-stop-selected" onclick="EmulatorsPage.stopSelected()" disabled>
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                            Stop (<span id="selected-count-stop">0</span>)
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Instance list -->
@@ -234,8 +192,11 @@ const EmulatorsPage = {
                                 <line x1="12" y1="17" x2="12" y2="21"/>
                             </svg>
                         </div>
-                        <span class="font-medium">Loading instances…</span>
-                        <span class="spinner"></span>
+                        <span class="font-medium">No emulator data yet</span>
+                        <span style="font-size:13px; color:var(--muted-foreground);">Fetch the latest status to start managing instances.</span>
+                        <div style="display:flex; gap:8px; margin-top:4px;">
+                            <button class="btn btn-default btn-sm" onclick="EmulatorsPage.manualRefresh()">Refresh now</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -516,6 +477,25 @@ const EmulatorsPage = {
         this.renderList();
     },
 
+
+    clearFilters() {
+        this._searchQuery = '';
+        this._filter = 'all';
+
+        const input = document.getElementById('emu-search-input');
+        if (input) input.value = '';
+
+        ['all', 'running', 'stopped'].forEach((f) => {
+            const btn = document.getElementById(`filter-btn-${f}`);
+            if (!btn) return;
+            btn.classList.toggle('active', f === 'all');
+            btn.style.background = f === 'all' ? 'var(--accent)' : 'transparent';
+            btn.style.color = f === 'all' ? 'var(--foreground)' : 'var(--muted-foreground)';
+        });
+
+        this.renderInstances();
+    },
+
     setFilter(filterMode) {
         this._filter = filterMode;
         ['all', 'running', 'stopped'].forEach(f => {
@@ -631,11 +611,15 @@ const EmulatorsPage = {
 
             if (filtered.length === 0) {
                 list.innerHTML = `
-                <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;color:var(--muted-foreground);">
+                <div class="empty-state">
                     <svg style="width:32px;height:32px;opacity:.4;margin-bottom:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
                     <p style="font-size:14px;">No instances match <em>"${this._escapeHtml(this._searchQuery || this._filter)}"</em>.</p>
+                    <div style="display:flex; gap:8px; margin-top:4px;">
+                        <button class="btn btn-outline btn-sm" onclick="EmulatorsPage.clearFilters()">Clear filters</button>
+                        <button class="btn btn-default btn-sm" onclick="EmulatorsPage.manualRefresh()">Refresh now</button>
+                    </div>
                 </div>`;
                 return;
             }
