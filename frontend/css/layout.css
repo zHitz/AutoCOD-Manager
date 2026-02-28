@@ -84,8 +84,8 @@ body {
 }
 
 .nav-item.active {
-    background: var(--primary);
-    color: var(--primary-foreground);
+    background: hsla(222, 47%, 11%, 0.08);
+    color: var(--foreground);
 }
 
 .nav-icon {
@@ -279,15 +279,15 @@ body {
     height: 36px;
     width: 256px;
     border-radius: var(--radius-full);
-    background: hsla(210, 40%, 96%, 0.5);
-    border: none;
+    background: hsla(210, 40%, 96%, 0.32);
+    border: 1px solid hsla(214, 32%, 91%, 0.55);
     padding-left: 40px !important;
     padding-right: 16px !important;
     font-size: 14px;
     font-family: var(--font-sans);
     color: var(--foreground);
     outline: none;
-    transition: box-shadow var(--duration-fast);
+    transition: box-shadow var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast);
 }
 
 .search-input::placeholder {
@@ -295,7 +295,9 @@ body {
 }
 
 .search-input:focus {
-    box-shadow: 0 0 0 2px hsla(222, 84%, 5%, 0.5);
+    background: var(--background);
+    border-color: hsla(222, 47%, 11%, 0.22);
+    box-shadow: 0 0 0 2px hsla(222, 47%, 11%, 0.14);
 }
 
 /* ── Notification Bell ── */
@@ -506,8 +508,8 @@ body {
 /* ── Toast Container ── */
 .toast-container {
     position: fixed;
-    top: 24px;
     right: 24px;
+    bottom: 24px;
     z-index: 9999;
     display: flex;
     flex-direction: column;
@@ -752,5 +754,103 @@ body {
 
     .tab-panel-header {
         flex-direction: column;
+    }
+}
+/* ── Emulators Dashboard Header ── */
+.emu-dashboard-header {
+    margin-bottom: 20px;
+}
+
+.emu-header-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.emu-stats-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    color: var(--muted-foreground);
+    font-size: 14px;
+}
+
+.emu-stat-inline strong {
+    margin-left: 4px;
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--foreground);
+}
+
+.emu-stat-running strong {
+    color: var(--emerald-600);
+}
+
+.emu-stat-stopped strong {
+    color: var(--destructive);
+}
+
+.emu-stat-separator {
+    color: hsla(215, 16%, 47%, 0.45);
+}
+
+.emu-primary-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.emu-btn-priority {
+    box-shadow: var(--shadow-sm);
+}
+
+.emu-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.emu-toolbar-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 320px;
+}
+
+.emu-search-input {
+    background: hsla(210, 40%, 96%, 0.2);
+    border-color: hsla(214, 32%, 91%, 0.45);
+}
+
+.emu-filter-group {
+    box-shadow: none;
+}
+
+.emu-system-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
+}
+
+.emu-system-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+}
+
+@media (max-width: 900px) {
+    .emu-system-controls {
+        border-left: none;
+        padding-left: 0;
     }
 }
