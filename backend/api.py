@@ -405,21 +405,24 @@ async def get_accounts():
 
 @app.post("/api/accounts")
 async def create_account(body: dict):
-    """Create a new account manually."""
+    """Create a new account manually. Requires game_id."""
     if not body:
         return {"error": "Empty body"}
     
+    game_id = body.get("game_id", "").strip()
+    if not game_id:
+        return {"error": "game_id is required"}
+
     emu_index = body.get("emu_index")
-    if emu_index is None:
-        return {"error": "emu_index is required"}
-    
-    try:
-        emu_index = int(emu_index)
-    except ValueError:
-        return {"error": "emu_index must be an integer"}
+    if emu_index is not None:
+        try:
+            emu_index = int(emu_index)
+        except ValueError:
+            return {"error": "emu_index must be an integer"}
 
     try:
         acc_id = await database.upsert_account_full(
+            game_id=game_id,
             emulator_index=emu_index,
             lord_name=body.get("lord_name", ""),
             power=float(body.get("power", 0)),
@@ -429,39 +432,76 @@ async def create_account(body: dict):
             alliance=body.get("alliance", ""),
             note=body.get("note", "")
         )
-        return {"status": "ok", "account_id": acc_id, "emu_index": emu_index}
+        return {"status": "ok", "account_id": acc_id, "game_id": game_id}
     except Exception as e:
         return {"error": str(e)}
 
 
-@app.get("/api/accounts/{emu_index}")
-async def get_account(emu_index: int):
-    """Get single account by emulator index."""
-    acc = await database.get_account_by_emu_index(emu_index)
+@app.get("/api/accounts/{game_id}")
+async def get_account(game_id: str):
+    """Get single account by game_id."""
+    acc = await database.get_account_by_game_id(game_id)
     if acc:
         return acc
-    return {"error": "Account not found", "emu_index": emu_index}
+    return {"error": "Account not found", "game_id": game_id}
 
 
-@app.put("/api/accounts/{emu_index}")
-async def update_account(emu_index: int, body: dict):
-    """Update account fields (note, login_method, email, provider, alliance)."""
+@app.put("/api/accounts/{game_id}")
+async def update_account(game_id: str, body: dict):
+    """Update account fields (note, login_method, email, provider, alliance, lord_name)."""
     if not body:
-        return {"error": "Empty body", "emu_index": emu_index}
+        return {"error": "Empty body", "game_id": game_id}
+    body.pop("game_id", None)
     body.pop("emu_index", None)
-    ok = await database.update_account(emu_index, **body)
+    ok = await database.update_account(game_id, **body)
     if ok:
-        return {"status": "ok", "emu_index": emu_index}
-    return {"error": "Account not found or no valid fields", "emu_index": emu_index}
+        return {"status": "ok", "game_id": game_id}
+    return {"error": "Account not found or no valid fields", "game_id": game_id}
 
 
-@app.delete("/api/accounts/{emu_index}")
-async def delete_account(emu_index: int):
+@app.delete("/api/accounts/{game_id}")
+async def delete_account(game_id: str):
     """Delete an account record."""
-    ok = await database.delete_account(emu_index)
+    ok = await database.delete_account(game_id)
     if ok:
-        return {"status": "deleted", "emu_index": emu_index}
-    return {"error": "Account not found", "emu_index": emu_index}
+        return {"status": "deleted", "game_id": game_id}
+    return {"error": "Account not found", "game_id": game_id}
+
+
+# ──────────────────────────────────────────────
+# Pending Account Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/pending-accounts")
+async def get_pending_accounts():
+    """Get all pending accounts awaiting user confirmation."""
+    return await database.get_pending_accounts()
+
+
+@app.post("/api/pending-accounts/{pending_id}/confirm")
+async def confirm_pending(pending_id: int, body: dict = None):
+    """Confirm a pending account and create it."""
+    body = body or {}
+    acc_id = await database.confirm_pending_account(
+        pending_id=pending_id,
+        login_method=body.get("login_method", ""),
+        email=body.get("email", ""),
+        provider=body.get("provider", "Global"),
+        alliance=body.get("alliance", ""),
+        note=body.get("note", ""),
+    )
+    if acc_id:
+        return {"status": "confirmed", "account_id": acc_id}
+    return {"error": "Pending account not found or already processed"}
+
+
+@app.post("/api/pending-accounts/{pending_id}/dismiss")
+async def dismiss_pending(pending_id: int):
+    """Dismiss a pending account (will reappear on next scan)."""
+    ok = await database.dismiss_pending_account(pending_id)
+    if ok:
+        return {"status": "dismissed"}
+    return {"error": "Pending account not found"}
 
 
 # ──────────────────────────────────────────────

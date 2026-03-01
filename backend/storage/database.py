@@ -97,18 +97,35 @@ CREATE TABLE IF NOT EXISTS task_runs (
     FOREIGN KEY (emulator_id) REFERENCES emulators(id)
 );
 
--- Account metadata (1:1 with emulators)
+-- Account metadata (N:1 with emulators — multiple accounts per emulator)
 CREATE TABLE IF NOT EXISTS accounts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    emulator_id     INTEGER NOT NULL UNIQUE,
+    game_id         TEXT NOT NULL UNIQUE,           -- In-game player ID (primary identity)
+    emulator_id     INTEGER,                        -- FK → emulators.id (nullable)
+    lord_name       TEXT DEFAULT '',                 -- Synced from latest scan
     login_method    TEXT DEFAULT '',
     email           TEXT DEFAULT '',
     provider        TEXT DEFAULT 'Global',
     alliance        TEXT DEFAULT '',
     note            TEXT DEFAULT '',
+    is_active       INTEGER DEFAULT 0,              -- 1 = currently active on its emulator
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (emulator_id) REFERENCES emulators(id)
+);
+
+-- Pending accounts (discovered by scan but not yet confirmed by user)
+CREATE TABLE IF NOT EXISTS pending_accounts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id         TEXT NOT NULL UNIQUE,
+    emulator_id     INTEGER NOT NULL,
+    lord_name       TEXT DEFAULT '',
+    power           INTEGER DEFAULT 0,
+    snapshot_id     INTEGER,
+    status          TEXT DEFAULT 'pending',          -- pending/confirmed/dismissed
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (emulator_id) REFERENCES emulators(id),
+    FOREIGN KEY (snapshot_id) REFERENCES scan_snapshots(id)
 );
 
 -- Indexes
@@ -264,6 +281,85 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
     print("[DB Migration] v1 -> v2 migration complete.")
 
 
+def _migrate_accounts_schema(conn: sqlite3.Connection):
+    """Migrate accounts table to v2 schema (add game_id, is_active, lord_name).
+    Also add game_id column to scan_snapshots. Safe to re-run (idempotent)."""
+    # Check if accounts table needs migration (no game_id column)
+    cursor = conn.execute("PRAGMA table_info(accounts)")
+    cols = {row[1] for row in cursor.fetchall()}
+
+    if "game_id" not in cols:
+        print("[DB Migration] Migrating accounts table → adding game_id, is_active, lord_name...")
+
+        # SQLite can't ALTER constraints, so we recreate the table
+        conn.execute("ALTER TABLE accounts RENAME TO accounts_old")
+        conn.executescript("""
+            CREATE TABLE accounts (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id         TEXT NOT NULL UNIQUE,
+                emulator_id     INTEGER,
+                lord_name       TEXT DEFAULT '',
+                login_method    TEXT DEFAULT '',
+                email           TEXT DEFAULT '',
+                provider        TEXT DEFAULT 'Global',
+                alliance        TEXT DEFAULT '',
+                note            TEXT DEFAULT '',
+                is_active       INTEGER DEFAULT 0,
+                created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (emulator_id) REFERENCES emulators(id)
+            );
+        """)
+
+        # Migrate existing data with placeholder game_ids
+        old_cursor = conn.execute("SELECT * FROM accounts_old")
+        old_cols = [desc[0] for desc in old_cursor.description]
+        rows = old_cursor.fetchall()
+
+        for row in rows:
+            d = dict(zip(old_cols, row))
+            placeholder_id = f"LEGACY-{d['id']}"
+            conn.execute(
+                """INSERT INTO accounts
+                   (game_id, emulator_id, login_method, email, provider, alliance, note, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    placeholder_id,
+                    d.get("emulator_id"),
+                    d.get("login_method", ""),
+                    d.get("email", ""),
+                    d.get("provider", "Global"),
+                    d.get("alliance", ""),
+                    d.get("note", ""),
+                    d.get("created_at", ""),
+                    d.get("updated_at", ""),
+                ),
+            )
+
+        conn.execute("DROP TABLE accounts_old")
+        print(f"  -> Migrated {len(rows)} accounts with LEGACY- game_ids")
+        conn.commit()
+
+    # Add game_id column to scan_snapshots if missing
+    cursor = conn.execute("PRAGMA table_info(scan_snapshots)")
+    snap_cols = {row[1] for row in cursor.fetchall()}
+    if "game_id" not in snap_cols:
+        try:
+            conn.execute("ALTER TABLE scan_snapshots ADD COLUMN game_id TEXT DEFAULT ''")
+            conn.commit()
+            print("[DB Migration] Added game_id column to scan_snapshots")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Create indexes that depend on game_id (safe now that columns exist)
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_game_id ON scan_snapshots(game_id)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
 # ──────────────────────────────────────────────
 # Database class
 # ──────────────────────────────────────────────
@@ -286,6 +382,9 @@ class Database:
 
         # Migrate v1 data if needed
         _migrate_v1_to_v2(conn)
+
+        # Migrate accounts schema (add game_id etc.)
+        _migrate_accounts_schema(conn)
 
         conn.close()
         self._initialized = True
@@ -374,6 +473,7 @@ class Database:
         scan_status: str = "completed",
         scan_duration_ms: int = 0,
         raw_ocr_text: str = "",
+        game_id: str = "",
     ) -> int:
         """Save scan snapshot + resources. Returns snapshot id."""
         # Ensure emulator exists
@@ -386,8 +486,8 @@ class Database:
             cursor = await db.execute(
                 """INSERT INTO scan_snapshots
                    (emulator_id, scan_type, lord_name, power, hall_level,
-                    market_level, pet_token, scan_status, duration_ms, raw_ocr_text)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    market_level, pet_token, scan_status, duration_ms, raw_ocr_text, game_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     emu_id,
                     scan_type,
@@ -399,6 +499,7 @@ class Database:
                     scan_status,
                     scan_duration_ms,
                     raw_ocr_text,
+                    game_id,
                 ),
             )
 
@@ -857,104 +958,195 @@ class Database:
     # ── Account CRUD ──────────────────────────────
 
     async def upsert_account(
-        self, emulator_id: int, login_method: str = "",
+        self, game_id: str, emulator_id: int = None,
+        lord_name: str = "", login_method: str = "",
         email: str = "", provider: str = "Global",
         alliance: str = "", note: str = "",
+        is_active: int = 0,
     ) -> int:
-        """Insert or update account metadata. Returns account id."""
+        """Insert or update account by game_id. Returns account id."""
         now = datetime.now().isoformat()
         async with self._get_conn() as db:
             cursor = await db.execute(
-                """INSERT INTO accounts (emulator_id, login_method, email, provider, alliance, note, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(emulator_id) DO UPDATE SET
-                       login_method = excluded.login_method,
-                       email = excluded.email,
+                """INSERT INTO accounts
+                   (game_id, emulator_id, lord_name, login_method, email, provider, alliance, note, is_active, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(game_id) DO UPDATE SET
+                       emulator_id = COALESCE(excluded.emulator_id, accounts.emulator_id),
+                       lord_name = CASE WHEN excluded.lord_name != '' THEN excluded.lord_name ELSE accounts.lord_name END,
+                       login_method = CASE WHEN excluded.login_method != '' THEN excluded.login_method ELSE accounts.login_method END,
+                       email = CASE WHEN excluded.email != '' THEN excluded.email ELSE accounts.email END,
                        provider = excluded.provider,
-                       alliance = excluded.alliance,
-                       note = excluded.note,
+                       alliance = CASE WHEN excluded.alliance != '' THEN excluded.alliance ELSE accounts.alliance END,
+                       note = CASE WHEN excluded.note != '' THEN excluded.note ELSE accounts.note END,
+                       is_active = excluded.is_active,
                        updated_at = excluded.updated_at""",
-                (emulator_id, login_method, email, provider, alliance, note, now),
+                (game_id, emulator_id, lord_name, login_method, email, provider, alliance, note, is_active, now),
             )
             await db.commit()
-            return cursor.lastrowid
+            # Get the actual id (lastrowid returns 0 on conflict update)
+            id_cur = await db.execute("SELECT id FROM accounts WHERE game_id = ?", (game_id,))
+            row = await id_cur.fetchone()
+            return row[0] if row else cursor.lastrowid
 
     async def upsert_account_full(
-        self, emulator_index: int, lord_name: str = "", power: float = 0,
+        self, game_id: str, emulator_index: int = None,
+        lord_name: str = "", power: float = 0,
         login_method: str = "", email: str = "", provider: str = "Global",
         alliance: str = "", note: str = "",
     ) -> int:
-        """Insert or update account metadata and base scan data. Returns account id."""
-        emu_id = await self.get_emulator_id(emu_index=emulator_index)
-        serial = f"emulator-{5554 + emulator_index * 2}"
-        name = f"LDPlayer-{emulator_index:02d}"
-        
-        if not emu_id:
-            emu_id = await self.upsert_emulator(
-                emu_index=emulator_index, 
-                serial=serial, 
-                name=name
-            )
+        """Create/update account with game_id and optionally create a manual scan snapshot."""
+        emu_id = None
+        serial = ""
+        name = ""
+        if emulator_index is not None:
+            emu_id = await self.get_emulator_id(emu_index=emulator_index)
+            serial = f"emulator-{5554 + emulator_index * 2}"
+            name = f"LDPlayer-{emulator_index:02d}"
+            if not emu_id:
+                emu_id = await self.upsert_emulator(
+                    emu_index=emulator_index, serial=serial, name=name
+                )
 
-        now = datetime.now().isoformat()
-        async with self._get_conn() as db:
-            cursor = await db.execute(
-                """INSERT INTO accounts (emulator_id, login_method, email, provider, alliance, note, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(emulator_id) DO UPDATE SET
-                       login_method = excluded.login_method,
-                       email = excluded.email,
-                       provider = excluded.provider,
-                       alliance = excluded.alliance,
-                       note = excluded.note,
-                       updated_at = excluded.updated_at""",
-                (emu_id, login_method, email, provider, alliance, note, now),
-            )
-            account_id = cursor.lastrowid
-            await db.commit()
-
-        await self.save_scan_snapshot(
-            emulator_index=emulator_index,
-            serial=serial,
-            emulator_name=name,
-            parsed_data={"lord_name": lord_name, "power": power},
-            scan_type="manual_account_creation",
-            scan_status="completed"
+        acc_id = await self.upsert_account(
+            game_id=game_id,
+            emulator_id=emu_id,
+            lord_name=lord_name,
+            login_method=login_method,
+            email=email,
+            provider=provider,
+            alliance=alliance,
+            note=note,
+            is_active=1 if emu_id else 0,
         )
-        return account_id
 
-    async def get_all_accounts(self) -> list[dict]:
-        """Get all accounts joined with emulator info + latest scan data + resources."""
+        # Create a manual scan snapshot if we have emulator info
+        if emulator_index is not None:
+            await self.save_scan_snapshot(
+                emulator_index=emulator_index,
+                serial=serial,
+                emulator_name=name,
+                parsed_data={"lord_name": lord_name, "power": power},
+                scan_type="manual_account_creation",
+                scan_status="completed",
+                game_id=game_id,
+            )
+
+        return acc_id
+
+    async def auto_link_account(
+        self, emulator_id: int, game_id: str,
+        lord_name: str = "", snapshot_id: int = 0,
+    ) -> dict:
+        """After a scan, link game_id to accounts or create pending.
+        Returns {"action": "linked"|"pending", "account_id"|"pending_id": int}"""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
 
-            # Get all emulators that have an account record
+            # Check if game_id exists in accounts
+            cursor = await db.execute(
+                "SELECT id FROM accounts WHERE game_id = ?", (game_id,)
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                # Known account — update active flags
+                now = datetime.now().isoformat()
+                # Set this account as active on this emulator
+                await db.execute(
+                    """UPDATE accounts SET
+                        emulator_id = ?, is_active = 1,
+                        lord_name = CASE WHEN ? != '' THEN ? ELSE lord_name END,
+                        updated_at = ?
+                       WHERE game_id = ?""",
+                    (emulator_id, lord_name, lord_name, now, game_id),
+                )
+                # Deactivate other accounts on same emulator
+                await db.execute(
+                    "UPDATE accounts SET is_active = 0 WHERE emulator_id = ? AND game_id != ?",
+                    (emulator_id, game_id),
+                )
+                await db.commit()
+                return {"action": "linked", "account_id": existing["id"]}
+            else:
+                # Unknown account — check pending (dismissed ones should reappear)
+                await db.execute(
+                    "DELETE FROM pending_accounts WHERE game_id = ? AND status = 'dismissed'",
+                    (game_id,)
+                )
+                # Insert or update pending
+                cursor = await db.execute(
+                    """INSERT INTO pending_accounts (game_id, emulator_id, lord_name, power, snapshot_id, status)
+                       VALUES (?, ?, ?, 0, ?, 'pending')
+                       ON CONFLICT(game_id) DO UPDATE SET
+                           emulator_id = excluded.emulator_id,
+                           lord_name = excluded.lord_name,
+                           snapshot_id = excluded.snapshot_id,
+                           status = 'pending'""",
+                    (game_id, emulator_id, lord_name, snapshot_id),
+                )
+                await db.commit()
+                pid_cur = await db.execute(
+                    "SELECT id FROM pending_accounts WHERE game_id = ?", (game_id,)
+                )
+                prow = await pid_cur.fetchone()
+                return {"action": "pending", "pending_id": prow["id"] if prow else 0}
+
+    def _attach_scan_defaults(self, acc: dict):
+        """Set default scan fields on an account dict."""
+        acc.setdefault("lord_name", acc.get("acc_lord_name", ""))
+        acc["power"] = acc.get("power", 0)
+        acc["hall_level"] = acc.get("hall_level", 0)
+        acc["market_level"] = acc.get("market_level", 0)
+        acc["pet_token"] = acc.get("pet_token", 0)
+        acc["last_scan_at"] = acc.get("last_scan_at", "")
+
+    async def get_all_accounts(self) -> list[dict]:
+        """Get all accounts with emulator info + latest scan data + resources."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
             cursor = await db.execute(
                 """SELECT
-                       a.id as account_id,
+                       a.id as account_id, a.game_id,
+                       a.lord_name as acc_lord_name,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
+                       a.is_active,
                        a.created_at as account_created_at, a.updated_at,
                        e.id as emulator_db_id, e.emu_index, e.serial, e.name as emu_name,
                        e.status as emu_status, e.last_seen_at
                    FROM accounts a
-                   JOIN emulators e ON a.emulator_id = e.id
-                   ORDER BY e.emu_index"""
+                   LEFT JOIN emulators e ON a.emulator_id = e.id
+                   ORDER BY a.is_active DESC, e.emu_index, a.game_id"""
             )
             accounts = [dict(row) for row in await cursor.fetchall()]
 
-            # For each account, attach latest scan data + resources
             for acc in accounts:
-                emu_id = acc["emulator_db_id"]
-                scan_cur = await db.execute(
-                    """SELECT * FROM scan_snapshots
-                       WHERE emulator_id = ?
-                       ORDER BY created_at DESC LIMIT 1""",
-                    (emu_id,),
-                )
-                scan_row = await scan_cur.fetchone()
+                game_id = acc["game_id"]
+
+                # Try to find latest scan by game_id first, fallback to emulator_id
+                scan_row = None
+                if game_id:
+                    scan_cur = await db.execute(
+                        """SELECT * FROM scan_snapshots
+                           WHERE game_id = ?
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (game_id,),
+                    )
+                    scan_row = await scan_cur.fetchone()
+
+                if not scan_row and acc.get("emulator_db_id"):
+                    scan_cur = await db.execute(
+                        """SELECT * FROM scan_snapshots
+                           WHERE emulator_id = ?
+                           ORDER BY created_at DESC LIMIT 1""",
+                        (acc["emulator_db_id"],),
+                    )
+                    scan_row = await scan_cur.fetchone()
+
                 if scan_row:
                     scan = dict(scan_row)
-                    acc["lord_name"] = scan.get("lord_name", "")
+                    acc["lord_name"] = scan.get("lord_name", "") or acc.get("acc_lord_name", "")
                     acc["power"] = scan.get("power", 0)
                     acc["hall_level"] = scan.get("hall_level", 0)
                     acc["market_level"] = scan.get("market_level", 0)
@@ -963,7 +1155,6 @@ class Database:
                     acc["last_scan_at"] = scan.get("created_at", "")
                     acc["scan_id"] = scan["id"]
 
-                    # Resources
                     res_cur = await db.execute(
                         "SELECT * FROM scan_resources WHERE snapshot_id = ?",
                         (scan["id"],),
@@ -974,48 +1165,62 @@ class Database:
                         acc[rtype] = rd.get("bag_value", 0)
                         acc[f"{rtype}_total"] = rd.get("total_value", 0)
                 else:
-                    acc["lord_name"] = ""
+                    acc["lord_name"] = acc.get("acc_lord_name", "")
                     acc["power"] = 0
                     acc["hall_level"] = 0
                     acc["market_level"] = 0
                     acc["pet_token"] = 0
                     acc["last_scan_at"] = ""
 
+                # Clean up internal key
+                acc.pop("acc_lord_name", None)
+
             return accounts
 
-    async def get_account_by_emu_index(self, emu_index: int) -> dict | None:
-        """Get single account with full data."""
+    async def get_account_by_game_id(self, game_id: str) -> dict | None:
+        """Get single account by game_id with full scan data."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """SELECT
-                       a.id as account_id,
+                       a.id as account_id, a.game_id,
+                       a.lord_name as acc_lord_name,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
+                       a.is_active,
                        a.created_at as account_created_at, a.updated_at,
                        e.id as emulator_db_id, e.emu_index, e.serial, e.name as emu_name,
                        e.status as emu_status, e.last_seen_at
                    FROM accounts a
-                   JOIN emulators e ON a.emulator_id = e.id
-                   WHERE e.emu_index = ?""",
-                (emu_index,),
+                   LEFT JOIN emulators e ON a.emulator_id = e.id
+                   WHERE a.game_id = ?""",
+                (game_id,),
             )
             row = await cursor.fetchone()
             if not row:
                 return None
             acc = dict(row)
 
-            # Attach latest scan
-            emu_id = acc["emulator_db_id"]
+            # Attach latest scan by game_id
             scan_cur = await db.execute(
                 """SELECT * FROM scan_snapshots
-                   WHERE emulator_id = ?
+                   WHERE game_id = ?
                    ORDER BY created_at DESC LIMIT 1""",
-                (emu_id,),
+                (game_id,),
             )
             scan_row = await scan_cur.fetchone()
+
+            if not scan_row and acc.get("emulator_db_id"):
+                scan_cur = await db.execute(
+                    """SELECT * FROM scan_snapshots
+                       WHERE emulator_id = ?
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (acc["emulator_db_id"],),
+                )
+                scan_row = await scan_cur.fetchone()
+
             if scan_row:
                 scan = dict(scan_row)
-                acc["lord_name"] = scan.get("lord_name", "")
+                acc["lord_name"] = scan.get("lord_name", "") or acc.get("acc_lord_name", "")
                 acc["power"] = scan.get("power", 0)
                 acc["hall_level"] = scan.get("hall_level", 0)
                 acc["market_level"] = scan.get("market_level", 0)
@@ -1032,20 +1237,38 @@ class Database:
                     acc[rtype] = rd.get("bag_value", 0)
                     acc[f"{rtype}_total"] = rd.get("total_value", 0)
             else:
-                acc["lord_name"] = ""
+                acc["lord_name"] = acc.get("acc_lord_name", "")
                 acc["power"] = 0
                 acc["hall_level"] = 0
                 acc["market_level"] = 0
                 acc["pet_token"] = 0
                 acc["last_scan_at"] = ""
 
+            acc.pop("acc_lord_name", None)
             return acc
 
-    async def update_account(
-        self, emu_index: int, **fields
-    ) -> bool:
-        """Update specific account fields by emulator index."""
-        allowed = {"login_method", "email", "provider", "alliance", "note"}
+    async def get_account_by_emu_index(self, emu_index: int) -> list[dict]:
+        """Get all accounts linked to an emulator index."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT a.game_id FROM accounts a
+                   JOIN emulators e ON a.emulator_id = e.id
+                   WHERE e.emu_index = ?
+                   ORDER BY a.is_active DESC""",
+                (emu_index,),
+            )
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                acc = await self.get_account_by_game_id(row["game_id"])
+                if acc:
+                    results.append(acc)
+            return results
+
+    async def update_account(self, game_id: str, **fields) -> bool:
+        """Update specific account fields by game_id."""
+        allowed = {"login_method", "email", "provider", "alliance", "note", "lord_name"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
@@ -1054,24 +1277,82 @@ class Database:
         values = list(updates.values())
         async with self._get_conn() as db:
             cursor = await db.execute(
-                f"""UPDATE accounts SET {set_clause}
-                    WHERE emulator_id = (
-                        SELECT id FROM emulators WHERE emu_index = ?
-                    )""",
-                (*values, emu_index),
+                f"UPDATE accounts SET {set_clause} WHERE game_id = ?",
+                (*values, game_id),
             )
             await db.commit()
             return cursor.rowcount > 0
 
-    async def delete_account(self, emu_index: int) -> bool:
-        """Delete account by emulator index."""
+    async def delete_account(self, game_id: str) -> bool:
+        """Delete account by game_id."""
         async with self._get_conn() as db:
             cursor = await db.execute(
-                """DELETE FROM accounts
-                    WHERE emulator_id = (
-                        SELECT id FROM emulators WHERE emu_index = ?
-                    )""",
-                (emu_index,),
+                "DELETE FROM accounts WHERE game_id = ?", (game_id,),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    # ── Pending Account CRUD ────────────────────────
+
+    async def get_pending_accounts(self) -> list[dict]:
+        """Get all pending accounts."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT p.*, e.emu_index, e.name as emu_name
+                   FROM pending_accounts p
+                   JOIN emulators e ON p.emulator_id = e.id
+                   WHERE p.status = 'pending'
+                   ORDER BY p.created_at DESC"""
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def confirm_pending_account(
+        self, pending_id: int, login_method: str = "",
+        email: str = "", provider: str = "Global",
+        alliance: str = "", note: str = "",
+    ) -> int:
+        """Confirm a pending account → create it in accounts table. Returns account id."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM pending_accounts WHERE id = ? AND status = 'pending'",
+                (pending_id,),
+            )
+            pending = await cursor.fetchone()
+            if not pending:
+                return 0
+            pending = dict(pending)
+
+        # Create the actual account
+        acc_id = await self.upsert_account(
+            game_id=pending["game_id"],
+            emulator_id=pending["emulator_id"],
+            lord_name=pending["lord_name"],
+            login_method=login_method,
+            email=email,
+            provider=provider,
+            alliance=alliance,
+            note=note,
+            is_active=1,
+        )
+
+        # Mark pending as confirmed
+        async with self._get_conn() as db:
+            await db.execute(
+                "UPDATE pending_accounts SET status = 'confirmed' WHERE id = ?",
+                (pending_id,),
+            )
+            await db.commit()
+
+        return acc_id
+
+    async def dismiss_pending_account(self, pending_id: int) -> bool:
+        """Dismiss a pending account (will reappear on next scan)."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                "UPDATE pending_accounts SET status = 'dismissed' WHERE id = ?",
+                (pending_id,),
             )
             await db.commit()
             return cursor.rowcount > 0
@@ -1079,3 +1360,4 @@ class Database:
 
 # Global singleton
 database = Database()
+

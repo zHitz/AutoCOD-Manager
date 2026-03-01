@@ -1,6 +1,44 @@
 # COD Game Automation Manager - Update Log
 
-## Version 1.0.4 (Current)
+## Version 1.0.6 (Current)
+*Account-GameID Architecture & WORKFLOW Module Integration*
+
+- **Account Architecture Overhaul (`backend/storage/database.py`)**
+  - **Game ID là Primary Identity:** Mỗi Account giờ dùng `game_id` (ID in-game duy nhất) làm khóa chính thay vì `emulator_id`. Cho phép **nhiều Account trên cùng một Emulator**.
+  - **Schema Migration:** Tự động migrate DB cũ — Account cũ không có Game ID sẽ nhận placeholder `LEGACY-{id}`. Migration chạy tự động khi khởi động, idempotent.
+  - **Bảng `pending_accounts` (Mới):** Account mới phát hiện qua Full Scan sẽ vào **hàng chờ** để User xác nhận thay vì tạo thẳng. Hỗ trợ trạng thái `pending` / `confirmed` / `dismissed`.
+  - **Auto-Link Logic (`auto_link_account`):** Sau mỗi lần Scan, hệ thống tự nhận diện — nếu `game_id` đã tồn tại thì cập nhật trạng thái Active, nếu chưa thì đưa vào Pending Queue.
+  - **`scan_snapshots`** giờ có cột `game_id` liên kết trực tiếp scan data với Account cụ thể.
+  - Viết lại toàn bộ CRUD: `upsert_account`, `get_all_accounts` (LEFT JOIN), `update_account`, `delete_account` — tất cả dùng `game_id`.
+
+- **WORKFLOW Module Integration (`backend/core/workflow/`)**
+  - **Di chuyển TEST/WORKFLOW vào App Core:** Toàn bộ module `adb_helper`, `clipper_helper`, `core_actions`, `state_detector` + templates được tích hợp thành package `backend.core.workflow`.
+  - **Logic giữ nguyên 100%:** Tất cả hàm (`extract_player_id`, `go_to_profile`, `wait_for_state`, `back_to_lobby`) hoạt động y hệt gốc — chỉ adapt import path cho app context.
+  - **State Detection:** Sử dụng OpenCV template matching để nhận diện trạng thái game (Loading, Lobby, Profile Menu...) trước khi thao tác.
+
+- **Full Scan — Game ID Capture (`backend/core/full_scan.py`)**
+  - **Step 0 (Mới):** Trước khi chụp screenshot, Full Scan sẽ chạy WORKFLOW module:
+    1. `wait_for_state()` — Chờ game vào Lobby
+    2. `go_to_profile()` — Navigate tới Profile Menu (có state detection)
+    3. `extract_player_id()` — Tap nút Copy ID + đọc clipboard qua ADB Clipper
+    4. `back_to_lobby()` — Quay về Lobby để tiếp tục scan
+  - Game ID được ghi vào `scan_snapshots` và gọi `auto_link_account()` sau khi save.
+
+- **API Endpoints Rework (`backend/api.py`)**
+  - `POST /api/accounts` giờ yêu cầu `game_id` (bắt buộc), `emu_index` là tùy chọn.
+  - `GET/PUT/DELETE /api/accounts/{game_id}` — dùng Game ID thay cho emu_index.
+  - **3 Endpoint mới:** `GET /api/pending-accounts`, `POST .../confirm`, `POST .../dismiss`.
+
+- **Account Page UI (`frontend/js/pages/accounts.js`)**
+  - **Cột Game ID:** Hiển thị ID in-game, Legacy account có icon ⚠️ cảnh báo.
+  - **Cột Status:** Badge trạng thái 🟢 Active / ⚪ Idle / 🔴 None thay cho cột Target cũ.
+  - **Form Add/Edit:** Game ID là trường bắt buộc (monospace font), Emulator Index chuyển thành tùy chọn.
+  - **Slide Panel:** Header hiển thị `ID: 12345678`, nút Delete dùng `game_id`.
+  - Cập nhật Grid View, `_saveNote()`, tất cả API call — đồng bộ hoàn toàn với backend mới.
+
+---
+
+## Version 1.0.4
 *Emulator Workspace Organization, Menus & UX Polish*
 
 - **Chrome-Style Tabs (`frontend/js/pages/emulators.js`)**

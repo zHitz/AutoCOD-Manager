@@ -12,7 +12,6 @@ from PIL import Image
 from backend.config import config
 
 
-
 # Crop regions for each scan phase (x1, y1, x2, y2)
 REGIONS_MAP = {
     "profile": {

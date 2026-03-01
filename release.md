@@ -1,41 +1,80 @@
-# 🚀 Release Notes - Version 1.0.4
-*Emulator Workspace Organization, Menus & UX Polish*
+# 🚀 Release Notes - Version 1.0.6
+*Account-GameID Architecture & WORKFLOW Module Integration*
 
-Đây là bản cập nhật lớn (Major Update) lột xác hoàn toàn giao diện quản lý Emulator Instances. Biến trang trạng thái đơn giản trở thành một **Control Panel / Workspace** hành động cao cấp dành cho môi trường sản xuất.
+Bản cập nhật kiến trúc lớn (Architecture Update) tái thiết toàn bộ hệ thống quản lý Account. Chuyển từ mô hình **1 Emulator = 1 Account** sang kiến trúc **Game ID là danh tính duy nhất**, cho phép nhiều Account trên cùng một Emulator và tích hợp module tự động nhận dạng ID trực tiếp từ game.
 
 ---
 
 ## ✨ Features & Enhancements
 
-### 1. 🗂️ Chrome-Style Tabs Workspace
-Cấu trúc lại toàn bộ không gian làm việc theo dạng Tab đa cửa sổ mượt mà giống hệt trình duyệt Chrome.
-- **Tab Management System:** Ngành nhóm các máy ảo (Ví dụ: Farming, Scanners) vào các không gian làm việc độc lập.
-- **Dynamic Badge Count:** Pill badge tự động đếm và cập nhật số lượng máy ảo bên trong mỗi Tab.
-- **Inline Tab Editing:** Dễ dàng tạo tab mới bằng phím `+`. Nhấp đúp (Double-click) vào bất kỳ nhãn Tab nào để đổi tên trực tiếp ngay tại đó.
-- Cung cấp nút `✕` để đóng Tab (Tự động hoàn trả các máy ảo bên trong về lại Tab gốc "All Instances").
+### 1. 🆔 Account-GameID Architecture
+Tái cấu trúc toàn bộ hệ thống Account lấy Game ID làm trung tâm thay vì Emulator Index.
+- **Game ID là Primary Key:** Mỗi Account được định danh bằng ID in-game duy nhất — không còn phụ thuộc vào Emulator.
+- **Multi-Account per Emulator:** Một Emulator giờ có thể chứa nhiều Account game khác nhau. Emulator chỉ là công cụ, Account mới là mục tiêu quản lý.
+- **Active Status Tracking:** Hệ thống theo dõi trạng thái Active/Idle cho từng Account trên từng Emulator.
+- **Schema Migration tự động:** Database cũ được migrate an toàn — Account cũ nhận placeholder `LEGACY-{id}` cho đến khi được gán Game ID thật.
 
-### 2. 🖱️ Advanced Context Menus (···)
-Dẹp bỏ các dãy nút bấm tĩnh chiếm diện tích để lấy lại Không gian làm việc.
-- **Card Context Menu Redesign:** Bổ sung nút More (···) khi hover qua từng Card màn hình để gọi **Dropdown Menu** hiện đại bóng đổ mượt mà.
-- **Right-Click Context Menu:** Hỗ trợ nhấp chuột phải trên toàn bộ dải Card thiết bị để mở nhanh Menu ngữ cảnh.
-- Cung cấp hàng loạt thao tác nâng cao trong Menu:
-  - Sao chép nhanh (Copy Name, Copy ADB Serial, Copy Index) vào Clipboard cực kỳ tiện dụng với hiệu ứng Tick `✓`.
-  - Thay đổi vị trí: Gán máy ảo sang Tab khác bằng chức năng **Move To Tab** ngay bên mặt Card.
-  - Phím tắt Start/Stop Instance & Rename Instance tích hợp thẳng vào Context Menu.
+### 2. 📋 Pending Account Queue
+Cơ chế xác nhận Account mới phát hiện qua Full Scan.
+- **Hàng chờ xác nhận:** Khi Scan phát hiện Game ID chưa tồn tại trong hệ thống → tự động đưa vào **Pending Queue** thay vì tạo thẳng.
+- **User Confirmation:** Người dùng xem xét, bổ sung thông tin (Login Method, Email, Alliance...) rồi Confirm hoặc Dismiss.
+- **API Endpoints mới:** `GET /api/pending-accounts`, `POST .../confirm`, `POST .../dismiss`.
 
-### 3. ⚡ Core Interactions & Telemetry
-Chuyển đổi hoàn toàn phương thức tương tác người dùng.
-- **Action-centric Control Panel:** Thanh Toolbar mới với công cụ Filter theo nút trạng thái (`All`, `Running`, `Stopped`) và Thanh Tìm kiếm.
-- **Auto-Refresh Ring:** Không còn khoảng chờ mù lòa. Bổ sung Toggle bật tắt API Polling kèm Vòng lặp đếm ngược đồ hoạ (SVG Ring) cực kì trực quan (5 giây chu kỳ).
-- **Pro UX Hover Actions:** Giấu nút Quick Actions và xuất hiện mờ (Fade In) chỉ khi người dùng rê chuột đúng vào hàng thiết bị đang tương tác. 
-- **Bulk Safety:** Bổ sung công cụ Checkbox hàng loạt và gắn Dialog Confirm cho các tuỳ chọn "Stop All", "Stop Selected" chống click nhầm làm đứng quy trình tự động.
-- **Inline Rename:** Cung cấp sửa tên Card bằng Double-Click, không cần hộp thoại phiền nhiễu.
-- Hiển thị đầy đủ **Telemetry** thời gian thực trải ngang theo từng thiết bị: `PID | Resolution | DPI | CPU | RAM`.
+### 3. 🔧 WORKFLOW Module Integration
+Di chuyển toàn bộ hệ thống tự động hoá game từ `TEST/WORKFLOW` vào App Core.
+- **Package `backend/core/workflow/`:** Gồm 4 module + 10 template images:
+  - `adb_helper.py` — ADB command wrapper
+  - `clipper_helper.py` — Clipboard access qua ADB Clipper broadcast
+  - `core_actions.py` — `extract_player_id()`, `go_to_profile()`, `wait_for_state()`, `back_to_lobby()`
+  - `state_detector.py` — OpenCV template matching nhận diện trạng thái game
+- **Logic giữ nguyên 100%** so với bản gốc — chỉ adapt import path cho app context.
 
-### 4. 🎨 Visual & Engine Upgrades
-- Tinh chỉnh CSS ưu tiên hàng đầu (`!important`) chống vỡ chữ tại trang Search.
-- **Staggered Animations:** Giao diện load danh sách không còn bị chớp nháy đột ngột mà được tải trượt lên tuần tự mượt mà (`fadeInSlideUp` animation delay dynamic).
-- **Graceful Error Handling:** Tăng cường tính ổn định của vòng lặp Render List bằng cách phong toả nó trong Block `try...catch` để báo lỗi đỏ ra màn hình thay vì màn trắng khi backend API trả về lỗi dữ liệu.
-- Phân bổ hệ màu Code quy chuẩn Status Badges (Emeral cho Running, Muted cho Stopped).
+### 4. 🎯 Full Scan — Game ID Capture
+Tích hợp bước trích xuất Game ID vào pipeline Full Scan.
+- **Step 0 (Mới):** Trước khi chụp screenshot, hệ thống tự động:
+  1. Chờ game vào Lobby (State Detection)
+  2. Navigate tới Profile Menu
+  3. Tap nút Copy ID → Đọc clipboard qua ADB Clipper (100% chính xác, không OCR)
+  4. Quay về Lobby để tiếp tục scan bình thường
+- **Auto-Link:** Sau khi save scan data, gọi `auto_link_account()` để liên kết hoặc tạo pending.
+
+### 5. 🖥️ Account Page UI Updates
+Cập nhật giao diện trang Account đồng bộ với kiến trúc mới.
+- **Cột Game ID:** Hiển thị ID in-game, Legacy account đánh dấu ⚠️.
+- **Cột Status:** Badge trạng thái 🟢 Active / ⚪ Idle / 🔴 None thay cho cột Target cũ.
+- **Form Add/Edit:** Game ID là trường bắt buộc (monospace), Emulator Index là tùy chọn.
+- **Slide Panel:** Header hiển thị Game ID, nút Delete/Edit dùng `game_id`.
+- **Provider Column:** Thay cột "Accs" cũ bằng cột Provider (Global/Sub-account).
 
 ---
+
+## 🔌 API Changes
+
+| Endpoint | Method | Thay đổi |
+|----------|--------|----------|
+| `/api/accounts` | POST | Yêu cầu `game_id` (bắt buộc), `emu_index` tùy chọn |
+| `/api/accounts/{game_id}` | GET/PUT/DELETE | Dùng `game_id` thay cho `emu_index` |
+| `/api/pending-accounts` | GET | **Mới** — Lấy danh sách pending |
+| `/api/pending-accounts/{id}/confirm` | POST | **Mới** — Xác nhận account |
+| `/api/pending-accounts/{id}/dismiss` | POST | **Mới** — Bỏ qua account |
+
+---
+
+## 🗂️ Files Changed
+
+| File | Hành động |
+|------|-----------|
+| `backend/storage/database.py` | Schema + Migration + CRUD rewrite |
+| `backend/core/full_scan.py` | Step 0 Game ID capture |
+| `backend/api.py` | Endpoints updated + 3 mới |
+| `frontend/js/pages/accounts.js` | UI overhaul |
+| `backend/core/workflow/__init__.py` | **Mới** — Package init |
+| `backend/core/workflow/adb_helper.py` | **Mới** — ADB wrapper |
+| `backend/core/workflow/clipper_helper.py` | **Mới** — Clipboard helper |
+| `backend/core/workflow/core_actions.py` | **Mới** — Game automation |
+| `backend/core/workflow/state_detector.py` | **Mới** — State detection |
+| `backend/core/workflow/templates/` | **Mới** — 10 template images |
+
+---
+
+> ⚠️ **Migration Note:** Khi khởi động lần đầu sau update, hệ thống sẽ tự động migrate database. Account cũ sẽ nhận Game ID dạng `LEGACY-{id}` — cần chạy Full Scan hoặc cập nhật thủ công để gán Game ID thật.

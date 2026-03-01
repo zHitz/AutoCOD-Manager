@@ -343,28 +343,30 @@ const AccountsPage = {
                                 <th class="th-group freeze-col-1 stt-col" colspan="1" style="background:var(--muted);z-index:11;text-align:left;padding-left:14px;"></th>
                                 <th class="th-group freeze-col-2" colspan="1" style="background:var(--muted);z-index:11;"></th>
                                 <th class="th-group freeze-col-3" colspan="1" style="background:var(--muted);z-index:11;text-align:left;">Identity</th>
-                                <th class="th-group" colspan="5" style="border-left:1px solid var(--border)">Account Details</th>
+                                <th class="th-group" colspan="6" style="border-left:1px solid var(--border)">Account Details</th>
                                 <th class="th-group" colspan="4" style="border-left:1px solid var(--border)">Progress & Social</th>
-                                <th class="th-group" colspan="4" style="border-left:1px solid var(--border)">Resources</th>
+                                <th class="th-group" colspan="5" style="border-left:1px solid var(--border)">Resources</th>
                                 <th class="th-group" colspan="1"></th>
                             </tr>
                             <tr>
                                 <th class="th-col freeze-col-1 stt-col" style="padding-left:14px;z-index:11;">#</th>
                                 <th class="th-col freeze-col-2" style="min-width:110px;z-index:11;">Emulator</th>
                                 <th class="th-col freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);">Name</th>
-                                <th class="th-col accent" style="text-align:right;border-left:1px solid var(--border);">Power</th>
+                                <th class="th-col" style="border-left:1px solid var(--border);font-size:11px;">Game ID</th>
+                                <th class="th-col accent" style="text-align:right;">Power</th>
                                 <th class="th-col">Login</th>
                                 <th class="th-col">Email</th>
-                                <th class="th-col">Target</th>
+                                <th class="th-col" style="text-align:center;">Status</th>
                                 <th class="th-col" style="text-align:center;">Sync</th>
                                 <th class="th-col" style="text-align:right;border-left:1px solid var(--border);">Hall</th>
                                 <th class="th-col" style="text-align:right;">Market</th>
                                 <th class="th-col">Alliance</th>
-                                <th class="th-col" style="text-align:center;">Accs</th>
+                                <th class="th-col" style="text-align:center;">Provider</th>
                                 <th class="th-col" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);">Gold</th>
                                 <th class="th-col" style="text-align:right;color:var(--emerald-600,#059669);">Wood</th>
                                 <th class="th-col" style="text-align:right;color:var(--indigo-500,#6366f1);">Ore</th>
                                 <th class="th-col" style="text-align:right;color:var(--orange-500,#f97316);">Pet 🐾</th>
+                                <th class="th-col" style="text-align:right;color:var(--purple-500,#a855f7);">Mana ✦</th>
                                 <th class="th-col" style="width:60px;"></th>
                             </tr>
                         </thead>
@@ -389,10 +391,10 @@ const AccountsPage = {
 
     _renderTableBody() {
         if (this._isLoading) {
-            return `<tr><td colspan="17" style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</td></tr>`;
+            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</td></tr>`;
         }
         if (this._accountsData.length === 0) {
-            return `<tr><td colspan="17" style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</td></tr>`;
+            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</td></tr>`;
         }
         return this._accountsData.map((row) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
@@ -406,11 +408,25 @@ const AccountsPage = {
             const goldFormatted = AccountsPage.formatResource(row.gold);
             const woodFormatted = AccountsPage.formatResource(row.wood);
             const oreFormatted = AccountsPage.formatResource(row.ore);
+            const manaFormatted = AccountsPage.formatResource(row.mana);
             const accMatching = row.lord_name ? 'Yes' : 'No';
-            const accountsTotal = row.provider ? 1 : 0; // naive total
             const ingameName = row.lord_name || '—';
             const displayEmail = row.email || '—';
             const displayAlliance = row.alliance || '—';
+            const gameId = row.game_id || '—';
+            const isLegacy = gameId.startsWith('LEGACY-');
+
+            // Active status badge
+            let statusBadge;
+            if (row.is_active === 1 && statusStr === 'online') {
+                statusBadge = '<span class="badge-status-yes">🟢 Active</span>';
+            } else if (row.is_active === 1) {
+                statusBadge = '<span style="background:rgba(234,179,8,0.1);color:var(--yellow-500);border:1px solid rgba(234,179,8,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
+            } else if (row.emulator_db_id) {
+                statusBadge = '<span style="background:var(--muted);color:var(--muted-foreground);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
+            } else {
+                statusBadge = '<span class="badge-status-no">🔴 None</span>';
+            }
 
             return `
             <tr class="account-row${isSelected ? ' selected' : ''}" onclick="AccountsPage.openDetail(${row.account_id})">
@@ -418,18 +434,17 @@ const AccountsPage = {
                 <td class="freeze-col-2" style="padding:11px 14px;font-size:13px;">
                     <div style="display:flex;align-items:center;gap:7px;">
                         <span class="${dotClass}" title="${statusStr}"></span>
-                        <span style="font-weight:500;">${row.emu_name || 'LDP-' + row.emu_index}</span>
+                        <span style="font-weight:500;">${row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : '—')}</span>
                     </div>
                 </td>
                 <td class="freeze-col-3" style="padding:11px 14px;font-size:13px;font-weight:700;color:var(--primary);border-right:2px solid var(--border);">${ingameName}</td>
-                <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;border-left:1px solid var(--border);">${powFormatted}</td>
+                <td style="padding:11px 14px;font-size:12px;font-family:monospace;color:var(--muted-foreground);border-left:1px solid var(--border);">${isLegacy ? '<span style="color:var(--yellow-500)" title="Legacy account - needs Game ID">⚠️</span>' : gameId}</td>
+                <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;">${powFormatted}</td>
                 <td style="padding:11px 14px;font-size:13px;">
                     <span style="border:1px solid ${loginColor}22;background:${loginColor}10;color:${loginColor};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${loginMethod}</span>
                 </td>
                 <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);max-width:160px;overflow:hidden;text-overflow:ellipsis;">${displayEmail}</td>
-                <td style="padding:11px 14px;font-size:13px;">
-                    <span style="background:var(--muted);color:var(--foreground);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">#${row.emu_index}</span>
-                </td>
+                <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
                 <td style="padding:11px 14px;text-align:center;">
                     ${accMatching === 'Yes'
                     ? '<span class="badge-status-yes">✓ Linked</span>'
@@ -438,7 +453,7 @@ const AccountsPage = {
                 <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;border-left:1px solid var(--border);">${row.hall_level || 0}</td>
                 <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;">${row.market_level || 0}</td>
                 <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);">${displayAlliance}</td>
-                <td style="padding:11px 14px;text-align:center;font-size:13px;">${accountsTotal}</td>
+                <td style="padding:11px 14px;text-align:center;font-size:12px;">${row.provider || '—'}</td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
                     <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>
                 </td>
@@ -449,7 +464,10 @@ const AccountsPage = {
                     <span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${row.pet_token || 0}</span>
+                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>
+                </td>
+                <td style="padding:11px 14px;text-align:right;">
+                    <span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>
                 </td>
                 <td style="padding:11px 14px;">
                     <div class="hover-actions-arrow">
@@ -484,7 +502,7 @@ const AccountsPage = {
                         ${ingameName}
                         <span class="alliance-badge">${displayAlliance !== '—' ? displayAlliance : '—'}</span>
                     </div>
-                    <div class="account-emulator">${row.emu_name || 'LDP-' + row.emu_index} · #${row.emu_index}</div>
+                    <div class="account-emulator">${row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : 'No Emulator')} · ${row.game_id ? 'ID: ' + row.game_id : 'No ID'}</div>
                 </div>
                 <div class="account-power">
                     <div class="power-label">
@@ -495,7 +513,7 @@ const AccountsPage = {
                     <div class="sync-time">Synced: ${row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : 'Never'}</div>
                 </div>
                 <div class="card-actions">
-                    <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.id})">
+                    <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.account_id})">
                         View <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                     </button>
                     <div class="card-btn-icon" onclick="event.stopPropagation()" title="Sync">
@@ -560,10 +578,16 @@ const AccountsPage = {
             <div class="panel-body" style="padding: 24px 28px;">
                 <form id="accounts-add-edit-form" onsubmit="event.preventDefault(); AccountsPage.saveAccount('${mode}');">
                     
-                    <div style="margin-bottom:20px;">
-                        <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Emulator Index <span style="color:var(--red-500)">*</span></label>
-                        <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined ? acc.emu_index : ''}" required ${isEdit ? 'readonly' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
-                        ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">Emulator index cannot be changed.</p>' : ''}
+                    <div style="display:flex; gap:16px; margin-bottom:20px;">
+                        <div style="flex:1;">
+                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Game ID <span style="color:var(--red-500)">*</span></label>
+                            <input type="text" id="form-game-id" value="${acc.game_id || ''}" required ${isEdit ? 'readonly' : ''} placeholder="e.g. 12345678" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground); font-family:monospace;" />
+                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">Game ID cannot be changed.</p>' : '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">The unique in-game player ID (copy from game profile).</p>'}
+                        </div>
+                        <div style="flex:1;">
+                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Emulator Index</label>
+                            <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined && acc.emu_index !== null ? acc.emu_index : ''}" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" placeholder="Optional" />
+                        </div>
                     </div>
 
                     <div style="display:flex; gap:16px; margin-bottom:20px;">
@@ -576,7 +600,7 @@ const AccountsPage = {
                             <input type="number" step="0.1" id="form-power" value="${isEdit ? (acc.power ? (acc.power / 1000000).toFixed(1) : '') : ''}" ${isEdit ? 'disabled' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
                         </div>
                     </div>
-                    ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:-14px; margin-bottom:20px;">Identity metrics synchronize automatically via OCR.</p>' : ''}
+                    ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:-14px; margin-bottom:20px;">Identity metrics synchronize automatically via Full Scan.</p>' : ''}
 
                     <div style="display:flex; gap:16px; margin-bottom:20px;">
                         <div style="flex:1;">
@@ -625,6 +649,7 @@ const AccountsPage = {
     },
 
     async saveAccount(mode) {
+        const gameId = document.getElementById('form-game-id').value.trim();
         const emuIndex = document.getElementById('form-emu-index').value;
         const loginMethod = document.getElementById('form-login-method').value;
         const email = document.getElementById('form-email').value;
@@ -632,8 +657,14 @@ const AccountsPage = {
         const alliance = document.getElementById('form-alliance').value;
         const note = document.getElementById('form-note').value;
 
+        if (!gameId) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Game ID is required');
+            return;
+        }
+
         let payload = {
-            emu_index: emuIndex,
+            game_id: gameId,
+            emu_index: emuIndex || null,
             login_method: loginMethod,
             email: email,
             provider: provider,
@@ -668,7 +699,7 @@ const AccountsPage = {
             }
         } else if (mode === 'edit') {
             try {
-                const res = await fetch(`/api/accounts/${emuIndex}`, {
+                const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -692,10 +723,10 @@ const AccountsPage = {
         }
     },
 
-    async deleteAccount(emuIndex) {
-        if (!confirm('Are you sure you want to delete this account? Identity scan records will also be erased.')) return;
+    async deleteAccount(gameId) {
+        if (!confirm('Are you sure you want to delete this account? This action cannot be undone.')) return;
         try {
-            const res = await fetch(`/api/accounts/${emuIndex}`, { method: 'DELETE' });
+            const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, { method: 'DELETE' });
             const data = await res.json();
             if (data.status === 'deleted') {
                 this.closeDetail();
@@ -740,7 +771,7 @@ const AccountsPage = {
     },
 
     _renderSlideContent() {
-        const acc = this._accountsData.find(a => a.account_id === this._selectedAccountId);
+        const acc = this._accountsData.find(a => a.account_id == this._selectedAccountId);
         if (!acc) return '';
 
         const ingameName = acc.lord_name || 'No Name';
@@ -748,12 +779,24 @@ const AccountsPage = {
         const isOnline = (acc.emu_status || '').toLowerCase() === 'online';
         const statusColor = isOnline ? 'var(--emerald-500)' : 'var(--red-500,#ef4444)';
         const statusLabel = isOnline ? 'Online' : 'Offline';
-        const emuDisplay = acc.emu_name || 'LDP-' + acc.emu_index;
+        const emuDisplay = acc.emu_name || (acc.emu_index != null ? 'LDP-' + acc.emu_index : 'No Emulator');
         const powFormatted = AccountsPage.formatPower(acc.power);
         const accMatching = acc.lord_name ? 'Yes' : 'No';
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
         const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
+        const gameIdDisplay = acc.game_id || 'Unknown';
+        const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
+
+        // Status based on is_active
+        let activeStatus, activeColor;
+        if (acc.is_active === 1 && isOnline) {
+            activeStatus = '🟢 Active'; activeColor = 'var(--emerald-500)';
+        } else if (acc.is_active === 1) {
+            activeStatus = '⚪ Idle'; activeColor = 'var(--yellow-500)';
+        } else {
+            activeStatus = '🔴 None'; activeColor = 'var(--red-500,#ef4444)';
+        }
 
         return `
             <!-- Panel Header -->
@@ -776,16 +819,16 @@ const AccountsPage = {
                             </span>
                         </div>
                         <div style="font-size:12px;color:var(--muted-foreground);margin-top:3px;display:flex;gap:8px;align-items:center;">
-                            <span>${emuDisplay}</span>
+                            <span style="font-family:monospace;${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span>
                             <span style="color:var(--border);">|</span>
-                            <span>Target #${acc.emu_index}</span>
+                            <span>${emuDisplay}</span>
                             <span style="color:var(--border);">|</span>
                             <span>Last synced: ${timeAgo}</span>
                         </div>
                     </div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-ghost btn-sm" style="color:var(--red-500);" onclick="AccountsPage.deleteAccount('${acc.emu_index}')">
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red-500);" onclick="AccountsPage.deleteAccount('${acc.game_id}')">
                         <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         Delete
                     </button>
@@ -875,7 +918,7 @@ const AccountsPage = {
             const loginDotClass = loginMethod === 'Google' ? 'method-dot-google' : loginMethod === 'Facebook' ? 'method-dot-facebook' : 'method-dot-apple';
             const hallPct = Math.round(hallLvl / 25 * 100);
             const mktPct = Math.round(marketLvl / 25 * 100);
-            const emuDisplay = acc.emu_name || 'LDP-' + acc.emu_index;
+            const emuDisplay = acc.emu_name || (acc.emu_index != null ? 'LDP-' + acc.emu_index : 'No Emulator');
             const isOnline = (acc.emu_status || '').toLowerCase() === 'online';
 
             return `
@@ -986,11 +1029,13 @@ const AccountsPage = {
             const goldFormatted = AccountsPage.formatResource(acc.gold || 0);
             const woodFormatted = AccountsPage.formatResource(acc.wood || 0);
             const oreFormatted = AccountsPage.formatResource(acc.ore || 0);
+            const manaFormatted = AccountsPage.formatResource(acc.mana || 0);
             const petToken = acc.pet_token || 0;
             // Cap = 3000M (3B) for simplicity; pct based on that
             const goldPct = Math.min(Math.round((acc.gold || 0) / 3000000000 * 100), 100);
             const woodPct = Math.min(Math.round((acc.wood || 0) / 3000000000 * 100), 100);
             const orePct = Math.min(Math.round((acc.ore || 0) / 3000000000 * 100), 100);
+            const manaPct = Math.min(Math.round((acc.mana || 0) / 3000000000 * 100), 100);
             const oreIsCritical = orePct < 30;
             const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
 
@@ -1052,12 +1097,29 @@ const AccountsPage = {
                         </div>
                         <div>
                             <div class="pet-label-txt">Pet Tokens</div>
-                            <div class="pet-value">${acc.petToken}</div>
+                            <div class="pet-value">${(acc.pet_token || 0).toLocaleString()}</div>
                         </div>
                     </div>
                     <div class="pet-right">
                         <span class="pet-badge">Special Currency</span>
                         <span class="pet-delta delta-up">▲ +2 today</span>
+                    </div>
+                </div>
+
+                <!-- Mana -->
+                <div class="pet-card" style="margin-top:16px;">
+                    <div class="pet-left">
+                        <div class="pet-icon">
+                            <svg style="width:20px;color:#a855f7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                        </div>
+                        <div>
+                            <div class="pet-label-txt">Mana</div>
+                            <div class="pet-value">${manaFormatted}</div>
+                        </div>
+                    </div>
+                    <div class="pet-right">
+                        <span class="pet-badge" style="background:rgba(168,85,247,0.1);color:#a855f7;border-color:rgba(168,85,247,0.25);">Magic Resource</span>
+                        <div class="res-bar" style="width:100px;height:6px;"><div class="res-fill" style="width:${manaPct}%;background:linear-gradient(90deg,#a855f7,#c084fc);"></div></div>
                     </div>
                 </div>
 
@@ -1151,7 +1213,7 @@ const AccountsPage = {
         fb.classList.add('show');
 
         try {
-            const res = await fetch(`/api/accounts/${acc.emu_index}`, {
+            const res = await fetch(`/api/accounts/${encodeURIComponent(acc.game_id)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ note: ta.value })
