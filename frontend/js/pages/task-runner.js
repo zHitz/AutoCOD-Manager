@@ -14,6 +14,12 @@ const TaskRunnerPage = {
 
     _macros: [],
     _currentTab: 'emulators',
+    _apkLibrary: [
+        { id: 'codm-v1', name: 'Call of Duty Mobile', package: 'com.activision.callofduty.shooter', version: '1.0.51', size: '2.6 GB', note: 'Stable global build', queued: false },
+        { id: 'zarchiver-v1', name: 'ZArchiver', package: 'ru.zdevs.zarchiver', version: '1.0.10', size: '5.4 MB', note: 'Extract files inside emulator', queued: false },
+        { id: 'gspace-v1', name: 'GSpace', package: 'com.gspace.android', version: '2.2.9', size: '18.2 MB', note: 'Google services helper', queued: false },
+        { id: 'quicktouch-v1', name: 'QuickTouch Auto Clicker', package: 'simplehat.clicker', version: '4.8.3', size: '9.1 MB', note: 'Optional auto-tap support', queued: false },
+    ],
     // key=`${index}-${filename}`, value={startTime, timer, duration}
 
     render() {
@@ -43,6 +49,10 @@ const TaskRunnerPage = {
                     <button class="actions-tab" data-tab="scan" onclick="TaskRunnerPage.switchTab('scan')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         <span>Scan Operations</span>
+                    </button>
+                    <button class="actions-tab" data-tab="install-apps" onclick="TaskRunnerPage.switchTab('install-apps')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span>Install Apps</span>
                     </button>
                 </div>
 
@@ -88,6 +98,7 @@ const TaskRunnerPage = {
             case 'emulators': el.innerHTML = this._renderEmuTab(); this._loadEmuList(); break;
             case 'recorder': el.innerHTML = this._renderRecorderTab(); this.loadMacros(); break;
             case 'scan': el.innerHTML = this._renderScanTab(); break;
+            case 'install-apps': el.innerHTML = this._renderInstallAppsTab(); break;
         }
     },
 
@@ -436,6 +447,78 @@ const TaskRunnerPage = {
         } catch (e) {
             Toast.error('Error', 'Failed to run scan');
         }
+    },
+
+    // ═══════════════════════════════════════════
+    // TAB 4: Install Apps
+    // ═══════════════════════════════════════════
+
+    _renderInstallAppsTab() {
+        const targetHtml = this._targetBadge();
+        return `
+            <div class="tab-panel">
+                <div class="tab-panel-header">
+                    <div>
+                        <h3 class="tab-panel-title">Install Apps</h3>
+                        <p class="text-sm text-muted">Preloaded APK library ready for you to install on target emulators.</p>
+                    </div>
+                </div>
+                <div class="tab-panel-body">
+                    ${targetHtml}
+                    <div class="apk-library" id="apk-library-grid">
+                        ${this._renderApkCards()}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    _renderApkCards() {
+        return this._apkLibrary.map(app => `
+            <div class="apk-card">
+                <div class="apk-card-header">
+                    <div>
+                        <div class="apk-card-name">${app.name}</div>
+                        <div class="apk-card-package">${app.package}</div>
+                    </div>
+                    ${this._installStatusBadge(app.queued)}
+                </div>
+                <div class="apk-card-meta">
+                    <span>Version ${app.version}</span>
+                    <span>•</span>
+                    <span>${app.size}</span>
+                </div>
+                <p class="apk-card-note">${app.note}</p>
+                <button class="btn ${app.queued ? 'btn-outline' : 'btn-default'} btn-sm" style="width:100%"
+                    onclick="TaskRunnerPage.queueInstall('${app.id}')">
+                    ${app.queued ? 'Waiting for install' : 'Install on selected emulators'}
+                </button>
+            </div>
+        `).join('');
+    },
+
+    _installStatusBadge(isQueued) {
+        if (isQueued) {
+            return '<span class="badge badge-busy">WAITING</span>';
+        }
+        return '<span class="badge badge-online">READY</span>';
+    },
+
+    queueInstall(appId) {
+        const app = this._apkLibrary.find(item => item.id === appId);
+        if (!app) return;
+
+        if (GlobalStore.state.selectedEmus.length === 0) {
+            Toast.warning('No emulator selected', 'Please select at least one emulator before installing apps.');
+            return;
+        }
+
+        app.queued = true;
+        this.addFeed('active', `📦 App "${app.name}" queued for installation on ${GlobalStore.state.selectedEmus.length} emulator(s)`);
+        Toast.success('Added to install queue', `${app.name} is waiting for your install confirmation.`);
+
+        const grid = document.getElementById('apk-library-grid');
+        if (grid) grid.innerHTML = this._renderApkCards();
     },
 
     // ── Shared Helpers ──
