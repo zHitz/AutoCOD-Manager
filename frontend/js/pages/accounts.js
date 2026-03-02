@@ -4,6 +4,7 @@
  */
 const AccountsPage = {
     _accountsData: [],
+    _pendingAccounts: [],
     _selectedAccountId: null,
     _activeDetailTab: 'overview',
     _viewMode: 'table',
@@ -334,6 +335,9 @@ const AccountsPage = {
                     </div>
                 </div>
 
+                <!-- Pending Queue Banner -->
+                <div id="pending-queue-container">${this._renderPendingBanner()}</div>
+
                 <!-- Main content: table or grid -->
                 <div class="${this._viewMode === 'grid' ? '' : 'card'}" style="overflow: auto; flex: 1; ${this._viewMode === 'table' ? 'padding:0;' : ''}">
                     ${this._viewMode === 'table' ? `
@@ -622,8 +626,8 @@ const AccountsPage = {
                         <div style="flex:1;">
                             <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Provider</label>
                             <select id="form-provider" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);">
-                                <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global / Main</option>
-                                <option value="Sub-account" ${acc.provider === 'Sub-account' ? 'selected' : ''}>Sub-account</option>
+                                <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global</option>
+                                <option value="Funtap" ${acc.provider === 'Funtap' ? 'selected' : ''}>Funtap</option>
                             </select>
                         </div>
                         <div style="flex:1;">
@@ -1246,12 +1250,17 @@ const AccountsPage = {
         }
 
         try {
-            const res = await fetch('/api/accounts');
-            this._accountsData = await res.json();
+            const [accRes, pendRes] = await Promise.all([
+                fetch('/api/accounts'),
+                fetch('/api/pending-accounts'),
+            ]);
+            this._accountsData = await accRes.json();
+            const pendData = await pendRes.json();
+            this._pendingAccounts = Array.isArray(pendData) ? pendData : [];
         } catch (e) {
             console.error('Failed to fetch accounts:', e);
             this._accountsData = [];
-            Toast.show('Failed to load accounts', 'error');
+            this._pendingAccounts = [];
         } finally {
             this._isLoading = false;
             if (typeof router !== 'undefined' && router._currentPage === 'accounts') {
@@ -1261,12 +1270,151 @@ const AccountsPage = {
         }
     },
 
+    // ── Pending Queue ──
+
+    _renderPendingBanner() {
+        if (!this._pendingAccounts || this._pendingAccounts.length === 0) return '';
+
+        const count = this._pendingAccounts.length;
+        const cards = this._pendingAccounts.map(p => {
+            const emuName = p.emu_name || (p.emu_index != null ? 'LDP-' + p.emu_index : 'Unknown');
+            return `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;min-width:340px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;flex-shrink:0;">?</div>
+                    <div>
+                        <div style="font-weight:700;font-size:14px;">${p.lord_name || 'Unknown Lord'}</div>
+                        <div style="font-size:12px;color:var(--muted-foreground);font-family:monospace;">ID: ${p.game_id} &middot; ${emuName}</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-primary btn-sm" style="font-size:12px;padding:5px 14px;" onclick="event.stopPropagation(); AccountsPage.showConfirmForm(${p.id})">
+                        ✓ Confirm
+                    </button>
+                    <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:5px 10px;color:var(--muted-foreground);" onclick="event.stopPropagation(); AccountsPage.dismissPending(${p.id})">
+                        ✗
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+
+        return `
+        <div style="background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(217,119,6,0.04));border:1px solid rgba(245,158,11,0.2);border-radius:12px;padding:16px 20px;margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                <span style="font-size:18px;">📋</span>
+                <span style="font-weight:700;font-size:14px;color:var(--foreground);">Pending Accounts</span>
+                <span style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid rgba(245,158,11,0.3);border-radius:20px;padding:1px 10px;font-size:12px;font-weight:700;">${count}</span>
+                <span style="font-size:12px;color:var(--muted-foreground);">New accounts discovered via Full Scan — confirm to add to your roster.</span>
+            </div>
+            <div id="pending-confirm-form-area"></div>
+            <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;">
+                ${cards}
+            </div>
+        </div>`;
+    },
+
+    showConfirmForm(pendingId) {
+        const p = this._pendingAccounts.find(x => x.id === pendingId);
+        if (!p) return;
+
+        const area = document.getElementById('pending-confirm-form-area');
+        if (!area) return;
+
+        area.innerHTML = `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+                <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--indigo-500,#6366f1));color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;">✓</div>
+                <div>
+                    <div style="font-weight:700;font-size:14px;">Confirm: ${p.lord_name || 'Unknown'}</div>
+                    <div style="font-size:12px;color:var(--muted-foreground);font-family:monospace;">Game ID: ${p.game_id}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Login Method</label>
+                    <select id="pq-login-method" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
+                        <option value="">-- Select --</option>
+                        <option value="Google">Google</option>
+                        <option value="Facebook">Facebook</option>
+                        <option value="Apple">Apple</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Login Email</label>
+                    <input type="email" id="pq-email" placeholder="email@example.com" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Provider</label>
+                    <select id="pq-provider" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
+                        <option value="Global">Global / Main</option>
+                        <option value="Funtap">Funtap</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Alliance Tag</label>
+                    <input type="text" id="pq-alliance" placeholder="e.g. [ABC]" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Notes</label>
+                    <input type="text" id="pq-note" placeholder="Optional notes..." style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('pending-confirm-form-area').innerHTML=''">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="AccountsPage.confirmPending(${pendingId})">Create Account</button>
+            </div>
+        </div>`;
+    },
+
+    async confirmPending(pendingId) {
+        const loginMethod = document.getElementById('pq-login-method')?.value || '';
+        const email = document.getElementById('pq-email')?.value || '';
+        const provider = document.getElementById('pq-provider')?.value || 'Global';
+        const alliance = document.getElementById('pq-alliance')?.value || '';
+        const note = document.getElementById('pq-note')?.value || '';
+
+        try {
+            const res = await fetch(`/api/pending-accounts/${pendingId}/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ login_method: loginMethod, email, provider, alliance, note }),
+            });
+            const data = await res.json();
+            if (data.status === 'confirmed') {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Account confirmed! ✓');
+                this.fetchData();
+            } else {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Confirm failed: ' + (data.error || 'Unknown'));
+            }
+        } catch (e) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error confirming account');
+        }
+    },
+
+    async dismissPending(pendingId) {
+        if (!confirm('Dismiss this pending account? It will reappear on next scan.')) return;
+        try {
+            const res = await fetch(`/api/pending-accounts/${pendingId}/dismiss`, { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'dismissed') {
+                this.fetchData();
+            } else {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Dismiss failed: ' + (data.error || 'Unknown'));
+            }
+        } catch (e) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error dismissing');
+        }
+    },
+
     init() {
         this._noteOriginals = {};
         this.fetchData();
     },
     destroy() {
         this._selectedAccountId = null;
+        this._pendingAccounts = [];
         this._noteOriginals = {};
     }
 };

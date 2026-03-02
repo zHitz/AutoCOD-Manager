@@ -12,6 +12,7 @@ const router = {
         emulators: EmulatorsPage,
         accounts: AccountsPage,
         workflow: WorkflowPage,
+        scheduled: ScheduledPage,
         settings: SettingsPage,
     },
 
@@ -23,6 +24,7 @@ const router = {
         emulators: 'Emulators',
         accounts: 'Accounts',
         workflow: 'Workflows',
+        scheduled: 'Scheduled',
         settings: 'Settings',
     },
 

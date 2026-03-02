@@ -35,3 +35,6 @@ config.json
 # Project specific ignores
 scan_captures/
 RAW_SCREENS/
+
+
+.agent/
