@@ -211,6 +211,28 @@ async def get_config():
     return config.to_dict()
 
 
+@app.get("/api/config/ocr-keys")
+async def get_ocr_keys():
+    """Get OCR API keys as newline separated text."""
+    keys_path = config.get_api_keys_path()
+    if not keys_path.exists():
+        return {"keys": ""}
+
+    with open(keys_path, "r", encoding="utf-8") as f:
+        return {"keys": f.read()}
+
+
+@app.post("/api/config/ocr-keys")
+async def save_ocr_keys(payload: dict):
+    """Save OCR API keys file content."""
+    keys_text = (payload or {}).get("keys", "")
+    keys_path = config.get_api_keys_path()
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(keys_path, "w", encoding="utf-8") as f:
+        f.write(keys_text.rstrip() + ("\n" if keys_text.strip() else ""))
+    return {"status": "ok"}
+
+
 # ──────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────

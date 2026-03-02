@@ -103,6 +103,22 @@ const SettingsPage = {
                         </div>
                     </div>
 
+                    <!-- OCR API -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 9h16"/><path d="M4 15h16"/><path d="M4 4h.01"/><path d="M4 20h.01"/></svg>
+                            <h3>OCR API Keys</h3>
+                        </div>
+                        <div class="settings-card-body">
+                            <div class="form-group" style="margin-bottom:0">
+                                <label class="form-label" for="cfg-ocr-keys">API keys (mỗi key 1 dòng)</label>
+                                <textarea id="cfg-ocr-keys" class="form-input" style="min-height:120px;resize:vertical;font-family:monospace" placeholder="ocr_key_1
+ocr_key_2"></textarea>
+                                <p class="form-desc">Các dòng bắt đầu bằng # sẽ được xem như comment.</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Account -->
                     <div class="settings-card">
                         <div class="settings-card-header">
@@ -121,7 +137,7 @@ const SettingsPage = {
                     </div>
 
                     <div style="display:flex;justify-content:flex-end;padding-top:8px">
-                        <button class="btn btn-default btn-md" style="gap:8px">
+                        <button class="btn btn-default btn-md" style="gap:8px" id="cfg-save-btn">
                             <svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                             Save Changes
                         </button>
@@ -131,7 +147,12 @@ const SettingsPage = {
         `;
     },
 
-    async init() { await this.loadConfig(); },
+    async init() {
+        const saveBtn = document.getElementById('cfg-save-btn');
+        if (saveBtn) saveBtn.addEventListener('click', () => this.saveConfig());
+        await this.loadConfig();
+        await this.loadOcrKeys();
+    },
     destroy() { },
 
     async loadConfig() {
@@ -151,4 +172,25 @@ const SettingsPage = {
             Toast.error('Error', 'Failed to load config');
         }
     },
+
+    async loadOcrKeys() {
+        try {
+            const data = await API.getOcrKeys();
+            const ocrKeys = document.getElementById('cfg-ocr-keys');
+            if (ocrKeys) ocrKeys.value = data.keys || '';
+        } catch (e) {
+            Toast.error('Error', 'Failed to load OCR API keys');
+        }
+    },
+
+    async saveConfig() {
+        try {
+            const ocrKeys = document.getElementById('cfg-ocr-keys');
+            await API.saveOcrKeys(ocrKeys ? ocrKeys.value : '');
+            Toast.success('Saved', 'OCR API keys updated');
+        } catch (e) {
+            Toast.error('Error', e.message || 'Failed to save settings');
+        }
+    },
+
 };

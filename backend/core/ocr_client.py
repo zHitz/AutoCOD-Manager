@@ -3,7 +3,6 @@ OCR API Client — ocrapi.cloud integration with key rotation.
 
 Pipeline: upload PDF -> poll job status -> download markdown result -> parse.
 """
-import os
 import re
 import time
 import itertools
@@ -21,11 +20,9 @@ MAX_POLL_ATTEMPTS = 60
 
 def load_api_keys() -> list[str]:
     """Load API keys from config file (one per line, # = comment)."""
-    keys_file = getattr(config, "api_keys_file", "api_keys.txt")
-    if not os.path.isabs(keys_file):
-        keys_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), keys_file)
+    keys_file = config.get_api_keys_path()
 
-    if not os.path.exists(keys_file):
+    if not keys_file.exists():
         print(f"[OCR] Warning: API keys file not found: {keys_file}")
         return []
 
