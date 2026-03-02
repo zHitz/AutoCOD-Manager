@@ -40,6 +40,7 @@ class AppConfig:
         self.coordinate_map = data.get("coordinate_map", "960x540_v1")
         self.work_dir = data.get("work_dir", str(PROJECT_ROOT.parent))
         self.debug_screenshots = data.get("debug_screenshots", True)
+        self.api_keys_file = data.get("api_keys_file", "api_keys.txt")
         self.db_path = data.get("db_path", "data/cod_manager.db")
         self.server_port = data.get("server_port", 8000)
 
@@ -64,6 +65,13 @@ class AppConfig:
             PROJECT_ROOT / "data" / "coordinate_maps" / f"{self.coordinate_map}.json"
         )
 
+    def get_api_keys_path(self) -> Path:
+        """Resolve OCR API keys file path."""
+        keys_file = Path(self.api_keys_file)
+        if not keys_file.is_absolute():
+            keys_file = PROJECT_ROOT / keys_file
+        return keys_file
+
     def to_dict(self) -> dict:
         """Serialize config for API response."""
         return {
@@ -73,6 +81,7 @@ class AppConfig:
             "coordinate_map": self.coordinate_map,
             "work_dir": self.work_dir,
             "debug_screenshots": self.debug_screenshots,
+            "api_keys_file": self.api_keys_file,
             "server_port": self.server_port,
         }
 
