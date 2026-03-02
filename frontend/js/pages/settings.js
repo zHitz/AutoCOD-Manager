@@ -105,6 +105,20 @@ const SettingsPage = {
 
                     <!-- OCR API -->
                     <div class="settings-card">
+                        <div class="settings-card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                            <div style="display:flex;align-items:center;gap:10px">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 9h16"/><path d="M4 15h16"/><path d="M4 4h.01"/><path d="M4 20h.01"/></svg>
+                                <h3>OCR API Keys</h3>
+                            </div>
+                            <button class="btn btn-outline btn-sm" id="cfg-ocr-edit-btn" type="button">Edit</button>
+                        </div>
+                        <div class="settings-card-body">
+                            <div id="cfg-ocr-preview" class="form-desc" style="margin-bottom:0">No API keys configured.</div>
+                            <div class="form-group" id="cfg-ocr-editor" style="display:none;margin-top:12px;margin-bottom:0">
+                                <label class="form-label" for="cfg-ocr-keys">API keys (one key per line)</label>
+                                <textarea id="cfg-ocr-keys" class="form-input" style="min-height:120px;resize:vertical;font-family:monospace" placeholder="ocr_key_1
+ocr_key_2"></textarea>
+                                <p class="form-desc">Lines that start with <code>#</code> are treated as comments.</p>
                         <div class="settings-card-header">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 9h16"/><path d="M4 15h16"/><path d="M4 4h.01"/><path d="M4 20h.01"/></svg>
                             <h3>OCR API Keys</h3>
@@ -126,12 +140,27 @@ ocr_key_2"></textarea>
                             <h3>About</h3>
                         </div>
                         <div class="settings-card-body">
-                            <div style="display:flex;align-items:center;gap:16px">
+                            <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
                                 <div style="width:48px;height:48px;border-radius:50%;background:var(--indigo-500);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;flex-shrink:0">A</div>
                                 <div>
                                     <h4 class="font-semibold">COD Game Automation Manager</h4>
                                     <p class="text-sm text-muted">v1.0.0 • pywebview + FastAPI + SQLite</p>
                                 </div>
+                            </div>
+                            <div class="setting-row" style="padding:0;border:none">
+                                <div class="setting-info">
+                                    <span class="form-label" style="margin-bottom:0">Release Notes</span>
+                                    <p class="form-desc">Track the latest changes in this build.</p>
+                                </div>
+                                <button class="btn btn-outline btn-sm" id="cfg-release-notes-btn" type="button">View</button>
+                            </div>
+                            <div id="cfg-release-notes-panel" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--gray-200);border-radius:10px;background:var(--gray-50)">
+                                <p class="form-desc" style="margin-bottom:8px"><strong>v1.0.0</strong></p>
+                                <ul class="form-desc" style="margin:0;padding-left:18px;display:grid;gap:4px">
+                                    <li>Initial dashboard and task management workflow.</li>
+                                    <li>Added OCR API key management in Settings.</li>
+                                    <li>Improved Settings UX with secured OCR key editor toggle.</li>
+                                </ul>
                             </div>
                         </div>
                     </div>
@@ -150,10 +179,61 @@ ocr_key_2"></textarea>
     async init() {
         const saveBtn = document.getElementById('cfg-save-btn');
         if (saveBtn) saveBtn.addEventListener('click', () => this.saveConfig());
+
+        const editBtn = document.getElementById('cfg-ocr-edit-btn');
+        if (editBtn) editBtn.addEventListener('click', () => this.toggleOcrEditor());
+
+        const releaseNotesBtn = document.getElementById('cfg-release-notes-btn');
+        if (releaseNotesBtn) releaseNotesBtn.addEventListener('click', () => this.toggleReleaseNotes());
+
+        await this.loadConfig();
+        await this.loadOcrKeys();
+        this.setOcrEditorVisible(false);
         await this.loadConfig();
         await this.loadOcrKeys();
     },
     destroy() { },
+
+    setOcrEditorVisible(isVisible) {
+        const editor = document.getElementById('cfg-ocr-editor');
+        const editBtn = document.getElementById('cfg-ocr-edit-btn');
+        if (editor) editor.style.display = isVisible ? 'block' : 'none';
+        if (editBtn) editBtn.textContent = isVisible ? 'Close' : 'Edit';
+    },
+
+    toggleOcrEditor() {
+        const editor = document.getElementById('cfg-ocr-editor');
+        if (!editor) return;
+        const isVisible = editor.style.display !== 'none';
+        this.setOcrEditorVisible(!isVisible);
+    },
+
+    toggleReleaseNotes() {
+        const panel = document.getElementById('cfg-release-notes-panel');
+        const btn = document.getElementById('cfg-release-notes-btn');
+        if (!panel || !btn) return;
+
+        const isVisible = panel.style.display !== 'none';
+        panel.style.display = isVisible ? 'none' : 'block';
+        btn.textContent = isVisible ? 'View' : 'Hide';
+    },
+
+    updateOcrPreview(keysText) {
+        const preview = document.getElementById('cfg-ocr-preview');
+        if (!preview) return;
+
+        const lines = (keysText || '')
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && !line.startsWith('#'));
+
+        if (!lines.length) {
+            preview.textContent = 'No API keys configured.';
+            return;
+        }
+
+        preview.textContent = `${lines.length} API key(s) configured.`;
+    },
 
     async loadConfig() {
         try {
@@ -176,6 +256,10 @@ ocr_key_2"></textarea>
     async loadOcrKeys() {
         try {
             const data = await API.getOcrKeys();
+            const keysValue = data.keys || '';
+            const ocrKeys = document.getElementById('cfg-ocr-keys');
+            if (ocrKeys) ocrKeys.value = keysValue;
+            this.updateOcrPreview(keysValue);
             const ocrKeys = document.getElementById('cfg-ocr-keys');
             if (ocrKeys) ocrKeys.value = data.keys || '';
         } catch (e) {
@@ -186,6 +270,10 @@ ocr_key_2"></textarea>
     async saveConfig() {
         try {
             const ocrKeys = document.getElementById('cfg-ocr-keys');
+            const keysValue = ocrKeys ? ocrKeys.value : '';
+            await API.saveOcrKeys(keysValue);
+            this.updateOcrPreview(keysValue);
+            this.setOcrEditorVisible(false);
             await API.saveOcrKeys(ocrKeys ? ocrKeys.value : '');
             Toast.success('Saved', 'OCR API keys updated');
         } catch (e) {
