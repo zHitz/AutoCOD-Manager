@@ -86,12 +86,12 @@ def _scan_worker(emulator_index: int, emulator_name: str,
 
         # ── Step 1: Capture Screenshots ──
         _broadcast("capturing", "Navigating and capturing screenshots...")
-        from backend.core.screen_capture import run_full_capture
+        from backend.core.screen_capture import run_full_capture_modern
 
         def progress_cb(phase, step, total):
             _broadcast(f"capturing ({step}/{total})", f"Phase: {phase}")
 
-        pdf_path = run_full_capture(serial, WORK_DIR, progress_callback=progress_cb)
+        pdf_path = run_full_capture_modern(serial, detector, WORK_DIR, progress_callback=progress_cb)
 
         if not pdf_path:
             raise RuntimeError("Screenshot capture failed - no PDF created")
@@ -118,6 +118,61 @@ def _scan_worker(emulator_index: int, emulator_name: str,
 
         parsed_data = ocr_result["parsed"]
         raw_text = ocr_result["text"]
+
+        # ── Step 2.5: DATA VALIDATION — Reject corrupted OCR results ──
+        _broadcast("validating", "Verifying OCR data integrity...")
+
+        res = parsed_data.get("resources", {})
+        total_resources = sum([
+            res.get("gold", 0), res.get("wood", 0),
+            res.get("ore", 0), res.get("mana", 0),
+        ])
+        power = parsed_data.get("power", 0)
+        hall = parsed_data.get("hall_level", 0)
+        market = parsed_data.get("market_level", 0)
+
+        # GATE 1: If ALL critical fields are zero, OCR clearly failed
+        if power == 0 and hall == 0 and market == 0 and total_resources == 0:
+            raise RuntimeError(
+                "OCR data validation failed — all fields are 0. "
+                "Screenshot capture likely failed. Scan aborted to protect existing data."
+            )
+
+        # GATE 2: Compare with latest DB snapshot — refuse to overwrite non-zero with zero
+        try:
+            import asyncio as _aio
+            from backend.storage.database import database as _db
+
+            async def _check_previous():
+                return await _db.get_emulator_data(emulator_index=emulator_index)
+
+            prev = _aio.run(_check_previous())
+            if prev:
+                prev_hall = prev.get("hall_level", 0)
+                prev_power = prev.get("power", 0)
+
+                # If previous had real data but new has zeros in critical fields
+                if prev_hall > 0 and hall == 0:
+                    print(f"[FullScan] WARNING: Hall was {prev_hall}, new OCR says 0. Keeping old value.")
+                    parsed_data["hall_level"] = prev_hall
+
+                if prev_power > 0 and power == 0:
+                    print(f"[FullScan] WARNING: Power was {prev_power}, new OCR says 0. Keeping old value.")
+                    parsed_data["power"] = prev_power
+
+                prev_market = prev.get("market_level", 0)
+                if prev_market > 0 and market == 0:
+                    print(f"[FullScan] WARNING: Market was {prev_market}, new OCR says 0. Keeping old value.")
+                    parsed_data["market_level"] = prev_market
+
+                for key in ["gold", "wood", "ore", "mana"]:
+                    prev_val = prev.get(key, 0) or 0
+                    if prev_val > 0 and res.get(key, 0) == 0:
+                        print(f"[FullScan] WARNING: {key} was {prev_val}, new OCR says 0. Keeping old value.")
+                        parsed_data["resources"][key] = prev_val
+
+        except Exception as val_err:
+            print(f"[FullScan] Validation comparison skipped: {val_err}")
 
         # ── Step 3: Save to Database ──
         _broadcast("saving", "Saving to database...")

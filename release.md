@@ -1,55 +1,47 @@
-# 🚀 Release Notes - Version 1.0.8
-*Workflow V3 Recipe Builder, App Loading Screen, Custom Modals, Workflow Migration R2 & System Controls*
+# 🚀 Release Notes - Version 1.0.9
+*Install Apps System, Full Scan Fix, OCR Validation, Daily Delta Tracking & Workflow V3 Theme Sync*
 
-Bản cập nhật lớn tập trung vào **trải nghiệm người dùng** (Loading Screen, Custom Modals), **mở rộng hệ thống workflow** (6 navigation functions mới, construction system, screen capture pipeline) và **Workflow V3 Recipe Builder** cho phép người dùng tự xây dựng workflow từ các function có sẵn.
+Bản cập nhật tập trung vào **bảo vệ dữ liệu scan** (OCR Validation Gate, Smart Merge), **theo dõi biến động tài nguyên** (Scan Comparison với delta ▲/▼ hằng ngày), **hệ thống cài app** (APK Manager) và đồng bộ theme Workflow.
 
 ---
 
 ## ✨ Features & Enhancements
 
-### 1. 🧩 Workflow V3: Recipe Builder
-Hệ thống visual workflow builder — cho phép lắp ghép các core function thành workflow hoàn chỉnh.
-- **Function Registry:** 16 core functions phân 6 categories (Core Actions, ADB, App Control, Scan, Flow Control, Advanced).
-- **4 Pre-built Templates:** Farm Loop, ID Extraction, Full Scan Cycle, Swap & Repeat — click để dùng ngay.
-- **Two-Layer UI:** Recipe gallery (grid view) → Recipe editor (function sidebar + step builder + execution panel).
-- **API:** `GET/POST /api/workflow/recipes`, `GET /api/workflow/functions`, `GET /api/workflow/templates`.
+### 1. 📦 Install Apps System
+Hệ thống quản lý APK tích hợp — download, cài đặt ứng dụng hỗ trợ trên emulator.
+- **APK Registry:** 4 apps (ADB Clipper, ZArchiver, GSpace, QuickTouch) với version, size, download URL.
+- **Download & Install Flow:** Kiểm tra đã tải chưa → ConfirmModal hỏi tải → download → `adb install -r` trên **đúng emulator đã chọn**.
+- **Target Emulator Fix:** Backend nhận `{indices}` → chỉ cài trên emulators user đã tick, không phải all online.
+- **Post-install:** Clipper tự khởi động ClipboardService sau khi cài.
 
-### 2. 🎨 Custom Confirm Modal
-Thay thế hoàn toàn native `confirm()` bằng modal đồng bộ design system.
-- **Promise-based API:** `const ok = await ConfirmModal.show({title, message, icon, variant})`.
-- **5 Icon variants:** restart, shutdown, warning, danger, info (SVG inline).
-- **2 Style variants:** `default` (nút xanh) và `danger` (nút đỏ destructive).
-- **Full UX:** Backdrop blur, scale animation, keyboard (Escape/Enter), backdrop click dismiss.
-- **Áp dụng:** Restart Server (icon restart, default) và Exit App (icon shutdown, danger).
+### 2. 🛡️ OCR Data Validation Gate
+Bảo vệ dữ liệu scan khỏi bị ghi đè bởi OCR lỗi (trả toàn 0).
+- **Gate 1 — Hard Reject:** Nếu TẤT CẢ fields = 0 → abort scan, không ghi DB.
+- **Gate 2 — Smart Merge:** So sánh với snapshot trước. Nếu field cũ có giá trị (VD: Hall=25) mà OCR mới trả 0 → giữ giá trị cũ.
+- Áp dụng cho: `hall_level`, `market_level`, `power`, `gold`, `wood`, `ore`, `mana`.
 
-### 3. 🔄 App Loading Screen
-Giải quyết triệt để lỗi "Can't reach 127.0.0.1" khi mở app.
-- **Loading Screen:** pywebview load `loading.html` ngay lập tức thay vì chờ server → hiển thị logo + spinner dark theme.
-- **Auto-poll:** Poll `GET /api/config` mỗi 500ms → khi server ready → spinner xanh "Connected" → tự redirect.
-- **Timeout Warning:** Sau 5s hiển thị thông báo server đang khởi động lâu hơn bình thường.
-- **main.py:** Xóa bỏ `time.sleep(1.5)` hardcoded, inject port vào HTML qua `html=` parameter.
+### 3. 📊 Scan Comparison — Daily Delta Tracking
+Theo dõi biến động tài nguyên theo ngày, so sánh scan hiện tại vs scan ≥24h trước.
+- **Backend:** `get_scan_comparison(game_id)` query latest vs 24h-ago scan, tính delta tất cả fields.
+- **API:** `GET /api/accounts/{game_id}/comparison` → `{current, previous, delta}`.
+- **Frontend Resources tab:**
+  - Mỗi resource card hiện delta thực: `▲ +12.5M` (xanh) hoặc `▼ -3.2K` (đỏ).
+  - Header: `vs 03/02/2026` (ngày scan trước).
+  - AI Daily Summary: dựa trên data thực (power change, resource trends).
+  - Chưa đủ data → placeholder "—" + hướng dẫn scan thêm.
 
-### 4. 🏗️ Workflow Migration Round 2
-Đồng bộ toàn bộ cập nhật mới từ `TEST/workflow` vào production `backend/core/workflow/`.
-- **Construction System:** `state_detector.py` thêm `construction_templates`, `check_construction()`, `is_menu_expanded()`.
-- **6 Functions mới trong `core_actions.py`:**
-  - `ensure_lobby_menu_open()` — kiểm tra/mở lobby expandable menu
-  - `go_to_resources()` — navigate Items → Resources tab (retry logic)
-  - `go_to_construction(name)` — generic construction nav via data lookup
-  - `go_to_hall()`, `go_to_market()`, `go_to_pet_token()` — shortcuts
-- **`back_to_lobby()` upgraded:** Thêm `target_lobby` param cho lobby swap (IN_CITY ↔ OUT_CITY).
-- **`clipper_helper.py` Multi-Fallback:** Native `cmd clipboard get` (Android 9+) + Clipper service wake-up.
-- **New Files:** `construction_data.py` (tap coordinates), `screen_capture.py` (5-phase capture pipeline → PDF).
-- **Template Images:** `items_artifacts.png`, `items_resources.png`, `contructions/` folder (3 ảnh).
+### 4. 🔧 Full Scan Fix
+- **Bug:** `run_all_tasks(full_scan)` submit vào generic queue thay vì routing qua `full_scan.start_full_scan()`.
+- **Fix:** Thêm `FULL_SCAN` routing vào `run_all_tasks()`.
 
-### 5. ⚙️ System Controls
-Endpoints quản lý server từ UI.
-- **`POST /api/restart`:** Spawn process mới với `timeout /t 2` chờ port release (fix lỗi `EADDRINUSE`).
-- **`POST /api/shutdown`:** Tắt server hoàn toàn, đóng pywebview.
-- **CORS Middleware:** `allow_origins=["*"]` cho loading screen (origin null) gọi được API.
+### 5. 🎨 Workflow V3 — Theme Sync
+- **Full CSS Rewrite:** 20+ hardcoded dark colors → design-system variables.
+- **Button Standardization:** `btn btn-primary/outline/ghost btn-sm` giống pattern app.
+- **Thêm nút Refresh** trên List View.
 
-### 6. 🔧 OCR Parser Fix
-- **Lord Name Multi-line:** Fix lỗi tên Lord dùng special characters bị OCR thành 2 dòng. Parser giờ collect tất cả dòng giữa "Lord" và "Power"/"Merits", ghép bằng dấu cách.
+### 6. 🐛 Settings Hotfix
+- **Root Cause:** `const ocrKeys` khai báo 2 lần → `SyntaxError` → app UI freeze hoàn toàn.
+- **4 lỗi đã fix:** Duplicate const, duplicate HTML, duplicate API call, duplicate init().
 
 ---
 
@@ -57,12 +49,12 @@ Endpoints quản lý server từ UI.
 
 | Endpoint | Method | Thay đổi |
 |----------|--------|----------|
-| `/api/restart` | POST | **Mới** — Restart backend server |
-| `/api/shutdown` | POST | **Mới** — Shutdown server |
-| `/api/workflow/functions` | GET | **Mới** — Function registry |
-| `/api/workflow/templates` | GET | **Mới** — Pre-built templates |
-| `/api/workflow/recipes` | GET/POST | **Mới** — CRUD recipes |
-| `/api/workflow/recipes/{id}` | DELETE | **Mới** — Delete recipe |
+| `/api/apks` | GET | **Mới** — List APK registry + download status |
+| `/api/apks/{id}/download` | POST | **Mới** — Download APK |
+| `/api/apks/{id}/install` | POST | **Mới** — Install single emulator |
+| `/api/apks/{id}/install-all` | POST | **Mới** — Install on selected emulators |
+| `/api/accounts/{game_id}/comparison` | GET | **Mới** — Scan delta comparison |
+| `/api/tasks/run-all` | POST | **Fix** — Full Scan routing |
 
 ---
 
@@ -70,21 +62,12 @@ Endpoints quản lý server từ UI.
 
 | File | Hành động |
 |------|-----------|
-| `frontend/js/components/confirm-modal.js` | **Mới** — Custom confirm modal |
-| `frontend/css/components.css` | Thêm confirm modal CSS |
-| `frontend/loading.html` | **Mới** — App loading screen |
-| `frontend/js/app.js` | restartServer/exitApp dùng ConfirmModal |
-| `frontend/index.html` | Thêm confirm-modal.js script |
-| `main.py` | Loading screen integration |
-| `backend/api.py` | restart/shutdown endpoints + CORS |
-| `backend/core/ocr_client.py` | Lord name multi-line fix |
-| `backend/core/workflow/state_detector.py` | Construction system + menu expansion |
-| `backend/core/workflow/core_actions.py` | 6 new functions + target_lobby |
-| `backend/core/workflow/clipper_helper.py` | Multi-fallback clipboard |
-| `backend/core/workflow/construction_data.py` | **Mới** — Construction tap data |
-| `backend/core/workflow/screen_capture.py` | **Mới** — 5-phase capture pipeline |
-| `backend/core/workflow/__init__.py` | Thêm exports |
-| `backend/core/workflow/templates/` | 3 ảnh mới + contructions/ folder |
-| `frontend/js/pages/workflow.js` | Recipe Builder UI |
+| `backend/core/apk_manager.py` | **Mới** — APK download & install manager |
+| `backend/core/full_scan.py` | OCR Validation Gate (2-gate system) |
+| `backend/storage/database.py` | `get_scan_comparison()` method |
+| `backend/api.py` | 5 endpoints mới + Full Scan fix |
+| `frontend/js/pages/task-runner.js` | Install Apps UI (cards, download, install) |
+| `frontend/js/pages/accounts.js` | Resources tab delta display + Daily Summary |
+| `frontend/js/pages/settings.js` | Hotfix duplicate const/HTML |
 | `frontend/css/workflow.css` | Theme sync rewrite |
-| `backend/core/workflow/workflow_registry.py` | **Mới** — Function registry |
+| `update.md` | v1.0.9 changelog |

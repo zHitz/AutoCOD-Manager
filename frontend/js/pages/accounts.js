@@ -9,6 +9,7 @@ const AccountsPage = {
     _activeDetailTab: 'overview',
     _viewMode: 'table',
     _isLoading: true,
+    _comparisonCache: {},
 
     formatResource(valAbs) {
         if (!valAbs || isNaN(valAbs)) return '0M';
@@ -232,6 +233,7 @@ const AccountsPage = {
                 .res-cap.warn { color: var(--red-500); font-weight: 600; }
                 .delta-up   { color: var(--emerald-500); font-weight: 700; }
                 .delta-down { color: var(--red-500); font-weight: 700; }
+                .delta-loading { color: var(--muted-foreground); font-size: 11px; opacity: 0.5; }
 
                 .pet-card {
                     background: linear-gradient(90deg, #fdf4ff 0%, #faf5ff 100%);
@@ -905,7 +907,54 @@ const AccountsPage = {
             document.querySelectorAll('.panel-tab').forEach(el => {
                 el.classList.toggle('active', el.textContent.trim().toLowerCase().startsWith(tabId.toLowerCase().split(' ')[0]));
             });
+            // Auto-fetch comparison data for Resources tab
+            if (tabId === 'resources' && acc.game_id) {
+                this._fetchComparison(acc.game_id);
+            }
         }
+    },
+
+    async _fetchComparison(gameId) {
+        try {
+            const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}/comparison`);
+            const data = await res.json();
+            if (data && data.delta) {
+                this._comparisonCache[gameId] = data;
+                this._updateDeltaUI(data.delta, data.previous);
+            }
+        } catch (e) {
+            console.warn('[Accounts] Comparison fetch failed:', e);
+        }
+    },
+
+    _formatDelta(value) {
+        if (!value || value === 0) return '';
+        const abs = Math.abs(value);
+        let formatted;
+        if (abs >= 1_000_000_000) formatted = (abs / 1_000_000_000).toFixed(1) + 'B';
+        else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(1) + 'M';
+        else if (abs >= 1_000) formatted = (abs / 1_000).toFixed(1) + 'K';
+        else formatted = abs.toLocaleString();
+        const isUp = value > 0;
+        return `<span class="${isUp ? 'delta-up' : 'delta-down'}">${isUp ? '▲' : '▼'} ${isUp ? '+' : '-'}${formatted}</span>`;
+    },
+
+    _updateDeltaUI(delta, previous) {
+        const prevTime = previous ? new Date(previous.created_at).toLocaleDateString() : '';
+        // Update resource deltas
+        ['gold', 'wood', 'ore', 'mana'].forEach(key => {
+            const el = document.getElementById(`res-delta-${key}`);
+            if (el) el.innerHTML = this._formatDelta(delta[key]);
+        });
+        // Update pet token delta
+        const petEl = document.getElementById('res-delta-pet_token');
+        if (petEl) petEl.innerHTML = this._formatDelta(delta.pet_token);
+        // Update mana delta
+        const manaEl = document.getElementById('res-delta-mana');
+        if (manaEl) manaEl.innerHTML = this._formatDelta(delta.mana);
+        // Update comparison timestamp
+        const tsEl = document.getElementById('comparison-timestamp');
+        if (tsEl && prevTime) tsEl.textContent = `vs ${prevTime}`;
     },
 
     _renderActiveTab(acc) {
@@ -1043,10 +1092,32 @@ const AccountsPage = {
             const oreIsCritical = orePct < 30;
             const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
 
+            // Pre-loaded comparison data (if cached)
+            const cached = this._comparisonCache[acc.game_id];
+            const delta = cached ? cached.delta : null;
+            const prevScan = cached ? cached.previous : null;
+            const prevTimeLabel = prevScan ? new Date(prevScan.created_at).toLocaleDateString() : '';
+
+            const mkDelta = (key) => {
+                if (!delta || !delta[key] || delta[key] === 0) return '<span id="res-delta-' + key + '" class="delta-loading">—</span>';
+                const v = delta[key];
+                const abs = Math.abs(v);
+                let fmt;
+                if (abs >= 1e9) fmt = (abs / 1e9).toFixed(1) + 'B';
+                else if (abs >= 1e6) fmt = (abs / 1e6).toFixed(1) + 'M';
+                else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
+                else fmt = abs.toLocaleString();
+                const up = v > 0;
+                return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}">${up ? '▲' : '▼'} ${up ? '+' : '-'}${fmt}</span>`;
+            };
+
             return `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
                     <div class="ov-section-title" style="margin:0;">Resource Stockpile</div>
-                    <span style="font-size:11px;color:var(--muted-foreground);font-family:monospace;">Last updated: ${timeAgo}</span>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span id="comparison-timestamp" style="font-size:11px;color:var(--primary);font-weight:600;">${prevTimeLabel ? 'vs ' + prevTimeLabel : ''}</span>
+                        <span style="font-size:11px;color:var(--muted-foreground);font-family:monospace;">Last updated: ${timeAgo}</span>
+                    </div>
                 </div>
 
                 <div class="res-grid">
@@ -1060,7 +1131,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill gold" style="width:${goldPct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap">Cap max</span>
-                            <span class="delta-up">▲</span>
+                            ${mkDelta('gold')}
                         </div>
                     </div>
 
@@ -1074,7 +1145,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill wood" style="width:${woodPct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap">Cap max</span>
-                            <span class="delta-up">▲</span>
+                            ${mkDelta('wood')}
                         </div>
                     </div>
 
@@ -1088,7 +1159,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill ${oreIsCritical ? 'critical-fill' : 'ore'}" style="width:${orePct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap ${oreIsCritical ? 'warn' : ''}">Cap max</span>
-                            <span class="${orePct > 20 ? 'delta-down' : 'delta-up'}">${orePct > 20 ? '▼' : '▲'}</span>
+                            ${mkDelta('ore')}
                         </div>
                     </div>
                 </div>
@@ -1106,7 +1177,7 @@ const AccountsPage = {
                     </div>
                     <div class="pet-right">
                         <span class="pet-badge">Special Currency</span>
-                        <span class="pet-delta delta-up">▲ +2 today</span>
+                        <span id="res-delta-pet_token" class="pet-delta">${delta && delta.pet_token ? (delta.pet_token > 0 ? '<span class="delta-up">▲ +' + delta.pet_token.toLocaleString() + '</span>' : '<span class="delta-down">▼ ' + delta.pet_token.toLocaleString() + '</span>') : '<span class="delta-loading">—</span>'}</span>
                     </div>
                 </div>
 
@@ -1123,7 +1194,10 @@ const AccountsPage = {
                     </div>
                     <div class="pet-right">
                         <span class="pet-badge" style="background:rgba(168,85,247,0.1);color:#a855f7;border-color:rgba(168,85,247,0.25);">Magic Resource</span>
-                        <div class="res-bar" style="width:100px;height:6px;"><div class="res-fill" style="width:${manaPct}%;background:linear-gradient(90deg,#a855f7,#c084fc);"></div></div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <div class="res-bar" style="width:100px;height:6px;"><div class="res-fill" style="width:${manaPct}%;background:linear-gradient(90deg,#a855f7,#c084fc);"></div></div>
+                            ${mkDelta('mana')}
+                        </div>
                     </div>
                 </div>
 
@@ -1134,13 +1208,16 @@ const AccountsPage = {
                     </div>
                     <div>
                         <div class="ai-title">
-                            ✦ AI Insight
+                            ✦ Daily Summary
                         </div>
                         <div class="ai-body">
-                            ${oreIsCritical
-                    ? `<strong>Ore is critically low (${orePct}%)</strong> and declining — prioritize farming runs before your next Hall upgrade. `
-                    : 'Resources look healthy. '}
-                            Gold cap will be reached in <strong>~2 days</strong> at current production rates.
+                            ${delta
+                    ? `${delta.power > 0 ? '<strong>Power increased by ' + AccountsPage.formatPower(delta.power) + '</strong>. ' : delta.power < 0 ? '<strong>Power decreased by ' + AccountsPage.formatPower(Math.abs(delta.power)) + '</strong>. ' : ''}
+                       ${delta.gold > 0 ? 'Gold ▲' + AccountsPage.formatResource(delta.gold) + '. ' : delta.gold < 0 ? 'Gold ▼' + AccountsPage.formatResource(Math.abs(delta.gold)) + '. ' : ''}
+                       ${oreIsCritical ? '<strong>⚠ Ore is critically low (' + orePct + '%)</strong> — prioritize farming.' : 'Resources are stable.'}
+                       ${prevTimeLabel ? '<br><span style="font-size:11px;color:var(--muted-foreground);">Compared with scan from ' + prevTimeLabel + '</span>' : ''}`
+                    : `${oreIsCritical ? '<strong>Ore is critically low (' + orePct + '%)</strong> — prioritize farming runs.' : 'Resources look healthy.'}
+                       <span style="font-size:11px;color:var(--muted-foreground);">Run at least 2 daily scans to enable change tracking.</span>`}
                         </div>
                     </div>
                 </div>

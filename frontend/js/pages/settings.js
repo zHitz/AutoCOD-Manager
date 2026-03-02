@@ -119,16 +119,6 @@ const SettingsPage = {
                                 <textarea id="cfg-ocr-keys" class="form-input" style="min-height:120px;resize:vertical;font-family:monospace" placeholder="ocr_key_1
 ocr_key_2"></textarea>
                                 <p class="form-desc">Lines that start with <code>#</code> are treated as comments.</p>
-                        <div class="settings-card-header">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 9h16"/><path d="M4 15h16"/><path d="M4 4h.01"/><path d="M4 20h.01"/></svg>
-                            <h3>OCR API Keys</h3>
-                        </div>
-                        <div class="settings-card-body">
-                            <div class="form-group" style="margin-bottom:0">
-                                <label class="form-label" for="cfg-ocr-keys">API keys (mỗi key 1 dòng)</label>
-                                <textarea id="cfg-ocr-keys" class="form-input" style="min-height:120px;resize:vertical;font-family:monospace" placeholder="ocr_key_1
-ocr_key_2"></textarea>
-                                <p class="form-desc">Các dòng bắt đầu bằng # sẽ được xem như comment.</p>
                             </div>
                         </div>
                     </div>
@@ -189,8 +179,6 @@ ocr_key_2"></textarea>
         await this.loadConfig();
         await this.loadOcrKeys();
         this.setOcrEditorVisible(false);
-        await this.loadConfig();
-        await this.loadOcrKeys();
     },
     destroy() { },
 
@@ -260,8 +248,6 @@ ocr_key_2"></textarea>
             const ocrKeys = document.getElementById('cfg-ocr-keys');
             if (ocrKeys) ocrKeys.value = keysValue;
             this.updateOcrPreview(keysValue);
-            const ocrKeys = document.getElementById('cfg-ocr-keys');
-            if (ocrKeys) ocrKeys.value = data.keys || '';
         } catch (e) {
             Toast.error('Error', 'Failed to load OCR API keys');
         }
@@ -274,7 +260,6 @@ ocr_key_2"></textarea>
             await API.saveOcrKeys(keysValue);
             this.updateOcrPreview(keysValue);
             this.setOcrEditorVisible(false);
-            await API.saveOcrKeys(ocrKeys ? ocrKeys.value : '');
             Toast.success('Saved', 'OCR API keys updated');
         } catch (e) {
             Toast.error('Error', e.message || 'Failed to save settings');

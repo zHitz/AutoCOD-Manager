@@ -36,8 +36,10 @@ const API = {
     runTask(serial, taskType) {
         return this.post(`/api/tasks/run?serial=${serial}&task_type=${taskType}`);
     },
-    runAllTasks(taskType) {
-        return this.post(`/api/tasks/run-all?task_type=${taskType}`);
+    runAllTasks(taskType, indices) {
+        let url = `/api/tasks/run-all?task_type=${taskType}`;
+        if (indices && indices.length) url += `&indices=${indices.join(',')}`;
+        return this.post(url);
     },
     getQueue() { return this.get('/api/tasks/queue'); },
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
@@ -83,6 +85,12 @@ const API = {
         return fetch(`/api/schedules/${id}`, { method: 'DELETE' }).then(r => r.json());
     },
     executeSchedule(id) { return this.post(`/api/schedules/${id}/execute`); },
+
+    // ── APK Management ──
+    getApks() { return this.get('/api/apks'); },
+    downloadApk(appId) { return this.post(`/api/apks/${appId}/download`); },
+    installApk(appId, serial) { return this.post(`/api/apks/${appId}/install?serial=${serial}`); },
+    installApkAll(appId, indices) { return this.post(`/api/apks/${appId}/install-all`, { indices }); },
 };
 
 

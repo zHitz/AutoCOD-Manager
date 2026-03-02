@@ -1,159 +1,30 @@
 """
 Screen Capture — ADB-based screenshot pipeline for game data extraction.
 
-Navigates through 5 game phases via ADB taps, captures screenshots,
-crops relevant regions, and combines them into a single PDF.
+Navigates through 5 game phases using robust state-based navigation via core_actions,
+captures screenshots, crops relevant regions, and combines them into a single PDF.
 """
-import subprocess
 import os
 import time
 import cv2
-from PIL import Image
-from backend.config import config
+from PIL import Image, ImageOps
 
+from backend.config import config
+from backend.core.workflow import adb_helper
+from backend.core.workflow import core_actions
+from backend.core.workflow.state_detector import GameStateDetector
 
 # Crop regions for each scan phase (x1, y1, x2, y2)
 REGIONS_MAP = {
-    "profile": {
-        "profile_area": (100, 320, 275, 500),
-    },
-    "resources": {
-        "resources_area": (300, 150, 725, 400),
-    },
-    "hall": {
-        "hall_area": (500, 200, 750, 275),
-    },
-    "market": {
-        "market_area": (500, 200, 750, 275),
-    },
-    "pet_token": {
-        "pet_token_area": (875, 0, 950, 30),
-    },
+    "profile": {"profile_area": (100, 320, 275, 500)},
+    "resources": {"resources_area": (300, 150, 725, 400)},
+    "hall": {"hall_area": (500, 200, 750, 275)},
+    "market": {"market_area": (500, 200, 750, 275)},
+    "pet_token": {"pet_token_area": (875, 0, 950, 30)},
 }
-
-# Navigation sequences for each phase: list of (action, *args, wait_seconds)
-# Actions: "tap" (x, y), "swipe" (x1, y1, x2, y2, duration), "back"
-NAVIGATION = {
-    "profile": [
-        ("tap", 18, 10, 5.0),
-        ("tap", 550, 200, 0.5),
-        ("tap", 550, 200, 3.0),
-    ],
-    "resources": [
-        ("tap", 925, 500, 5.0),
-        ("tap", 780, 500, 5.0),
-        ("tap", 75, 180, 5.0),
-        ("tap", 620, 100, 5.0),
-    ],
-    "hall": [
-        ("tap", 50, 500, 5.0),
-        ("tap", 456, 111, 5.0),
-        ("tap", 380, 116, 5.0),
-    ],
-    "market": [
-        ("tap", 639, 232, 5.0),
-        ("tap", 545, 267, 5.0),
-    ],
-    "pet_token": [
-        ("tap", 750, 80, 5.0),
-        ("swipe", 100, 450, 100, 100, 500, 1.0),
-        ("swipe", 100, 450, 100, 100, 500, 1.0),
-        ("swipe", 100, 450, 100, 100, 500, 1.0),
-        ("tap", 100, 375, 5.0),
-    ],
-}
-
-# How to exit each phase: number of BACK presses
-EXIT_BACKS = {
-    "profile": 2,
-    "resources": 2,
-    "hall": 1,
-    "market": 1,
-    "pet_token": 1,
-}
-
-
-def _adb(serial: str, args: list):
-    """Run an ADB command silently."""
-    try:
-        subprocess.run(
-            [config.adb_path, "-s", serial] + args,
-            capture_output=True, timeout=10,
-        )
-    except Exception as e:
-        print(f"[Capture] ADB error on {serial}: {e}")
-
-
-def _tap(serial: str, x: int, y: int):
-    _adb(serial, ["shell", "input", "tap", str(x), str(y)])
-
-
-def _swipe(serial: str, x1, y1, x2, y2, duration=300):
-    _adb(serial, ["shell", "input", "swipe", str(x1), str(y1), str(x2), str(y2), str(duration)])
-
-
-def _back(serial: str):
-    _adb(serial, ["shell", "input", "keyevent", "4"])
-
-
-def _navigate(serial: str, phase: str):
-    """Execute the navigation sequence for a scan phase."""
-    steps = NAVIGATION.get(phase, [])
-    for step in steps:
-        action = step[0]
-        if action == "tap":
-            _tap(serial, step[1], step[2])
-            time.sleep(step[3])
-        elif action == "swipe":
-            _swipe(serial, step[1], step[2], step[3], step[4], step[5])
-            time.sleep(step[6] if len(step) > 6 else 1.0)
-
-
-def _exit_phase(serial: str, phase: str):
-    """Press BACK to exit current phase."""
-    backs = EXIT_BACKS.get(phase, 1)
-    for _ in range(backs):
-        _back(serial)
-        time.sleep(1.5)
-
-
-def capture_screenshot(serial: str, save_path: str) -> bool:
-    """Take a screenshot and pull it to local filesystem."""
-    try:
-        _adb(serial, ["shell", "screencap", "-p", "/sdcard/screen.png"])
-        subprocess.run(
-            [config.adb_path, "-s", serial, "pull", "/sdcard/screen.png", save_path],
-            capture_output=True, timeout=10,
-        )
-        return os.path.exists(save_path)
-    except Exception as e:
-        print(f"[Capture] Screenshot failed: {e}")
-        return False
-
-
-def crop_regions(screenshot_path: str, phase: str, output_dir: str) -> list[str]:
-    """Crop relevant regions from a screenshot."""
-    regions = REGIONS_MAP.get(phase, {})
-    if not regions or not os.path.exists(screenshot_path):
-        return []
-
-    img = cv2.imread(screenshot_path)
-    if img is None:
-        return []
-
-    cropped = []
-    for name, (x1, y1, x2, y2) in regions.items():
-        if x2 <= img.shape[1] and y2 <= img.shape[0]:
-            roi = img[y1:y2, x1:x2]
-            path = os.path.join(output_dir, f"{phase}_{name}.png")
-            cv2.imwrite(path, roi)
-            cropped.append(path)
-    return cropped
-
 
 def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
     """Combine multiple images into a single-page PDF with OCR enhancements."""
-    from PIL import ImageOps
     try:
         images = []
         for p in image_paths:
@@ -189,24 +60,42 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
         print(f"[Capture] PDF creation failed: {e}")
         return False
 
+def crop_regions(screenshot_path: str, phase: str, output_dir: str) -> list[str]:
+    """Crop relevant regions from a screenshot."""
+    regions = REGIONS_MAP.get(phase, {})
+    if not regions or not os.path.exists(screenshot_path):
+        return []
 
-def run_full_capture(serial: str, work_dir: str,
-                      progress_callback=None) -> str | None:
-    """Run all 5 capture phases and combine into PDF.
+    img = cv2.imread(screenshot_path)
+    if img is None:
+        return []
 
-    Args:
-        serial: ADB device serial (e.g., "emulator-5556")
-        work_dir: Directory to save screenshots and PDF
-        progress_callback: optional fn(phase, step, total_steps)
+    cropped = []
+    for name, (x1, y1, x2, y2) in regions.items():
+        if x2 <= img.shape[1] and y2 <= img.shape[0]:
+            roi = img[y1:y2, x1:x2]
+            path = os.path.join(output_dir, f"{phase}_{name}.png")
+            cv2.imwrite(path, roi)
+            cropped.append(path)
+    return cropped
 
-    Returns: path to combined PDF, or None on failure
-    """
+def run_full_capture_modern(serial: str, detector: GameStateDetector, work_dir: str, progress_callback=None) -> str | None:
+    """Run all 5 capture phases intelligently and combine into PDF."""
     safe_serial = serial.replace(":", "_").replace(".", "_")
     device_dir = os.path.join(work_dir, safe_serial)
     os.makedirs(device_dir, exist_ok=True)
 
     phases = ["profile", "resources", "hall", "market", "pet_token"]
     all_crops = []
+
+    # Map phases to navigation actions
+    nav_actions = {
+        "profile": core_actions.go_to_profile_details,
+        "resources": core_actions.go_to_resources,
+        "hall": lambda s, d: core_actions.go_to_construction(serial, detector, "HALL"),
+        "market": lambda s, d: core_actions.go_to_construction(serial, detector, "MARKET"),
+        "pet_token": core_actions.go_to_pet_token
+    }
 
     for idx, phase in enumerate(phases):
         step = idx + 1
@@ -217,30 +106,37 @@ def run_full_capture(serial: str, work_dir: str,
 
         print(f"[Capture] Phase {step}/{total}: {phase} on {serial}")
 
-        # Navigate
-        _navigate(serial, phase)
+        # 1. Enforce Lobby starting state for each phase
+        if not core_actions.back_to_lobby(serial, detector):
+            print(f"[Capture] Failed to reach Lobby before {phase}. Aborting capture.")
+            return None
 
-        # Screenshot
+        # 2. Navigate to target screen
+        nav_func = nav_actions.get(phase)
+        if nav_func:
+            nav_func(serial, detector)
+        else:
+            print(f"[Capture] No navigation defined for {phase}.")
+
+        # 3. Capture screenshot
         screenshot_path = os.path.join(device_dir, f"{phase}_full.png")
-        if not capture_screenshot(serial, screenshot_path):
-            print(f"[Capture] Failed to capture {phase}")
-            _exit_phase(serial, phase)
-            continue
+        success = adb_helper.screencap(serial, screenshot_path)
+        
+        if success:
+            # 4. Crop
+            crops = crop_regions(screenshot_path, phase, device_dir)
+            all_crops.extend(crops)
+        else:
+            print(f"[Capture] Failed to capture screenshot for {phase}")
 
-        # Crop
-        crops = crop_regions(screenshot_path, phase, device_dir)
-        all_crops.extend(crops)
-
-        # Exit
-        _exit_phase(serial, phase)
-        time.sleep(2.0)
+    # Return to lobby at the end of the full capture
+    core_actions.back_to_lobby(serial, detector)
 
     if not all_crops:
         print(f"[Capture] No images captured for {serial}")
         return None
 
-    # Combine to PDF
-    # Order: resources, profile, hall, market, pet_token
+    # 5. Combine to PDF in expected order
     expected_order = [
         os.path.join(device_dir, "resources_resources_area.png"),
         os.path.join(device_dir, "profile_profile_area.png"),

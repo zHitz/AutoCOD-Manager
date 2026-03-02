@@ -599,7 +599,90 @@ class Database:
 
             return results
 
-    # ──────────────────────────────────────────
+    async def get_scan_comparison(self, game_id: str) -> dict:
+        """Get latest scan vs scan from 24h+ ago for delta comparison.
+
+        Returns: {
+            "current": {...snapshot},
+            "previous": {...snapshot or None},
+            "delta": {...computed deltas}
+        }
+        """
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
+            # 1. Get the LATEST scan for this game_id
+            cursor = await db.execute(
+                """SELECT s.*, e.emu_index, e.serial, e.name as emulator_name
+                   FROM scan_snapshots s
+                   JOIN emulators e ON s.emulator_id = e.id
+                   WHERE s.game_id = ?
+                   ORDER BY s.created_at DESC LIMIT 1""",
+                (game_id,),
+            )
+            latest_row = await cursor.fetchone()
+            if not latest_row:
+                return {"current": None, "previous": None, "delta": None}
+
+            current = dict(latest_row)
+            latest_time = current.get("created_at", "")
+
+            # Attach resources to current
+            res_cursor = await db.execute(
+                "SELECT * FROM scan_resources WHERE snapshot_id = ?",
+                (current["id"],),
+            )
+            for res in await res_cursor.fetchall():
+                rd = dict(res)
+                rtype = rd["resource_type"]
+                current[rtype] = rd.get("bag_value", 0)
+                current[f"{rtype}_total"] = rd.get("total_value", 0)
+
+            # 2. Get the closest scan that is AT LEAST 24h older
+            cursor2 = await db.execute(
+                """SELECT s.*, e.emu_index, e.serial, e.name as emulator_name
+                   FROM scan_snapshots s
+                   JOIN emulators e ON s.emulator_id = e.id
+                   WHERE s.game_id = ?
+                     AND datetime(s.created_at) <= datetime(?, '-24 hours')
+                   ORDER BY s.created_at DESC LIMIT 1""",
+                (game_id, latest_time),
+            )
+            prev_row = await cursor2.fetchone()
+
+            previous = None
+            delta = None
+
+            if prev_row:
+                previous = dict(prev_row)
+
+                # Attach resources to previous
+                res_cursor2 = await db.execute(
+                    "SELECT * FROM scan_resources WHERE snapshot_id = ?",
+                    (previous["id"],),
+                )
+                for res in await res_cursor2.fetchall():
+                    rd = dict(res)
+                    rtype = rd["resource_type"]
+                    previous[rtype] = rd.get("bag_value", 0)
+                    previous[f"{rtype}_total"] = rd.get("total_value", 0)
+
+                # 3. Compute deltas
+                delta = {
+                    "power": (current.get("power", 0) or 0) - (previous.get("power", 0) or 0),
+                    "hall_level": (current.get("hall_level", 0) or 0) - (previous.get("hall_level", 0) or 0),
+                    "market_level": (current.get("market_level", 0) or 0) - (previous.get("market_level", 0) or 0),
+                    "pet_token": (current.get("pet_token", 0) or 0) - (previous.get("pet_token", 0) or 0),
+                    "gold": (current.get("gold", 0) or 0) - (previous.get("gold", 0) or 0),
+                    "wood": (current.get("wood", 0) or 0) - (previous.get("wood", 0) or 0),
+                    "ore": (current.get("ore", 0) or 0) - (previous.get("ore", 0) or 0),
+                    "mana": (current.get("mana", 0) or 0) - (previous.get("mana", 0) or 0),
+                    "previous_scan_at": previous.get("created_at", ""),
+                }
+
+            return {"current": current, "previous": previous, "delta": delta}
+
+    #
     # Legacy-compatible methods (scan_results)
     # ──────────────────────────────────────────
 

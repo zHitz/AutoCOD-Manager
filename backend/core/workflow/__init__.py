@@ -10,5 +10,4 @@ from backend.core.workflow import core_actions
 from backend.core.workflow import clipper_helper
 from backend.core.workflow import adb_helper
 from backend.core.workflow import construction_data
-from backend.core.workflow import screen_capture
 

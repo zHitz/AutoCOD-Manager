@@ -157,8 +157,8 @@ async def run_task(serial: str, task_type: str):
 
 
 @app.post("/api/tasks/run-all")
-async def run_all_tasks(task_type: str):
-    """Submit a task for all online devices."""
+async def run_all_tasks(task_type: str, indices: str = None):
+    """Submit a task for selected devices (by LDPlayer index) or all online."""
     try:
         tt = TaskType(task_type)
     except ValueError:
@@ -166,9 +166,46 @@ async def run_all_tasks(task_type: str):
 
     online = emulator_manager.get_online()
     if not online:
-        # Try discover first
         online = emulator_manager.discover()
         online = [e for e in online if e.status == "ONLINE"]
+
+    if not online:
+        return {"status": "error", "msg": "No online emulators found"}
+
+    # Filter by selected indices if provided (comma-separated, e.g. "0,2,3")
+    if indices:
+        selected = set(int(i) for i in indices.split(",") if i.strip().isdigit())
+        selected_serials = {f"emulator-{5554 + idx * 2}" for idx in selected}
+        online = [e for e in online if e.serial in selected_serials]
+        if not online:
+            return {"status": "error", "msg": "None of the selected emulators are online"}
+
+    if tt == TaskType.FULL_SCAN:
+        # Route each device through the dedicated full scan orchestrator
+        from backend.core import full_scan
+        from backend.core import ldplayer_manager
+        from backend.websocket import ws_manager
+
+        all_emus = ldplayer_manager.list_all_instances()
+        name_map = {e["index"]: e["name"] for e in all_emus}
+
+        results = []
+        for emu in online:
+            try:
+                port = int(emu.serial.split("-")[1])
+                idx = (port - 5554) // 2
+            except Exception:
+                results.append({"serial": emu.serial, "status": "error", "msg": "Cannot parse index"})
+                continue
+
+            name = name_map.get(idx, f"Emulator-{idx}")
+            result = full_scan.start_full_scan(idx, name, ws_callback=ws_manager.broadcast_sync)
+            if result.get("success"):
+                results.append({"serial": emu.serial, "task_id": f"fullscan-{idx}", "status": "accepted"})
+            else:
+                results.append({"serial": emu.serial, "status": "error", "msg": result.get("error")})
+
+        return {"status": "accepted", "count": len(results), "tasks": results}
 
     task_ids = []
     for emu in online:
@@ -499,6 +536,13 @@ async def delete_account(game_id: str):
     return {"error": "Account not found", "game_id": game_id}
 
 
+@app.get("/api/accounts/{game_id}/comparison")
+async def get_scan_comparison(game_id: str):
+    """Get latest scan vs 24h-ago scan for delta comparison."""
+    result = await database.get_scan_comparison(game_id)
+    return result
+
+
 # ──────────────────────────────────────────────
 # Pending Account Endpoints
 # ──────────────────────────────────────────────
@@ -639,6 +683,47 @@ async def execute_schedule_now(schedule_id: int):
     # Run in background (don't block API response)
     asyncio.create_task(execute_schedule(sched, ws_callback=ws_manager.broadcast_sync))
     return {"status": "executing", "name": sched["name"]}
+
+
+# ──────────────────────────────────────────────
+# APK Install Management
+# ──────────────────────────────────────────────
+
+@app.get("/api/apks")
+async def list_apks():
+    """List all APKs in registry with download status."""
+    from backend.core import apk_manager
+    return apk_manager.get_apk_list()
+
+
+@app.post("/api/apks/{app_id}/download")
+async def download_apk(app_id: str):
+    """Download an APK from its registry URL."""
+    from backend.core import apk_manager
+    result = apk_manager.download_apk(app_id)
+    return result
+
+
+@app.post("/api/apks/{app_id}/install")
+async def install_apk_single(app_id: str, serial: str):
+    """Install APK on a single emulator."""
+    from backend.core import apk_manager
+    return apk_manager.install_apk(app_id, serial)
+
+
+@app.post("/api/apks/{app_id}/install-all")
+async def install_apk_all(app_id: str, payload: dict = None):
+    """Install APK on selected emulators (by LDPlayer index)."""
+    from backend.core import apk_manager
+
+    indices = (payload or {}).get("indices", [])
+    if not indices:
+        return {"success": False, "error": "No emulators selected"}
+
+    # Convert LDPlayer indices to ADB serials (index N -> emulator-{5554 + N*2})
+    serials = [f"emulator-{5554 + idx * 2}" for idx in indices]
+    result = apk_manager.install_apk_on_multiple(app_id, serials, ws_callback=ws_manager.broadcast_sync)
+    return result
 
 
 # ──────────────────────────────────────────────

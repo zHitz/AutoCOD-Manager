@@ -1,6 +1,54 @@
 # COD Game Automation Manager - Update Log
 
-## Version 1.0.8 (Current)
+## Version 1.0.9 (Current)
+*Install Apps System, Full Scan Fix, Settings Hotfix & Workflow V3 Theme Sync*
+
+- **Critical Bug Fix — App UI Freeze (`frontend/js/pages/settings.js`)**
+  - **Root Cause:** `const ocrKeys` bị khai báo **2 lần** trong cùng scope tại `loadOcrKeys()` → `SyntaxError` → `SettingsPage` không tồn tại → `app.js` crash khi build `router._pages` → `ReferenceError: SettingsPage is not defined`.
+  - **Cascade Failure:** WebSocket `wsClient.connect()` và `router.navigate('dashboard')` không bao giờ chạy → UI đơ hoàn toàn: sidebar tĩnh, content trống, trạng thái "Disconnected".
+  - **4 Lỗi Đã Fix:**
+    1. `const ocrKeys` duplicate (dòng 260 & 263) → xóa bản copy thừa
+    2. HTML OCR section bị copy-paste (dòng 122-134) → block trùng lặp gây duplicate DOM IDs (`cfg-ocr-keys` x2)
+    3. `API.saveOcrKeys()` gọi 2 lần liên tiếp trong `saveConfig()` → xóa bản thừa
+    4. `loadConfig()` + `loadOcrKeys()` gọi 2 lần trong `init()` → xóa bản thừa
+
+- **Install Apps System (`backend/core/apk_manager.py` — MỚI)**
+  - **APK Manager Module:** Registry 4 apps (ADB Clipper, ZArchiver, GSpace, QuickTouch) với download URL, version, post-install commands. APK files lưu trong `data/apks/`.
+  - **Download & Install Flow:** User bấm Install → nếu chưa tải → `ConfirmModal` hỏi tải → download từ URL → cài qua `adb install -r` trên **đúng emulator đã chọn** (không phải tất cả online).
+  - **Target Emulator Fix:** Backend `install-all` nhận `{indices}` từ frontend, chuyển thành ADB serial → chỉ cài trên emulator user đã tick trong Target Emulators tab.
+  - **UI Rewrite (`frontend/js/pages/task-runner.js`):** Cards load động từ API, badge 🟢 DOWNLOADED / ⬜ NOT DOWNLOADED / 🟡 NO URL, spinner khi downloading/installing, kết quả ✓/✗ hiển thị inline.
+  - **4 API Endpoints:**
+    - `GET /api/apks` — list registry + download status
+    - `POST /api/apks/{id}/download` — download APK
+    - `POST /api/apks/{id}/install?serial=...` — install single
+    - `POST /api/apks/{id}/install-all` — install trên selected emulators (body: `{indices}`)
+  - **Post-install:** Clipper tự start `ClipboardService` sau khi cài.
+
+- **Full Scan Fix (`backend/api.py`)**
+  - **Bug:** `POST /api/tasks/run-all?task_type=full_scan` submit vào generic `task_queue` nhưng Full Scan cần routing đặc biệt qua `full_scan.start_full_scan()`. Endpoint `run_task` (single) đã xử lý đúng, `run_all_tasks` thì không → bấm Full Scan từ Scan Operations tab ghi "queued" nhưng không có gì xảy ra.
+  - **Fix:** Thêm `FULL_SCAN` routing vào `run_all_tasks()` — route từng emulator online qua `full_scan.start_full_scan()`.
+
+- **OCR Data Validation Gate (`backend/core/full_scan.py`)**
+  - **Vấn đề:** Nếu screenshot capture lỗi → OCR trả toàn 0 → ghi đè data tốt (ví dụ Hall 25 → 0).
+  - **Gate 1 — Hard Reject:** Nếu TẤT CẢ fields (`power`, `hall_level`, `market_level`, `resources`) đều = 0 → abort scan, không ghi DB.
+  - **Gate 2 — Smart Merge:** So sánh với snapshot trước đó trong DB. Nếu field cũ có giá trị (ví dụ Hall=25) mà OCR mới trả 0 → giữ giá trị cũ, không ghi đè.
+  - Áp dụng cho: `hall_level`, `market_level`, `power`, `gold`, `wood`, `ore`, `mana`.
+
+- **Scan Comparison — Daily Delta Tracking**
+  - **Backend:** Thêm `get_scan_comparison(game_id)` trong `database.py` — query latest scan vs scan ≥24h trước, tính delta cho tất cả fields.
+  - **API:** `GET /api/accounts/{game_id}/comparison` trả `{current, previous, delta}`.
+  - **Frontend:** Account detail → Resources tab hiện delta thực (▲/▼ + giá trị) cho Gold, Wood, Ore, Mana, Pet Token.
+  - **AI Daily Summary:** Thay hardcoded "AI Insight" bằng daily summary dựa trên data thực (power change, resource trends).
+  - Nếu chưa có 2 scans cách nhau 24h thì hiện placeholder "—" và hướng dẫn scan thêm.
+
+- **Workflow V3 — UI/UX Theme Synchronization (`frontend/css/workflow.css`)**
+  - **Full CSS Rewrite:** Thay thế toàn bộ **20+ hardcoded dark colors** (`#0c0e14`, `#252a3a`, `#64748b`…) bằng design-system variables (`var(--card)`, `var(--border)`, `var(--muted-foreground)`, `var(--accent)`…). Workflow giờ dùng chung Light Theme với toàn bộ app — không còn hiệu ứng "split-screen" dark/light.
+  - **Button Standardization:** Chuyển từ custom `wf-tb-btn` sang app classes: `btn btn-primary btn-sm` (Create New, Run), `btn btn-outline btn-sm` (Save, Refresh), `btn btn-ghost btn-sm` (Back) — giống pattern `scheduled.js`.
+  - **Thêm nút Refresh** trên List View + method `refreshList()`.
+
+---
+
+## Version 1.0.8
 *Workflow V3 Recipe Builder, App Loading Screen, Custom Modals, Workflow Migration R2 & System Controls*
 
 - **Workflow V3: Recipe Builder (`backend/core/workflow/workflow_registry.py` — MỚI)**
