@@ -52,6 +52,8 @@ const API = {
 
     // ── Config ──
     getConfig() { return this.get('/api/config'); },
+    getOcrKeys() { return this.get('/api/config/ocr-keys'); },
+    saveOcrKeys(keys) { return this.post('/api/config/ocr-keys', { keys }); },
 
     // ── LDPlayer Emulators ──
     getAllEmulators() { return this.get('/api/emulators/all'); },
