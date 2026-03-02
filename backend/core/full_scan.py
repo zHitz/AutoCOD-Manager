@@ -77,18 +77,17 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                     if player_id:
                         game_id = player_id
                         _broadcast("id_extracted", f"Game ID: {game_id}")
-                    else:
-                        _broadcast("id_skipped", "Copy ID failed, continuing scan...")
 
                     # Back to lobby before screenshot capture
                     core_actions.back_to_lobby(serial, detector)
-                else:
-                    _broadcast("id_skipped", "Could not reach profile menu, continuing scan...")
-            else:
-                _broadcast("id_skipped", "Game not in lobby state, continuing scan...")
+
         except Exception as e:
             print(f"[FullScan] Game ID extraction error: {e}")
-            _broadcast("id_skipped", f"ID extraction error: {e}")
+
+        # STOP if no Game ID — scan is useless without identity
+        if not game_id:
+            _broadcast("failed", "Cannot identify account — Game ID extraction failed. Scan aborted.")
+            raise RuntimeError("Game ID extraction failed — aborting Full Scan")
 
         # ── Step 1: Capture Screenshots ──
         _broadcast("capturing", "Navigating and capturing screenshots...")
@@ -102,14 +101,23 @@ def _scan_worker(emulator_index: int, emulator_name: str,
         if not pdf_path:
             raise RuntimeError("Screenshot capture failed - no PDF created")
 
-        # ── Step 2: OCR API ──
-        _broadcast("ocr_processing", "Uploading PDF to OCR API...")
+        # ── Step 2: OCR API (retry up to 3 times) ──
         from backend.core.ocr_client import run_ocr
 
-        ocr_result = run_ocr(pdf_path)
+        ocr_result = None
+        max_ocr_retries = 3
+        for ocr_attempt in range(1, max_ocr_retries + 1):
+            _broadcast("ocr_processing", f"Uploading PDF to OCR API... (attempt {ocr_attempt}/{max_ocr_retries})")
+            ocr_result = run_ocr(pdf_path)
+            if ocr_result["success"]:
+                break
+            print(f"[FullScan] OCR attempt {ocr_attempt} failed: {ocr_result['error']}")
+            if ocr_attempt < max_ocr_retries:
+                _broadcast("ocr_retry", f"OCR failed, retrying ({ocr_attempt}/{max_ocr_retries})...")
+                time.sleep(2)
 
-        if not ocr_result["success"]:
-            raise RuntimeError(f"OCR failed: {ocr_result['error']}")
+        if not ocr_result or not ocr_result["success"]:
+            raise RuntimeError(f"OCR failed after {max_ocr_retries} attempts: {ocr_result['error']}")
 
         _broadcast("parsing", "Parsing OCR results...")
 
@@ -150,15 +158,7 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                     )
             return snap_id, link_result
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(_save(), loop)
-                snap_id, link_result = future.result(timeout=10)
-            else:
-                snap_id, link_result = loop.run_until_complete(_save())
-        except RuntimeError:
-            snap_id, link_result = asyncio.run(_save())
+        snap_id, link_result = asyncio.run(_save())
 
         # ── Done ──
         with _lock:

@@ -20,7 +20,7 @@ CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS emulators (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     emu_index       INTEGER NOT NULL UNIQUE,
-    serial          TEXT NOT NULL UNIQUE,
+    serial          TEXT NOT NULL,
     name            TEXT DEFAULT '',
     resolution      TEXT DEFAULT '960x540',
     status          TEXT DEFAULT 'OFFLINE',
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS scan_snapshots (
     scan_status     TEXT DEFAULT 'pending',
     duration_ms     INTEGER DEFAULT 0,
     raw_ocr_text    TEXT DEFAULT '',
+    game_id         TEXT DEFAULT '',
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (emulator_id) REFERENCES emulators(id)
 );
@@ -128,12 +129,30 @@ CREATE TABLE IF NOT EXISTS pending_accounts (
     FOREIGN KEY (snapshot_id) REFERENCES scan_snapshots(id)
 );
 
+-- Scheduled macro jobs
+CREATE TABLE IF NOT EXISTS schedules (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    macro_filename  TEXT NOT NULL,
+    schedule_type   TEXT DEFAULT 'once',
+    schedule_value  TEXT DEFAULT '',
+    target_mode     TEXT DEFAULT 'all_online',
+    target_indices  TEXT DEFAULT '[]',
+    is_enabled      INTEGER DEFAULT 1,
+    last_run_at     TEXT,
+    next_run_at     TEXT,
+    run_count       INTEGER DEFAULT 0,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_snap_emu_time ON scan_snapshots(emulator_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_res_snap ON scan_resources(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_taskrun_emu ON task_runs(emulator_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_macrorun_emu ON macro_runs(emulator_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_accounts_emu ON accounts(emulator_id);
+CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id);
+CREATE INDEX IF NOT EXISTS idx_snap_game_id ON scan_snapshots(game_id);
 """
 
 
@@ -281,83 +300,6 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
     print("[DB Migration] v1 -> v2 migration complete.")
 
 
-def _migrate_accounts_schema(conn: sqlite3.Connection):
-    """Migrate accounts table to v2 schema (add game_id, is_active, lord_name).
-    Also add game_id column to scan_snapshots. Safe to re-run (idempotent)."""
-    # Check if accounts table needs migration (no game_id column)
-    cursor = conn.execute("PRAGMA table_info(accounts)")
-    cols = {row[1] for row in cursor.fetchall()}
-
-    if "game_id" not in cols:
-        print("[DB Migration] Migrating accounts table → adding game_id, is_active, lord_name...")
-
-        # SQLite can't ALTER constraints, so we recreate the table
-        conn.execute("ALTER TABLE accounts RENAME TO accounts_old")
-        conn.executescript("""
-            CREATE TABLE accounts (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                game_id         TEXT NOT NULL UNIQUE,
-                emulator_id     INTEGER,
-                lord_name       TEXT DEFAULT '',
-                login_method    TEXT DEFAULT '',
-                email           TEXT DEFAULT '',
-                provider        TEXT DEFAULT 'Global',
-                alliance        TEXT DEFAULT '',
-                note            TEXT DEFAULT '',
-                is_active       INTEGER DEFAULT 0,
-                created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (emulator_id) REFERENCES emulators(id)
-            );
-        """)
-
-        # Migrate existing data with placeholder game_ids
-        old_cursor = conn.execute("SELECT * FROM accounts_old")
-        old_cols = [desc[0] for desc in old_cursor.description]
-        rows = old_cursor.fetchall()
-
-        for row in rows:
-            d = dict(zip(old_cols, row))
-            placeholder_id = f"LEGACY-{d['id']}"
-            conn.execute(
-                """INSERT INTO accounts
-                   (game_id, emulator_id, login_method, email, provider, alliance, note, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    placeholder_id,
-                    d.get("emulator_id"),
-                    d.get("login_method", ""),
-                    d.get("email", ""),
-                    d.get("provider", "Global"),
-                    d.get("alliance", ""),
-                    d.get("note", ""),
-                    d.get("created_at", ""),
-                    d.get("updated_at", ""),
-                ),
-            )
-
-        conn.execute("DROP TABLE accounts_old")
-        print(f"  -> Migrated {len(rows)} accounts with LEGACY- game_ids")
-        conn.commit()
-
-    # Add game_id column to scan_snapshots if missing
-    cursor = conn.execute("PRAGMA table_info(scan_snapshots)")
-    snap_cols = {row[1] for row in cursor.fetchall()}
-    if "game_id" not in snap_cols:
-        try:
-            conn.execute("ALTER TABLE scan_snapshots ADD COLUMN game_id TEXT DEFAULT ''")
-            conn.commit()
-            print("[DB Migration] Added game_id column to scan_snapshots")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-
-        # Create indexes that depend on game_id (safe now that columns exist)
-        try:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_game_id ON scan_snapshots(game_id)")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
 
 
 # ──────────────────────────────────────────────
@@ -377,14 +319,11 @@ class Database:
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA foreign_keys = ON")
 
-        # Create v2 tables first (IF NOT EXISTS is safe)
+        # Create tables (IF NOT EXISTS is safe)
         conn.executescript(CREATE_TABLES_SQL)
 
         # Migrate v1 data if needed
         _migrate_v1_to_v2(conn)
-
-        # Migrate accounts schema (add game_id etc.)
-        _migrate_accounts_schema(conn)
 
         conn.close()
         self._initialized = True
@@ -396,6 +335,15 @@ class Database:
     # ──────────────────────────────────────────
     # Emulators
     # ──────────────────────────────────────────
+
+    async def get_emulator_id(self, emu_index: int) -> int | None:
+        """Get emulator DB id by emu_index."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                "SELECT id FROM emulators WHERE emu_index = ?", (emu_index,)
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
 
     async def upsert_emulator(
         self, emu_index: int, serial: str, name: str = "",
@@ -1357,7 +1305,90 @@ class Database:
             await db.commit()
             return cursor.rowcount > 0
 
+    # ──────────────────────────────────────────
+    # Schedules
+    # ──────────────────────────────────────────
+
+    async def get_all_schedules(self) -> list[dict]:
+        """Get all schedules ordered by created_at."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM schedules ORDER BY is_enabled DESC, created_at DESC"
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_schedule(self, schedule_id: int) -> dict | None:
+        """Get single schedule by id."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM schedules WHERE id = ?", (schedule_id,)
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def create_schedule(
+        self, name: str, macro_filename: str,
+        schedule_type: str = "once", schedule_value: str = "",
+        target_mode: str = "all_online", target_indices: str = "[]",
+        is_enabled: int = 1, next_run_at: str = "",
+    ) -> int:
+        """Create a new schedule. Returns schedule id."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """INSERT INTO schedules
+                   (name, macro_filename, schedule_type, schedule_value,
+                    target_mode, target_indices, is_enabled, next_run_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (name, macro_filename, schedule_type, schedule_value,
+                 target_mode, target_indices, is_enabled, next_run_at),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def update_schedule(self, schedule_id: int, **kwargs) -> bool:
+        """Update schedule fields."""
+        allowed = {
+            "name", "macro_filename", "schedule_type", "schedule_value",
+            "target_mode", "target_indices", "is_enabled", "next_run_at",
+        }
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return False
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [schedule_id]
+
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                f"UPDATE schedules SET {set_clause} WHERE id = ?", values
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def delete_schedule(self, schedule_id: int) -> bool:
+        """Delete a schedule."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                "DELETE FROM schedules WHERE id = ?", (schedule_id,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def record_schedule_run(self, schedule_id: int, next_run_at: str = "") -> bool:
+        """Record that a schedule has been executed."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """UPDATE schedules SET
+                    last_run_at = ?, run_count = run_count + 1,
+                    next_run_at = ?
+                   WHERE id = ?""",
+                (datetime.now().isoformat(), next_run_at, schedule_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
 
 # Global singleton
 database = Database()
-

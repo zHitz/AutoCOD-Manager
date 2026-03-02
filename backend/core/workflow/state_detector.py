@@ -25,7 +25,8 @@ class GameStateDetector:
             "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
             "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
             "lobby_hammer.png": "IN-GAME LOBBY (IN_CITY)",
-            "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)"
+            "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
+            "lobby_resources.png": "IN-GAME LOBBY (RESOURCES)"
         }
         
         self._load_templates()
@@ -78,7 +79,8 @@ class GameStateDetector:
             "LOADING SCREEN",
             "IN-GAME LOBBY (PROFILE MENU DETAIL)",
             "IN-GAME LOBBY (PROFILE MENU)", 
-            "IN-GAME LOBBY (EVENTS MENU)"
+            "IN-GAME LOBBY (EVENTS MENU)",
+            "IN-GAME LOBBY (RESOURCES)"
         ]
         
         for state_name in priority_checks:

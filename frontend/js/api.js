@@ -68,6 +68,21 @@ const API = {
     runMacro(index, filename) {
         return this.post(`/api/macros/run?index=${index}&filename=${encodeURIComponent(filename)}`);
     },
+
+    // ── Schedules ──
+    getSchedules() { return this.get('/api/schedules'); },
+    createSchedule(data) { return this.post('/api/schedules', data); },
+    getSchedule(id) { return this.get(`/api/schedules/${id}`); },
+    updateSchedule(id, data) {
+        return fetch(`/api/schedules/${id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }).then(r => r.json());
+    },
+    deleteSchedule(id) {
+        return fetch(`/api/schedules/${id}`, { method: 'DELETE' }).then(r => r.json());
+    },
+    executeSchedule(id) { return this.post(`/api/schedules/${id}/execute`); },
 };
 
 

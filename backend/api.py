@@ -527,6 +527,112 @@ async def dismiss_pending(pending_id: int):
 
 
 # ──────────────────────────────────────────────
+# Schedule Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/schedules")
+async def get_schedules():
+    """Get all scheduled jobs."""
+    return await database.get_all_schedules()
+
+
+@app.post("/api/schedules")
+async def create_schedule(body: dict):
+    """Create a new schedule."""
+    from backend.core.scheduler import calc_initial_next_run
+
+    name = body.get("name", "").strip()
+    macro_filename = body.get("macro_filename", "").strip()
+    if not name or not macro_filename:
+        return {"error": "name and macro_filename are required"}
+
+    schedule_type = body.get("schedule_type", "once")
+    schedule_value = body.get("schedule_value", "")
+    target_mode = body.get("target_mode", "all_online")
+    target_indices = body.get("target_indices", "[]")
+    is_enabled = 1 if body.get("is_enabled", True) else 0
+
+    # If target_indices is a list, JSON-encode it
+    import json as json_mod
+    if isinstance(target_indices, list):
+        target_indices = json_mod.dumps(target_indices)
+
+    next_run = calc_initial_next_run(schedule_type, schedule_value)
+
+    sched_id = await database.create_schedule(
+        name=name,
+        macro_filename=macro_filename,
+        schedule_type=schedule_type,
+        schedule_value=schedule_value,
+        target_mode=target_mode,
+        target_indices=target_indices,
+        is_enabled=is_enabled,
+        next_run_at=next_run,
+    )
+    return {"status": "created", "id": sched_id}
+
+
+@app.get("/api/schedules/{schedule_id}")
+async def get_schedule(schedule_id: int):
+    """Get single schedule."""
+    sched = await database.get_schedule(schedule_id)
+    if sched:
+        return sched
+    return {"error": "Schedule not found"}
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def update_schedule(schedule_id: int, body: dict):
+    """Update a schedule."""
+    from backend.core.scheduler import calc_initial_next_run
+    import json as json_mod
+
+    # If schedule_type or schedule_value changed, recalculate next_run
+    if "schedule_type" in body or "schedule_value" in body:
+        stype = body.get("schedule_type")
+        sval = body.get("schedule_value")
+        if stype and sval:
+            body["next_run_at"] = calc_initial_next_run(stype, sval)
+
+    # Convert target_indices list to JSON string
+    if "target_indices" in body and isinstance(body["target_indices"], list):
+        body["target_indices"] = json_mod.dumps(body["target_indices"])
+
+    # Convert is_enabled boolean to int
+    if "is_enabled" in body:
+        body["is_enabled"] = 1 if body["is_enabled"] else 0
+
+    ok = await database.update_schedule(schedule_id, **body)
+    if ok:
+        return {"status": "ok", "id": schedule_id}
+    return {"error": "Schedule not found or no valid fields"}
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int):
+    """Delete a schedule."""
+    ok = await database.delete_schedule(schedule_id)
+    if ok:
+        return {"status": "deleted"}
+    return {"error": "Schedule not found"}
+
+
+@app.post("/api/schedules/{schedule_id}/execute")
+async def execute_schedule_now(schedule_id: int):
+    """Execute a schedule immediately (Execute Now)."""
+    from backend.core.scheduler import execute_schedule
+    import asyncio
+
+    sched = await database.get_schedule(schedule_id)
+    if not sched:
+        return {"error": "Schedule not found"}
+
+    # Run in background (don't block API response)
+    asyncio.create_task(execute_schedule(sched, ws_callback=ws_manager.broadcast_sync))
+    return {"status": "executing", "name": sched["name"]}
+
+
+# ──────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────
 
@@ -541,6 +647,11 @@ async def startup():
 
     # Discover devices
     emulator_manager.discover()
+
+    # Start background scheduler
+    from backend.core.scheduler import start_scheduler
+    start_scheduler()
+
     print(f"[API] Started on port {config.server_port}")
     print(f"[API] Devices found: {len(emulator_manager.get_all())}")
 
