@@ -60,16 +60,11 @@ def _scan_worker(emulator_index: int, emulator_name: str,
         templates_dir = os.path.join(os.path.dirname(__file__), "workflow", "templates")
         detector = GameStateDetector(app_config.adb_path, templates_dir)
 
+        APP_PACKAGE = "com.farlightgames.samo.gp.vn"
         game_id = ""
         try:
-            # Wait for lobby state (game must be loaded)
-            lobby_state = core_actions.wait_for_state(
-                serial, detector,
-                ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"],
-                timeout_sec=30,
-            )
-
-            if lobby_state:
+            # Boot game + navigate to Lobby (handles network issues, stuck states)
+            if core_actions.startup_to_lobby(serial, detector, APP_PACKAGE):
                 # Navigate to profile menu
                 if core_actions.go_to_profile(serial, detector):
                     # Extract player ID via clipboard

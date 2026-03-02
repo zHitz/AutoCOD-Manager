@@ -1433,3 +1433,115 @@
     border-radius: 50%;
     flex-shrink: 0;
 }
+
+/* ── Confirm Modal ── */
+.confirm-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    animation: confirmOverlayIn 0.2s ease;
+}
+
+.confirm-modal {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0,0,0,0.03);
+    padding: 32px;
+    width: 380px;
+    max-width: calc(100vw - 32px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 4px;
+    animation: confirmModalIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-modal-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.confirm-modal-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.confirm-modal-icon--default {
+    background: hsla(217, 91%, 60%, 0.1);
+    color: var(--info);
+}
+
+.confirm-modal-icon--danger {
+    background: hsla(0, 84%, 60%, 0.1);
+    color: var(--destructive);
+}
+
+.confirm-modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--foreground);
+    margin-top: 4px;
+}
+
+.confirm-modal-message {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    line-height: 1.5;
+    margin: 4px 0 16px;
+    max-width: 300px;
+}
+
+.confirm-modal-actions {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+}
+
+.confirm-modal-actions .btn {
+    flex: 1;
+}
+
+@keyframes confirmOverlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes confirmOverlayOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+@keyframes confirmModalIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+@keyframes confirmModalOut {
+    from {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: scale(0.95) translateY(8px);
+    }
+}

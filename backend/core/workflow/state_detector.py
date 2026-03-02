@@ -1,6 +1,6 @@
 """
 Game State Detector — OpenCV template matching for game state detection.
-Copied from TEST/WORKFLOW/state_detector.py (unchanged logic).
+Migrated from TEST/workflow/state_detector.py with import paths adapted for app context.
 """
 import os
 import cv2
@@ -17,16 +17,27 @@ class GameStateDetector:
         self.adb_path = adb_path
         self.templates_dir = templates_dir
         self.templates = {}
+        self.construction_templates = {}
         
         # State definitions mapping filenames to logical states
         self.state_configs = {
+            "fixing_network.png": "LOADING SCREEN (NETWORK ISSUE)",
             "lobby_loading.png": "LOADING SCREEN",
             "lobby_profile_detail.png": "IN-GAME LOBBY (PROFILE MENU DETAIL)",
             "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
             "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
             "lobby_hammer.png": "IN-GAME LOBBY (IN_CITY)",
             "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
-            "lobby_resources.png": "IN-GAME LOBBY (RESOURCES)"
+            "items_artifacts.png": "IN-GAME ITEMS (ARTIFACTS)",
+            "items_resources.png": "IN-GAME ITEMS (RESOURCES)",
+            "lobby_icons.png": "LOBBY_MENU_EXPANDED"
+        }
+        
+        # Construction templates — loaded separately, NOT part of check_state
+        self.construction_configs = {
+            "contructions/con_hall.png": "HALL",
+            "contructions/con_market.png": "MARKET",
+            "contructions/con_elixir_healing.png": "ELIXIR_HEALING",
         }
         
         self._load_templates()
@@ -42,9 +53,18 @@ class GameStateDetector:
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is not None:
                 self.templates[state_name] = img
-                # print(f"  -> Loaded: {filename} mapped to '{state_name}'")
             else:
                 print(f"[ERROR] Failed to load OpenCV image from: {path}")
+        
+        # Load construction templates separately
+        for filename, name in self.construction_configs.items():
+            path = os.path.join(self.templates_dir, filename)
+            if not os.path.exists(path):
+                print(f"[WARNING] Construction template missing: {path}")
+                continue
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is not None:
+                self.construction_templates[name] = img
 
     def screencap_memory(self, serial: str) -> np.ndarray:
         """Captures screen directly to RAM, no disk IO. Faster and cleaner for Multi-Emulator."""
@@ -76,11 +96,13 @@ class GameStateDetector:
 
         # Check in priority order: Loading screens mask everything else
         priority_checks = [
+            "LOADING SCREEN (NETWORK ISSUE)",
             "LOADING SCREEN",
             "IN-GAME LOBBY (PROFILE MENU DETAIL)",
             "IN-GAME LOBBY (PROFILE MENU)", 
             "IN-GAME LOBBY (EVENTS MENU)",
-            "IN-GAME LOBBY (RESOURCES)"
+            "IN-GAME ITEMS (ARTIFACTS)",
+            "IN-GAME ITEMS (RESOURCES)"
         ]
         
         for state_name in priority_checks:
@@ -102,3 +124,37 @@ class GameStateDetector:
                     return state_name
 
         return "UNKNOWN / TRANSITION"
+
+    def is_menu_expanded(self, serial: str, threshold: float = 0.8) -> bool:
+        """Checks if the expandable lobby menu is currently open. Does NOT affect check_state results."""
+        if "LOBBY_MENU_EXPANDED" not in self.templates:
+            return False
+        
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return False
+        
+        template = self.templates["LOBBY_MENU_EXPANDED"]
+        res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        return max_val >= threshold
+
+    def check_construction(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
+        """
+        Checks for construction buildings on screen. Separate from check_state to keep it lightweight.
+        If target is specified, only checks that specific construction (e.g. 'HALL').
+        Returns the matched construction name or None.
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return None
+        
+        checks = {target: self.construction_templates[target]} if target and target in self.construction_templates else self.construction_templates
+        
+        for name, template in checks.items():
+            res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val >= threshold:
+                return name
+        
+        return None

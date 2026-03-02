@@ -24,6 +24,15 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="COD Game Automation Manager", version="1.0.0")
 
+# Allow loading screen (html= origin is null) to reach the API
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
@@ -630,6 +639,118 @@ async def execute_schedule_now(schedule_id: int):
     # Run in background (don't block API response)
     asyncio.create_task(execute_schedule(sched, ws_callback=ws_manager.broadcast_sync))
     return {"status": "executing", "name": sched["name"]}
+
+
+# ──────────────────────────────────────────────
+# Workflow API — Function Registry & Recipes
+# ──────────────────────────────────────────────
+
+# In-memory recipe storage (persists across requests, resets on restart)
+_saved_recipes: list[dict] = []
+_recipe_id_counter = 0
+
+
+@app.get("/api/workflow/functions")
+async def get_workflow_functions():
+    """Return the full function registry for the Recipe Builder."""
+    from backend.core.workflow.workflow_registry import get_functions
+    return get_functions()
+
+
+@app.get("/api/workflow/templates")
+async def get_workflow_templates():
+    """Return pre-built recipe templates."""
+    from backend.core.workflow.workflow_registry import get_templates
+    return get_templates()
+
+
+@app.get("/api/workflow/recipes")
+async def get_workflow_recipes():
+    """List all saved user recipes."""
+    return _saved_recipes
+
+
+@app.post("/api/workflow/recipes")
+async def save_workflow_recipe(body: dict):
+    """Save a new recipe or update an existing one."""
+    global _recipe_id_counter
+    recipe_id = body.get("id")
+
+    if recipe_id:
+        # Update existing
+        for i, r in enumerate(_saved_recipes):
+            if r["id"] == recipe_id:
+                _saved_recipes[i] = {**r, **body}
+                return {"status": "ok", "id": recipe_id, "action": "updated"}
+        return {"status": "error", "error": "Recipe not found"}
+
+    # Create new
+    _recipe_id_counter += 1
+    recipe_id = f"recipe_{_recipe_id_counter}"
+    recipe = {
+        "id": recipe_id,
+        "name": body.get("name", "Untitled Recipe"),
+        "description": body.get("description", ""),
+        "icon": body.get("icon", "📝"),
+        "steps": body.get("steps", []),
+    }
+    _saved_recipes.append(recipe)
+    return {"status": "ok", "id": recipe_id, "action": "created"}
+
+
+@app.delete("/api/workflow/recipes/{recipe_id}")
+async def delete_workflow_recipe(recipe_id: str):
+    """Delete a saved recipe."""
+    global _saved_recipes
+    before = len(_saved_recipes)
+    _saved_recipes = [r for r in _saved_recipes if r["id"] != recipe_id]
+    if len(_saved_recipes) < before:
+        return {"status": "deleted"}
+    return {"status": "error", "error": "Recipe not found"}
+
+
+# ──────────────────────────────────────────────
+# System Endpoints
+# ──────────────────────────────────────────────
+
+@app.post("/api/restart")
+async def restart_server():
+    """Restart the entire backend server process."""
+    import subprocess
+    import sys
+    import threading
+
+    project_root = str(Path(__file__).resolve().parent.parent)
+    main_script = os.path.join(project_root, "main.py")
+
+    def _do_restart():
+        import time
+        time.sleep(0.3)  # Let HTTP response flush
+        # Spawn shell that waits 2s (for port release) then starts new process
+        subprocess.Popen(
+            f'timeout /t 2 /nobreak > nul & "{sys.executable}" "{main_script}"',
+            cwd=project_root,
+            shell=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        os._exit(0)  # Kill current process — port released immediately
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"status": "restarting"}
+
+
+@app.post("/api/shutdown")
+async def shutdown_server():
+    """Shutdown the entire backend server process."""
+    import threading
+
+    def _do_shutdown():
+        import time
+        time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
+    return {"status": "shutting_down"}
 
 
 # ──────────────────────────────────────────────

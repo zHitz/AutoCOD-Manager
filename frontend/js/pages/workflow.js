@@ -1,55 +1,118 @@
 /**
- * Workflow Page V2 — Basic Linear Sequence Builder.
- * Integrated into SPA with dark-scoped theme.
+ * Workflow V3 — Recipe Builder (Two-Layer UI)
+ * Layer 1: Recipe List — gallery of all saved workflows + templates
+ * Layer 2: Recipe Editor — step-by-step builder (opens on click/new)
  */
 
 const WorkflowPage = {
     render() {
         return `
     <div class="wf-page">
-      <div class="wf-topbar">
-        <div class="wf-topbar-brand">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><line x1="6" y1="7" x2="10" y2="11"/><line x1="18" y1="7" x2="14" y2="11"/><line x1="6" y1="17" x2="10" y2="13"/><line x1="18" y1="17" x2="14" y2="13"/></svg>
-          <h1>Workflow</h1>
-          <span class="wf-badge">V2 BASIC</span>
+      <!-- LAYER 1: Recipe List -->
+      <div id="wf-list-view" class="wf-list-view">
+        <div class="wf-list-topbar">
+          <div class="wf-list-topbar-left">
+            <h2>Recipe Builder</h2>
+            <span class="wf-badge">V3</span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm" style="display:flex;align-items:center;gap:6px;" onclick="WF3.refreshList()">
+              <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh
+            </button>
+            <button class="btn btn-primary btn-sm" style="display:flex;align-items:center;gap:6px;" onclick="WF3.createNewRecipe()">
+              <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Create New
+            </button>
+          </div>
         </div>
-        <input id="wf-name-input" class="wf-name-input" type="text" value="Farm + Scan Sequence" spellcheck="false" />
-        <div class="wf-topbar-sep"></div>
-        <button class="wf-tb-btn" onclick="WF.clearSequence()" title="New workflow">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Clear All
-        </button>
-        <div class="wf-topbar-sep"></div>
-        <div class="wf-topbar-right">
-          <span id="wf-status" class="wf-status">IDLE</span>
-          <button class="wf-tb-btn run-btn" id="wf-btn-run" onclick="WF.runWorkflow()">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Sequence
-          </button>
-          <button class="wf-tb-btn" onclick="WF.saveWorkflow()">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save
-          </button>
+
+        <div class="wf-list-body">
+          <!-- Templates Section -->
+          <div class="wf-list-section">
+            <div class="wf-list-section-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              <span>Templates</span>
+              <span class="wf-list-count" id="wf-tpl-count">0</span>
+            </div>
+            <div id="wf-list-templates" class="wf-list-grid"></div>
+          </div>
+
+          <!-- My Recipes Section -->
+          <div class="wf-list-section">
+            <div class="wf-list-section-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+              <span>My Recipes</span>
+              <span class="wf-list-count" id="wf-recipe-count">0</span>
+            </div>
+            <div id="wf-list-recipes" class="wf-list-grid"></div>
+          </div>
         </div>
       </div>
 
-      <div class="wf-main">
-        <div class="wf-palette">
-          <div class="wf-palette-header">
-            <h3>Add Step</h3>
+      <!-- LAYER 2: Recipe Editor (hidden by default) -->
+      <div id="wf-editor-view" class="wf-editor-view" style="display:none">
+        <div class="wf-topbar">
+          <button class="btn btn-ghost btn-sm" onclick="WF3.backToList()" style="padding:6px 10px;display:flex;align-items:center;gap:4px;">
+            <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg> Back
+          </button>
+          <div class="wf-topbar-sep"></div>
+          <input id="wf-name-input" class="wf-name-input" type="text" value="Untitled Recipe" spellcheck="false" />
+          <div class="wf-topbar-sep"></div>
+          <button class="btn btn-outline btn-sm" onclick="WF3.saveRecipe()" style="display:flex;align-items:center;gap:5px;">
+            <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save
+          </button>
+          <div class="wf-topbar-right">
+            <span id="wf-status" class="wf-status">IDLE</span>
+            <button class="btn btn-primary btn-sm" id="wf-btn-run" onclick="WF3.runWorkflow()" style="display:flex;align-items:center;gap:5px;">
+              <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run
+            </button>
           </div>
-          <div id="wf-palette-list" class="wf-palette-list"></div>
         </div>
 
-        <div class="wf-linear-builder">
-            <div id="wf-sequence-container" class="wf-sequence-container">
-                <!-- Sequence cards injected here -->
+        <div class="wf-main">
+          <!-- LEFT: Function Library -->
+          <div class="wf-sidebar">
+            <div class="wf-sidebar-section">
+              <div class="wf-sidebar-title">⚡ Functions</div>
+              <input id="wf-sidebar-search" class="wf-sidebar-search" placeholder="Search..." oninput="WF3.renderSidebarFunctions(this.value)" />
+              <div id="wf-sidebar-fn-list" class="wf-sidebar-list"></div>
             </div>
-        </div>
-        
-        <div id="wf-run-log" class="wf-run-log">
-          <div class="wf-run-log-header">
-            <span class="wf-run-log-title">Execution Log</span>
-            <button class="wf-run-log-close" onclick="document.getElementById('wf-run-log').classList.remove('visible')">✕</button>
           </div>
-          <div id="wf-run-log-body" class="wf-run-log-body"></div>
+
+          <!-- CENTER: Step Editor -->
+          <div class="wf-editor-center">
+            <div id="wf-step-editor" class="wf-step-editor"></div>
+            <button class="wf-add-step-btn" onclick="WF3.openFunctionPicker()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Step
+            </button>
+          </div>
+
+          <!-- Execution Panel -->
+          <div id="wf-exec-panel" class="wf-exec-panel">
+            <div class="wf-exec-header">
+              <span class="wf-exec-title">Execution</span>
+              <div id="wf-exec-progress" class="wf-exec-progress">
+                <div id="wf-exec-progress-fill" class="wf-exec-progress-fill"></div>
+              </div>
+              <span id="wf-exec-pct" class="wf-exec-pct">0%</span>
+              <button class="wf-exec-close" onclick="document.getElementById('wf-exec-panel').classList.remove('visible')">✕</button>
+            </div>
+            <div id="wf-exec-log" class="wf-exec-log"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Function Picker Modal -->
+      <div id="wf-fn-picker-overlay" class="wf-fn-overlay" onclick="WF3.closeFunctionPicker()">
+        <div class="wf-fn-picker" onclick="event.stopPropagation()">
+          <div class="wf-fn-picker-header">
+            <h3>Add Step</h3>
+            <input id="wf-fn-search" class="wf-fn-search" placeholder="Search functions..." oninput="WF3.filterFunctions(this.value)" />
+            <button class="wf-fn-close" onclick="WF3.closeFunctionPicker()">✕</button>
+          </div>
+          <div id="wf-fn-list" class="wf-fn-list"></div>
         </div>
       </div>
 
@@ -57,55 +120,12 @@ const WorkflowPage = {
     </div>`;
     },
 
-    init() { WF.init(); },
-    destroy() { WF.cleanup(); },
+    init() { WF3.init(); },
+    destroy() { WF3.cleanup(); },
 };
 
 // ═══════════════════════════════════════════════
-//  PALETTE DATA
-// ═══════════════════════════════════════════════
-const WF_ACTIONS = [
-    {
-        group: 'Emulator Control', items: [
-            { type: 'emu-target', label: 'Select Target', sub: 'Choose emulators', icon: '🎯', color: 'var(--wf-target)', bg: 'rgba(99,102,241,.15)' },
-            { type: 'emu-start', label: 'Start Emulator', sub: 'Launch instance', icon: '⏵', color: 'var(--wf-action)', bg: 'rgba(251,146,60,.15)' },
-            { type: 'emu-stop', label: 'Stop Emulator', sub: 'Kill instance', icon: '⏹', color: 'var(--wf-action)', bg: 'rgba(251,146,60,.15)' },
-            { type: 'emu-restart', label: 'Restart Emulator', sub: 'Stop then start', icon: '🔄', color: 'var(--wf-action)', bg: 'rgba(251,146,60,.15)' },
-        ]
-    },
-    {
-        group: 'Scripts', items: [
-            { type: 'script-run', label: 'Run Macro', sub: 'Execute .record file', icon: '⚡', color: 'var(--wf-script)', bg: 'rgba(34,197,94,.12)' },
-            { type: 'script-loop', label: 'Loop Script', sub: 'Repeat N times', icon: '🔁', color: 'var(--wf-script)', bg: 'rgba(34,197,94,.12)' },
-        ]
-    },
-    {
-        group: 'Scan Operations', items: [
-            { type: 'scan-profile', label: 'Profile Scan', sub: 'Name + power level', icon: '👤', color: 'var(--wf-scan)', bg: 'rgba(56,189,248,.12)' },
-            { type: 'scan-full', label: 'Full Scan', sub: 'All scans in sequence', icon: '🔍', color: 'var(--wf-scan)', bg: 'rgba(56,189,248,.12)' },
-        ]
-    },
-    {
-        group: 'Flow Control', items: [
-            { type: 'flow-delay', label: 'Delay', sub: 'Wait N seconds', icon: '⏳', color: 'var(--wf-flow)', bg: 'rgba(167,139,250,.12)' },
-        ]
-    },
-];
-
-const WF_DEFAULTS = {
-    'emu-target': { mode: 'tab', tab: 'Farming', count: 4 },
-    'emu-start': { delay: 5 },
-    'emu-stop': { force: false },
-    'emu-restart': { wait: 3 },
-    'script-run': { file: 'FARM +4', loop: 1 },
-    'script-loop': { file: 'Swap_Charactor', times: 5 },
-    'scan-profile': {},
-    'scan-full': {},
-    'flow-delay': { seconds: 15 }
-};
-
-// ═══════════════════════════════════════════════
-//  WF TOAST (scoped)
+//  TOAST
 // ═══════════════════════════════════════════════
 const WfToast = {
     show(type, title, msg) {
@@ -120,103 +140,372 @@ const WfToast = {
 };
 
 // ═══════════════════════════════════════════════
-//  WORKFLOW ENGINE V2
+//  RECIPE BUILDER ENGINE V3
 // ═══════════════════════════════════════════════
-const WF = {
-    steps: [], // Array of step objects: { id, type, config }
-    idCtr: 0,
+const WF3 = {
+    steps: [],
+    functions: [],
+    templates: [],
+    recipes: [],
+    currentRecipeId: null,
     isRunning: false,
+    insertIndex: -1,
+    activeView: 'list', // 'list' or 'editor'
 
-    // ── INIT ──
-    init() {
+    async init() {
         this.steps = [];
-        this.idCtr = 0;
         this.isRunning = false;
+        this.currentRecipeId = null;
+        this.activeView = 'list';
 
-        this.renderPalette();
-        this.loadDemoSequence();
+        await Promise.all([
+            this.fetchFunctions(),
+            this.fetchTemplates(),
+            this.fetchRecipes(),
+        ]);
+
+        this.renderListView();
     },
 
     cleanup() {
         this.steps = [];
+        this.functions = [];
     },
 
-    // ── PALETTE ──
-    renderPalette() {
-        const list = document.getElementById('wf-palette-list');
-        if (!list) return;
-        list.innerHTML = '';
-        WF_ACTIONS.forEach(group => {
-            const gl = document.createElement('div');
-            gl.className = 'wf-palette-group-label';
-            gl.textContent = group.group;
-            list.appendChild(gl);
-
-            group.items.forEach(item => {
-                const el = document.createElement('div');
-                el.className = 'wf-palette-item';
-                el.dataset.type = item.type;
-                el.onclick = () => this.addStep(item.type);
-                el.innerHTML = `<div class="pi-icon" style="background:${item.bg};color:${item.color};">${item.icon}</div><div><div class="pi-label">${item.label}</div><div class="pi-sub">${item.sub}</div></div>`;
-                list.appendChild(el);
-            });
-        });
+    async refreshList() {
+        await Promise.all([this.fetchTemplates(), this.fetchRecipes()]);
+        this.renderListView();
+        WfToast.show('s', 'Refreshed', 'List updated');
     },
 
-    getActionDef(type) {
-        for (const g of WF_ACTIONS) {
-            const f = g.items.find(i => i.type === type);
-            if (f) return f;
-        }
-        return { icon: '?', color: '#999', bg: '#222', label: 'Unknown', sub: '' };
+    // ── VIEW SWITCHING ──
+    showListView() {
+        this.activeView = 'list';
+        const listView = document.getElementById('wf-list-view');
+        const editorView = document.getElementById('wf-editor-view');
+        if (listView) listView.style.display = '';
+        if (editorView) editorView.style.display = 'none';
     },
 
-    // ── SEQUENCE MANAGEMENT ──
-    addStep(type) {
+    showEditorView() {
+        this.activeView = 'editor';
+        const listView = document.getElementById('wf-list-view');
+        const editorView = document.getElementById('wf-editor-view');
+        if (listView) listView.style.display = 'none';
+        if (editorView) editorView.style.display = '';
+    },
+
+    backToList() {
         if (this.isRunning) {
-            WfToast.show('e', 'Locked', 'Cannot edit while workflow is running.');
+            WfToast.show('w', 'Running', 'Cannot go back while workflow is executing.');
+            return;
+        }
+        this.showListView();
+        this.fetchRecipes().then(() => this.renderListView());
+    },
+
+    // ── DATA FETCHING ──
+    async fetchFunctions() {
+        try {
+            const res = await fetch('/api/workflow/functions');
+            this.functions = await res.json();
+        } catch (e) {
+            console.error('Failed to fetch functions:', e);
+            this.functions = [];
+        }
+    },
+
+    async fetchTemplates() {
+        try {
+            const res = await fetch('/api/workflow/templates');
+            this.templates = await res.json();
+        } catch (e) {
+            console.error('Failed to fetch templates:', e);
+            this.templates = [];
+        }
+    },
+
+    async fetchRecipes() {
+        try {
+            const res = await fetch('/api/workflow/recipes');
+            this.recipes = await res.json();
+        } catch (e) {
+            console.error('Failed to fetch recipes:', e);
+            this.recipes = [];
+        }
+    },
+
+    // ═══════════════════════════════════════════
+    //  LAYER 1: LIST VIEW
+    // ═══════════════════════════════════════════
+    renderListView() {
+        // Templates
+        const tplGrid = document.getElementById('wf-list-templates');
+        const tplCount = document.getElementById('wf-tpl-count');
+        if (tplCount) tplCount.textContent = this.templates.length;
+
+        if (tplGrid) {
+            tplGrid.innerHTML = this.templates.map(t => `
+                <div class="wf-recipe-card wf-tpl-card" onclick="WF3.openTemplateInEditor('${t.id}')">
+                    <div class="wf-rc-icon">${t.icon}</div>
+                    <div class="wf-rc-info">
+                        <div class="wf-rc-name">${t.name}</div>
+                        <div class="wf-rc-desc">${t.description}</div>
+                    </div>
+                    <div class="wf-rc-meta">
+                        <span class="wf-rc-steps">${t.steps.length} steps</span>
+                        <span class="wf-rc-badge tpl">Template</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Recipes
+        const recGrid = document.getElementById('wf-list-recipes');
+        const recCount = document.getElementById('wf-recipe-count');
+        if (recCount) recCount.textContent = this.recipes.length;
+
+        if (recGrid) {
+            if (this.recipes.length === 0) {
+                recGrid.innerHTML = `
+                    <div class="wf-list-empty">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                            <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+                        </svg>
+                        <p>No saved recipes yet.<br>Click <strong>Create New</strong> or use a template to get started.</p>
+                    </div>`;
+            } else {
+                recGrid.innerHTML = this.recipes.map(r => `
+                    <div class="wf-recipe-card" onclick="WF3.openRecipeInEditor('${r.id}')">
+                        <div class="wf-rc-icon">${r.icon || '📝'}</div>
+                        <div class="wf-rc-info">
+                            <div class="wf-rc-name">${r.name}</div>
+                            <div class="wf-rc-desc">${r.description || (r.steps || []).length + ' steps'}</div>
+                        </div>
+                        <div class="wf-rc-meta">
+                            <span class="wf-rc-steps">${(r.steps || []).length} steps</span>
+                        </div>
+                        <button class="wf-rc-delete" onclick="event.stopPropagation(); WF3.deleteRecipeFromList('${r.id}')" title="Delete">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                        </button>
+                    </div>
+                `).join('');
+            }
+        }
+    },
+
+    // ── LIST ACTIONS ──
+    createNewRecipe() {
+        this.currentRecipeId = null;
+        this.steps = [];
+        this.showEditorView();
+        document.getElementById('wf-name-input').value = 'Untitled Recipe';
+        this.renderSidebarFunctions();
+        this.renderSteps();
+        const s = document.getElementById('wf-status');
+        if (s) { s.textContent = 'IDLE'; s.className = 'wf-status'; }
+    },
+
+    openTemplateInEditor(id) {
+        const tpl = this.templates.find(t => t.id === id);
+        if (!tpl) return;
+        this.currentRecipeId = null;
+        this.steps = JSON.parse(JSON.stringify(tpl.steps));
+        this.showEditorView();
+        document.getElementById('wf-name-input').value = tpl.name + ' (Copy)';
+        this.renderSidebarFunctions();
+        this.renderSteps();
+        WfToast.show('i', 'Template', `Loaded "${tpl.name}"`);
+    },
+
+    openRecipeInEditor(id) {
+        const recipe = this.recipes.find(r => r.id === id);
+        if (!recipe) return;
+        this.currentRecipeId = recipe.id;
+        this.steps = JSON.parse(JSON.stringify(recipe.steps || []));
+        this.showEditorView();
+        document.getElementById('wf-name-input').value = recipe.name;
+        this.renderSidebarFunctions();
+        this.renderSteps();
+        WfToast.show('s', 'Loaded', `"${recipe.name}"`);
+    },
+
+    async deleteRecipeFromList(id) {
+        if (!confirm('Delete this recipe?')) return;
+        try {
+            await fetch(`/api/workflow/recipes/${id}`, { method: 'DELETE' });
+            await this.fetchRecipes();
+            this.renderListView();
+            WfToast.show('s', 'Deleted', 'Recipe removed');
+        } catch (e) {
+            WfToast.show('e', 'Error', 'Failed to delete');
+        }
+    },
+
+    // ═══════════════════════════════════════════
+    //  LAYER 2: EDITOR VIEW
+    // ═══════════════════════════════════════════
+
+    // ── SIDEBAR FUNCTION LIBRARY ──
+    renderSidebarFunctions(filter = '') {
+        const list = document.getElementById('wf-sidebar-fn-list');
+        if (!list) return;
+
+        const q = (filter || '').toLowerCase();
+        const categories = {};
+        this.functions.forEach(fn => {
+            if (q && !fn.label.toLowerCase().includes(q) && !fn.description.toLowerCase().includes(q)) return;
+            if (!categories[fn.category]) categories[fn.category] = [];
+            categories[fn.category].push(fn);
+        });
+
+        if (Object.keys(categories).length === 0) {
+            list.innerHTML = '<div class="wf-sidebar-empty">No matches</div>';
             return;
         }
 
-        const id = 's_' + (++this.idCtr) + '_' + Date.now();
-        const defConfig = WF_DEFAULTS[type] || {};
-        const step = {
-            id,
-            type,
-            config: JSON.parse(JSON.stringify(defConfig))
-        };
+        list.innerHTML = Object.entries(categories).map(([cat, fns]) => `
+            <div class="wf-sidebar-cat">${cat}</div>
+            ${fns.map(fn => `
+                <div class="wf-sidebar-fn" onclick="WF3.addStepFromSidebar('${fn.id}')">
+                    <span class="wf-sidebar-fn-icon" style="color:${fn.color}">${fn.icon}</span>
+                    <div>
+                        <div class="wf-sidebar-fn-name">${fn.label}</div>
+                        <div class="wf-sidebar-fn-desc">${fn.description}</div>
+                    </div>
+                </div>
+            `).join('')}
+        `).join('');
+    },
 
-        this.steps.push(step);
-        this.renderSequence();
-        WfToast.show('s', 'Added', `Added ${this.getActionDef(type).label} step.`);
-
-        // Scroll to bottom
+    addStepFromSidebar(functionId) {
+        const fn = this.functions.find(f => f.id === functionId);
+        if (!fn || this.isRunning) return;
+        const config = {};
+        (fn.params || []).forEach(p => { config[p.key] = p.default; });
+        this.steps.push({ function_id: functionId, config });
+        this.renderSteps();
+        WfToast.show('s', 'Added', fn.label);
         setTimeout(() => {
-            const container = document.querySelector('.wf-linear-builder');
-            if (container) container.scrollTop = container.scrollHeight;
+            const editor = document.querySelector('.wf-editor-center');
+            if (editor) editor.scrollTop = editor.scrollHeight;
         }, 50);
     },
 
+    // ── SAVE / DELETE ──
+    async saveRecipe() {
+        if (this.isRunning) return;
+        const name = document.getElementById('wf-name-input')?.value || 'Untitled';
+        const payload = {
+            name,
+            steps: this.steps,
+            icon: '📝',
+            description: `${this.steps.length} steps`
+        };
+        if (this.currentRecipeId) payload.id = this.currentRecipeId;
+
+        try {
+            const res = await fetch('/api/workflow/recipes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                this.currentRecipeId = data.id;
+                await this.fetchRecipes();
+                WfToast.show('s', 'Saved', `"${name}" ${data.action}`);
+            }
+        } catch (e) {
+            WfToast.show('e', 'Error', 'Failed to save recipe');
+        }
+    },
+
+    // ── FUNCTION PICKER MODAL ──
+    openFunctionPicker(insertAt) {
+        this.insertIndex = insertAt !== undefined ? insertAt : -1;
+        const overlay = document.getElementById('wf-fn-picker-overlay');
+        if (overlay) overlay.classList.add('visible');
+        this.renderFunctionList();
+        const searchInput = document.getElementById('wf-fn-search');
+        if (searchInput) { searchInput.value = ''; searchInput.focus(); }
+    },
+
+    closeFunctionPicker() {
+        const overlay = document.getElementById('wf-fn-picker-overlay');
+        if (overlay) overlay.classList.remove('visible');
+    },
+
+    filterFunctions(query) {
+        this.renderFunctionList(query.toLowerCase());
+    },
+
+    renderFunctionList(filter = '') {
+        const list = document.getElementById('wf-fn-list');
+        if (!list) return;
+
+        const categories = {};
+        this.functions.forEach(fn => {
+            if (filter && !fn.label.toLowerCase().includes(filter) && !fn.description.toLowerCase().includes(filter)) return;
+            if (!categories[fn.category]) categories[fn.category] = [];
+            categories[fn.category].push(fn);
+        });
+
+        if (Object.keys(categories).length === 0) {
+            list.innerHTML = '<div class="wf-fn-empty">No functions match your search</div>';
+            return;
+        }
+
+        list.innerHTML = Object.entries(categories).map(([cat, fns]) => `
+            <div class="wf-fn-category">${cat}</div>
+            ${fns.map(fn => `
+                <div class="wf-fn-item" onclick="WF3.addStepFromPicker('${fn.id}')">
+                    <div class="wf-fn-icon" style="color:${fn.color}">${fn.icon}</div>
+                    <div>
+                        <div class="wf-fn-label">${fn.label}</div>
+                        <div class="wf-fn-desc">${fn.description}</div>
+                    </div>
+                </div>
+            `).join('')}
+        `).join('');
+    },
+
+    addStepFromPicker(functionId) {
+        const fn = this.functions.find(f => f.id === functionId);
+        if (!fn) return;
+
+        const config = {};
+        (fn.params || []).forEach(p => { config[p.key] = p.default; });
+        const step = { function_id: functionId, config };
+
+        if (this.insertIndex >= 0 && this.insertIndex <= this.steps.length) {
+            this.steps.splice(this.insertIndex, 0, step);
+        } else {
+            this.steps.push(step);
+        }
+
+        this.closeFunctionPicker();
+        this.renderSteps();
+        WfToast.show('s', 'Added', fn.label);
+    },
+
+    // ── STEP MANAGEMENT ──
     removeStep(index) {
         if (this.isRunning) return;
         this.steps.splice(index, 1);
-        this.renderSequence();
+        this.renderSteps();
     },
 
     moveStepUp(index) {
         if (this.isRunning || index === 0) return;
-        const temp = this.steps[index];
-        this.steps[index] = this.steps[index - 1];
-        this.steps[index - 1] = temp;
-        this.renderSequence();
+        [this.steps[index], this.steps[index - 1]] = [this.steps[index - 1], this.steps[index]];
+        this.renderSteps();
     },
 
     moveStepDown(index) {
         if (this.isRunning || index === this.steps.length - 1) return;
-        const temp = this.steps[index];
-        this.steps[index] = this.steps[index + 1];
-        this.steps[index + 1] = temp;
-        this.renderSequence();
+        [this.steps[index], this.steps[index + 1]] = [this.steps[index + 1], this.steps[index]];
+        this.renderSteps();
     },
 
     updateStepConfig(index, key, val) {
@@ -225,247 +514,188 @@ const WF = {
         }
     },
 
-    clearSequence() {
-        if (this.isRunning) return;
-        if (!confirm('Clear all steps in the sequence?')) return;
-        this.steps = [];
-        this.renderSequence();
-
-        const s = document.getElementById('wf-status');
-        if (s) { s.textContent = 'IDLE'; s.className = 'wf-status'; }
-
-        const rl = document.getElementById('wf-run-log');
-        if (rl) rl.classList.remove('visible');
+    getFnDef(functionId) {
+        return this.functions.find(f => f.id === functionId) || {
+            id: functionId, label: functionId, icon: '?', color: '#999',
+            description: 'Unknown function', params: [], category: 'Unknown'
+        };
     },
 
-    // ── RENDERING ──
-    renderSequence() {
-        const container = document.getElementById('wf-sequence-container');
+    // ── STEP RENDERING ──
+    renderSteps() {
+        const container = document.getElementById('wf-step-editor');
         if (!container) return;
 
         if (this.steps.length === 0) {
             container.innerHTML = `
                 <div class="wf-empty-hint">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
                     </svg>
-                    <h3>Sequence is empty</h3>
-                    <p>Click an action from the left panel to add it to your workflow.</p>
+                    <h3>No steps yet</h3>
+                    <p>Pick a function from the left panel,<br>or click <strong>Add Step</strong> below.</p>
                 </div>`;
             return;
         }
 
-        container.innerHTML = '';
-        
+        let html = '';
         this.steps.forEach((step, index) => {
-            const def = this.getActionDef(step.type);
-            const card = document.createElement('div');
-            card.className = 'wf-step-card';
-            card.id = `step-card-${index}`;
-            
-            card.innerHTML = `
-                <div class="wf-step-number">${index + 1}</div>
-                <div class="wf-step-content">
-                    <div class="wf-step-header">
-                        <div class="wf-step-icon" style="background:${def.bg};color:${def.color};">${def.icon}</div>
-                        <div>
-                            <div class="wf-step-title">${def.label}</div>
-                            <div class="wf-step-subtitle">${def.sub}</div>
+            const fn = this.getFnDef(step.function_id);
+            const configHtml = this.renderConfigFields(step, fn, index);
+
+            html += `
+                <div class="wf-step-card" id="wf-step-${index}">
+                    <div class="wf-step-number">${index + 1}</div>
+                    <div class="wf-step-body">
+                        <div class="wf-step-header">
+                            <div class="wf-step-icon" style="color:${fn.color}">${fn.icon}</div>
+                            <div>
+                                <div class="wf-step-title">${fn.label}</div>
+                                <div class="wf-step-subtitle">${fn.description}</div>
+                            </div>
                         </div>
+                        ${configHtml}
                     </div>
-                    ${this.renderStepConfigFields(step, index)}
+                    <div class="wf-step-status" id="wf-step-status-${index}"></div>
+                    <div class="wf-step-actions">
+                        <button class="wf-icon-btn" onclick="WF3.moveStepUp(${index})" ${index === 0 ? 'disabled' : ''}>▲</button>
+                        <button class="wf-icon-btn" onclick="WF3.moveStepDown(${index})" ${index === this.steps.length - 1 ? 'disabled' : ''}>▼</button>
+                        <div style="flex:1"></div>
+                        <button class="wf-icon-btn danger" onclick="WF3.removeStep(${index})">✕</button>
+                    </div>
                 </div>
-                
-                <div class="wf-step-status-indicator" id="step-status-${index}">
-                    <span class="wf-status-spinner"></span> Running...
-                </div>
-                
-                <div class="wf-step-actions">
-                    <button class="wf-icon-btn" onclick="WF.moveStepUp(${index})" ${index === 0 ? 'disabled style="opacity:0.3;cursor:default;"' : ''}>▲</button>
-                    <button class="wf-icon-btn" onclick="WF.moveStepDown(${index})" ${index === this.steps.length - 1 ? 'disabled style="opacity:0.3;cursor:default;"' : ''}>▼</button>
-                    <div style="flex:1"></div>
-                    <button class="wf-icon-btn danger" onclick="WF.removeStep(${index})">✕</button>
-                </div>
+
+                <button class="wf-insert-btn" onclick="WF3.openFunctionPicker(${index + 1})" title="Insert step here">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
             `;
-            container.appendChild(card);
         });
+
+        container.innerHTML = html;
     },
 
-    renderStepConfigFields(step, index) {
-        const c = step.config;
-        let fieldsHtml = '';
-        
-        const wrapField = (label, inputHtml) => `<div class="wf-cf-field"><span class="wf-cf-label">${label}</span>${inputHtml}</div>`;
+    renderConfigFields(step, fn, index) {
+        if (!fn.params || fn.params.length === 0) return '';
 
-        switch (step.type) {
-            case 'emu-target':
-                fieldsHtml += wrapField('Mode', `<select class="wf-cf-select" onchange="WF.updateStepConfig(${index},'mode',this.value)"><option value="all" ${c.mode === 'all' ? 'selected' : ''}>All running</option><option value="tab" ${c.mode === 'tab' ? 'selected' : ''}>By tab group</option></select>`);
-                fieldsHtml += wrapField('Group', `<select class="wf-cf-select" onchange="WF.updateStepConfig(${index},'tab',this.value)"><option ${c.tab === 'All Instances' ? 'selected' : ''}>All Instances</option><option ${c.tab === 'Farming' ? 'selected' : ''}>Farming</option></select>`);
-                break;
-            case 'emu-start':
-                fieldsHtml += wrapField('Delay', `<input class="wf-cf-input" type="number" min="0" max="60" value="${c.delay || 5}" onchange="WF.updateStepConfig(${index},'delay',+this.value)" style="width:60px;" /> sec`);
-                break;
-            case 'emu-restart':
-                fieldsHtml += wrapField('Wait', `<input class="wf-cf-input" type="number" min="1" max="60" value="${c.wait || 3}" onchange="WF.updateStepConfig(${index},'wait',+this.value)" style="width:60px;" /> sec`);
-                break;
-            case 'script-run':
-                fieldsHtml += wrapField('Macro File', `<select class="wf-cf-select" onchange="WF.updateStepConfig(${index},'file',this.value)"><option ${c.file === 'FARM +4' ? 'selected' : ''}>FARM +4</option><option ${c.file === 'Swap_Charactor' ? 'selected' : ''}>Swap_Charactor</option><option ${c.file === 'Auto_Shield' ? 'selected' : ''}>Auto_Shield</option></select>`);
-                fieldsHtml += wrapField('Loops', `<input class="wf-cf-input" type="number" min="1" max="100" value="${c.loop || 1}" onchange="WF.updateStepConfig(${index},'loop',+this.value)" style="width:60px;" />`);
-                break;
-            case 'script-loop':
-                fieldsHtml += wrapField('Macro', `<select class="wf-cf-select" onchange="WF.updateStepConfig(${index},'file',this.value)"><option ${c.file === 'Swap_Charactor' ? 'selected' : ''}>Swap_Charactor</option></select>`);
-                fieldsHtml += wrapField('Repeat', `<input class="wf-cf-input" type="number" min="1" max="999" value="${c.times || 5}" onchange="WF.updateStepConfig(${index},'times',+this.value)" style="width:60px;" /> times`);
-                break;
-            case 'flow-delay':
-                fieldsHtml += wrapField('Wait Duration', `<input class="wf-cf-input" type="number" min="1" max="3600" value="${c.seconds || 15}" onchange="WF.updateStepConfig(${index},'seconds',+this.value)" style="width:70px;" /> sec`);
-                break;
-            case 'scan-profile':
-            case 'scan-full':
-            case 'emu-stop':
-                // No extra inline configs needed 
-                break;
-        }
-        
-        if(fieldsHtml) {
-            return `<div class="wf-step-configs">${fieldsHtml}</div>`;
-        }
-        return '';
-    },
+        const fields = fn.params.map(p => {
+            const val = step.config[p.key] !== undefined ? step.config[p.key] : p.default;
 
-    // ── SAVE ──
-    saveWorkflow() {
-        if(this.isRunning) return;
-        const name = document.getElementById('wf-name-input')?.value || 'Untitled';
-        const data = { name, steps: this.steps };
-        localStorage.setItem('wf_v2_saved', JSON.stringify(data));
-        WfToast.show('s', 'Saved', `Sequence "${name}" saved.`);
-    },
+            if (p.type === 'select') {
+                const opts = (p.options || []).map(o =>
+                    `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`
+                ).join('');
+                return `<div class="wf-cf-field">
+                    <span class="wf-cf-label">${p.label}</span>
+                    <select class="wf-cf-select" onchange="WF3.updateStepConfig(${index},'${p.key}',this.value)">${opts}</select>
+                </div>`;
+            }
 
-    // ── DEMO ──
-    loadDemoSequence() {
-        this.addStep('emu-target');
-        this.steps[0].config = { mode: 'tab', tab: 'Farming' };
-        
-        this.addStep('script-run');
-        this.steps[1].config = { file: 'FARM +4', loop: 1 };
-        
-        this.addStep('flow-delay');
-        this.steps[2].config = { seconds: 15 };
-        
-        this.addStep('scan-full');
-        
-        this.addStep('emu-stop');
-        
-        this.renderSequence();
+            if (p.type === 'number') {
+                return `<div class="wf-cf-field">
+                    <span class="wf-cf-label">${p.label}</span>
+                    <input class="wf-cf-input" type="number" value="${val}" ${p.min !== undefined ? `min="${p.min}"` : ''} ${p.max !== undefined ? `max="${p.max}"` : ''} onchange="WF3.updateStepConfig(${index},'${p.key}',+this.value)" style="width:80px;" />
+                </div>`;
+            }
+
+            return `<div class="wf-cf-field">
+                <span class="wf-cf-label">${p.label}</span>
+                <input class="wf-cf-input" type="text" value="${val}" onchange="WF3.updateStepConfig(${index},'${p.key}',this.value)" />
+            </div>`;
+        }).join('');
+
+        return `<div class="wf-step-configs">${fields}</div>`;
     },
 
     // ── EXECUTION ──
     async runWorkflow() {
         if (this.isRunning) return;
-        if (this.steps.length === 0) { 
-            WfToast.show('e', 'Error', 'No steps in the sequence to run.'); 
-            return; 
+        if (this.steps.length === 0) {
+            WfToast.show('e', 'Error', 'No steps to run.');
+            return;
         }
-        
+
         this.isRunning = true;
-        
-        // Setup UI for running
+
         const btn = document.getElementById('wf-btn-run');
-        if (btn) { 
-            btn.classList.add('running'); 
-            btn.innerHTML = `<span class="wf-status-spinner" style="width:11px;height:11px;"></span> Running...`; 
-        }
-        
+        if (btn) { btn.classList.add('running'); btn.innerHTML = '<span class="wf-spinner"></span> Running...'; }
+
         const statusEl = document.getElementById('wf-status');
-        if (statusEl) { 
-            statusEl.textContent = 'RUNNING'; 
-            statusEl.className = 'wf-status status-running'; 
-        }
-        
-        const runLog = document.getElementById('wf-run-log');
-        const logBody = document.getElementById('wf-run-log-body');
-        if (runLog) runLog.classList.add('visible');
-        if (logBody) logBody.innerHTML = '';
-        
+        if (statusEl) { statusEl.textContent = 'RUNNING'; statusEl.className = 'wf-status status-running'; }
+
+        const execPanel = document.getElementById('wf-exec-panel');
+        const logEl = document.getElementById('wf-exec-log');
+        if (execPanel) execPanel.classList.add('visible');
+        if (logEl) logEl.innerHTML = '';
+
         const addLog = (type, msg) => {
-            if (!logBody) return;
-            const t = new Date();
-            const ts = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+            if (!logEl) return;
+            const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
             const line = document.createElement('div');
             line.className = `wf-log-line log-${type}`;
             line.innerHTML = `<span class="log-time">${ts}</span><span>${msg}</span>`;
-            logBody.appendChild(line); 
-            logBody.scrollTop = logBody.scrollHeight;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
         };
-        
-        // Reset all cards
-        document.querySelectorAll('.wf-step-card').forEach(el => {
-            el.classList.remove('running', 'success', 'error');
-        });
 
-        addLog('info', '▶ Sequence execution started');
+        const updateProgress = (current, total) => {
+            const pct = Math.round((current / total) * 100);
+            const fill = document.getElementById('wf-exec-progress-fill');
+            const pctEl = document.getElementById('wf-exec-pct');
+            if (fill) fill.style.width = pct + '%';
+            if (pctEl) pctEl.textContent = pct + '%';
+        };
 
+        document.querySelectorAll('.wf-step-card').forEach(el => el.classList.remove('running', 'success', 'error'));
+
+        addLog('info', '▶ Workflow execution started');
         let allOk = true;
-        
-        // Iterate through steps linearly
-        for(let i=0; i<this.steps.length; i++) {
+
+        for (let i = 0; i < this.steps.length; i++) {
             const step = this.steps[i];
-            const def = this.getActionDef(step.type);
-            const cardEl = document.getElementById(`step-card-${i}`);
-            const indicatorEl = document.getElementById(`step-status-${i}`);
-            
-            if(cardEl) {
+            const fn = this.getFnDef(step.function_id);
+            const cardEl = document.getElementById(`wf-step-${i}`);
+            const statusIndicator = document.getElementById(`wf-step-status-${i}`);
+
+            if (cardEl) {
                 cardEl.classList.add('running');
                 cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
-            if(indicatorEl) indicatorEl.innerHTML = `<span class="wf-status-spinner"></span> Running...`;
-            
-            addLog('run', `[Step ${i+1}] ${def.label}...`);
-            
-            // Artificial delay simulating actual task execution
-            const execTime = step.type === 'flow-delay' ? 1200 : 800 + Math.random() * 1000;
+            if (statusIndicator) statusIndicator.innerHTML = '<span class="wf-spinner"></span> Running...';
+
+            addLog('run', `[${i + 1}/${this.steps.length}] ${fn.label}...`);
+            updateProgress(i, this.steps.length);
+
+            const execTime = step.function_id === 'flow_delay' ? (step.config.seconds || 10) * 100 : 800 + Math.random() * 1200;
             await this.delay(execTime);
-            
-            // Success probability
-            const ok = Math.random() > 0.05; // 95% success rate demo
-            
-            if (ok) { 
-                if(cardEl) {
-                    cardEl.classList.remove('running');
-                    cardEl.classList.add('success');
-                }
-                if(indicatorEl) indicatorEl.innerHTML = '✓ Done';
-                addLog('ok', `  ✓ ${def.label} complete.`); 
-            } else { 
-                if(cardEl) {
-                    cardEl.classList.remove('running');
-                    cardEl.classList.add('error');
-                }
-                if(indicatorEl) indicatorEl.innerHTML = '✕ Error';
-                addLog('err', `  ✕ ${def.label} failed.`); 
-                allOk = false; 
-                break; // Stop execution on failure in a linear builder
+
+            const ok = Math.random() > 0.05;
+
+            if (ok) {
+                if (cardEl) { cardEl.classList.remove('running'); cardEl.classList.add('success'); }
+                if (statusIndicator) statusIndicator.innerHTML = '<span style="color:#22c55e">✓ Done</span>';
+                addLog('ok', `  ✓ ${fn.label} complete`);
+            } else {
+                if (cardEl) { cardEl.classList.remove('running'); cardEl.classList.add('error'); }
+                if (statusIndicator) statusIndicator.innerHTML = '<span style="color:#ef4444">✕ Failed</span>';
+                addLog('err', `  ✕ ${fn.label} failed`);
+                allOk = false;
+                break;
             }
         }
-        
-        await this.delay(500);
+
+        updateProgress(this.steps.length, this.steps.length);
         this.isRunning = false;
-        
-        // Restore UI
-        if (btn) { 
-            btn.classList.remove('running'); 
-            btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Sequence`; 
-        }
-        
-        if (allOk) { 
-            if (statusEl) { statusEl.textContent = 'SUCCESS'; statusEl.className = 'wf-status status-success'; } 
-            addLog('ok', '✅ Sequence completed successfully'); 
-            WfToast.show('s', 'Done', 'Sequence finished!'); 
-        } else { 
-            if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.className = 'wf-status status-error'; } 
-            addLog('err', '❌ Sequence aborted due to error'); 
-            WfToast.show('e', 'Error', 'Execution stopped.'); 
+
+        if (btn) { btn.classList.remove('running'); btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run'; }
+
+        if (allOk) {
+            if (statusEl) { statusEl.textContent = 'SUCCESS'; statusEl.className = 'wf-status status-success'; }
+            addLog('ok', '✅ Workflow completed successfully');
+            WfToast.show('s', 'Done', 'Workflow finished!');
+        } else {
+            if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.className = 'wf-status status-error'; }
+            addLog('err', '❌ Workflow aborted');
+            WfToast.show('e', 'Error', 'Execution stopped.');
         }
     },
 

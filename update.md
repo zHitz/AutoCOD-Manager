@@ -1,6 +1,79 @@
 # COD Game Automation Manager - Update Log
 
-## Version 1.0.6 (Current)
+## Version 1.0.8 (Current)
+*Workflow V3 Recipe Builder, App Loading Screen, Custom Modals, Workflow Migration R2 & System Controls*
+
+- **Workflow V3: Recipe Builder (`backend/core/workflow/workflow_registry.py` — MỚI)**
+  - **Backend Function Registry:** Tạo mới `workflow_registry.py` — catalog tập trung **16 core functions** phân thành 6 categories: Core Actions (Boot to Lobby, Open Profile, Extract Player ID…), ADB Actions (Tap, Swipe, Back, Screenshot), App Control (Launch, Check Running), Scan Operations (Full Scan), Flow Control (Delay) và Advanced (Wait for State).
+  - **4 Pre-built Templates:** Farm Loop (5 steps), ID Extraction (4 steps), Full Scan Cycle (3 steps), Swap & Repeat (4 steps) — user click để dùng ngay.
+  - **4 API Endpoints mới (`backend/api.py`):**
+    - `GET /api/workflow/functions` — trả toàn bộ registry kèm icon, params, defaults
+    - `GET /api/workflow/templates` — danh sách template có sẵn
+    - `GET /api/workflow/recipes` & `POST` — CRUD recipe (lưu in-memory)
+    - `DELETE /api/workflow/recipes/{id}` — xóa recipe
+
+- **Two-Layer Workflow UI (`frontend/js/pages/workflow.js`)**
+  - **Layer 1 — Recipe List View:** Trang gallery hiển thị Template cards (viền trái xanh, badge `TEMPLATE`) và My Recipes (grid responsive `auto-fill 300px`). Header dạng `page-header` chuẩn app với nút `Refresh` + `Create New`. Empty state với hướng dẫn rõ ràng.
+  - **Layer 2 — Recipe Editor View:** Click template/recipe → chuyển sang Editor. Sidebar trái chứa function library (search filter), center là step cards sequential (numbered, config fields inline: number/text/select). Insert `[+]` button giữa mỗi step. Nút Back/Save/Run trên toolbar. Execution Panel trượt lên từ bottom với progress bar + log timeline.
+  - **Function Picker Modal:** Overlay modal phân category, tìm kiếm real-time, click chọn function → tự thêm step với default config.
+
+- **UI/UX Theme Synchronization (`frontend/css/workflow.css`)**
+  - **Full CSS Rewrite:** Thay thế toàn bộ **20+ hardcoded dark colors** (`#0c0e14`, `#252a3a`, `#64748b`…) bằng design-system variables (`var(--card)`, `var(--border)`, `var(--muted-foreground)`, `var(--accent)`…). Workflow giờ dùng chung Light Theme với toàn bộ app.
+  - **Button Standardization:** Chuyển từ custom `wf-tb-btn` sang app classes: `btn btn-primary btn-sm` (Create New, Run), `btn btn-outline btn-sm` (Save, Refresh), `btn btn-ghost btn-sm` (Back) — giống hệt pattern `scheduled.js`.
+  - **Component Sync:** Cards dùng `var(--card)` + `var(--shadow-sm)`, config fields dùng `var(--muted)` background, modals dùng `var(--shadow-xl)`, spinners dùng `var(--indigo-500)`.
+
+- **Custom Confirm Modal (`frontend/js/components/confirm-modal.js` — MỚI)**
+  - **Thay thế native `confirm()`:** Popup xác nhận tùy chỉnh đồng bộ design system, sử dụng Promise-based API: `const ok = await ConfirmModal.show({title, message, icon, variant})`.
+  - **5 Icon variants:** `restart`, `shutdown`, `warning`, `danger`, `info` — SVG inline.
+  - **2 Style variants:** `default` (nút xanh) và `danger` (nút đỏ destructive).
+  - **UX hoàn chỉnh:** Backdrop blur + scale animation vào/ra, keyboard support (Escape = Cancel, Enter = Confirm), click backdrop = dismiss.
+  - **Áp dụng:** `restartServer()` dùng icon restart + variant default, `exitApp()` dùng icon shutdown + variant danger.
+
+- **App Loading Screen (`frontend/loading.html` — MỚI)**
+  - **Giải quyết "Can't reach 127.0.0.1":** Thay vì pywebview mở thẳng server URL (gây lỗi khi server chưa boot), giờ load loading.html trước — hiển thị logo + spinner dark theme.
+  - **Auto-poll & Redirect:** Loading screen poll `GET /api/config` mỗi 500ms, khi server sẵn sàng → spinner xanh + "Connected" → tự redirect vào app.
+  - **Timeout Warning:** Sau >5s hiển thị "Server is taking longer than usual..."
+  - **`main.py` Updated:** Đọc loading.html → inject port → truyền qua pywebview `html=` parameter. Xóa bỏ `time.sleep(1.5)` hardcoded.
+
+- **Workflow Migration Round 2 (`backend/core/workflow/`)**
+  - **`state_detector.py` — Construction System:** Thêm `construction_templates` dict + `construction_configs` mapping (HALL, MARKET, ELIXIR_HEALING). Method mới: `is_menu_expanded()` kiểm tra lobby menu mở rộng, `check_construction()` nhận diện building trên màn hình. Thay thế `lobby_resources` state bằng `items_artifacts` / `items_resources`.
+  - **`core_actions.py` — 6 Functions mới:** `ensure_lobby_menu_open()` (kiểm tra/mở menu lobby), `go_to_resources()` (navigate Items → Resources tab), `go_to_construction(name)` (generic construction nav via data lookup), `go_to_hall()`, `go_to_market()`, `go_to_pet_token()`. Update `back_to_lobby()` thêm `target_lobby` swap (IN_CITY ↔ OUT_CITY).
+  - **`clipper_helper.py` — Multi-Fallback:** Fallback 1: native `cmd clipboard get` (Android 9+). Fallback 2: wake Clipper service trước khi broadcast (chống Android Memory kill).
+  - **`construction_data.py` — MỚI:** Tap coordinates cho HALL, MARKET, ELIXIR_HEALING.
+  - **`screen_capture.py` — MỚI:** 5-phase capture pipeline (profile → resources → hall → market → pet_token) + crop regions + combine PDF.
+  - **Template Images:** Thêm `items_artifacts.png`, `items_resources.png`, folder `contructions/` (3 ảnh). Xóa `lobby_resources.png` cũ.
+
+- **System Endpoints (`backend/api.py`)**
+  - **`POST /api/restart`:** Restart backend server — spawn process mới với `timeout /t 2` chờ port release trước khi khởi lại.
+  - **`POST /api/shutdown`:** Tắt server hoàn toàn.
+  - **CORS Middleware:** Thêm `CORSMiddleware(allow_origins=["*"])` hỗ trợ loading screen (origin null) gọi API.
+
+- **OCR Parser Fix (`backend/core/ocr_client.py`)**
+  - **Lord Name Multi-line:** Fix lỗi tên Lord dùng special characters (chữ nhỏ) bị OCR thành 2 dòng (VD: `dragonball` + `Goten`). Parser giờ collect tất cả dòng giữa "Lord" và keyword tiếp theo ("Power"/"Merits"), ghép bằng dấu cách → `dragonball Goten`.
+
+---
+
+## Version 1.0.7
+*Scheduled Tasks, Account UX Fixes & Workflow V2*
+
+- **Scheduled Tasks Page (`frontend/js/pages/scheduled.js` — MỚI)**
+  - Trang quản lý lịch trình chạy macro tự động hoàn chỉnh: List View (bảng 10 cột) + Detail View (form tạo/sửa).
+  - Hỗ trợ 4 loại schedule: Once (datetime), Interval (30m/2h), Daily (HH:MM), Cron expression.
+  - Target mode: All Online hoặc chọn Specific emulators (checkbox list).
+  - Actions: Toggle Enable/Disable, Execute Now, Delete. API CRUD đầy đủ.
+
+- **Account Page Fixes (`frontend/js/pages/accounts.js`)**
+  - Fix detail panel click — bấm vào Account row giờ mở chi tiết đúng cách.
+  - Pet Token format: thêm dấu phân cách nghìn (1245 → 1,245).
+  - Resource hiển thị: tự động chuyển đơn vị M → B khi vượt 1000M.
+  - Hall Level max 25, Market Level max 25.
+
+- **Workflow V2 (`frontend/js/pages/workflow.js`)**
+  - Trang Workflow Basic — linear builder không kéo thả, palette cố định.
+
+---
+
+## Version 1.0.6
 *Account-GameID Architecture & WORKFLOW Module Integration*
 
 - **Account Architecture Overhaul (`backend/storage/database.py`)**

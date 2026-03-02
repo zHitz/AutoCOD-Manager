@@ -216,11 +216,16 @@ def parse_scan_markdown(md_text: str) -> dict:
                     i += 2
                 break
 
-        # Lord name
+        # Lord name (may span multiple lines if special chars cause height diff)
         if line_lower == "lord":
-            if i + 1 < len(lines):
-                result["lord_name"] = lines[i + 1]
-                i += 1
+            name_parts = []
+            j = i + 1
+            while j < len(lines) and lines[j].lower() not in ("power", "merits"):
+                name_parts.append(lines[j])
+                j += 1
+            if name_parts:
+                result["lord_name"] = " ".join(name_parts)
+                i = j - 1  # will be incremented by outer loop
 
         # Power
         elif line_lower == "power":
