@@ -39,19 +39,21 @@ def main():
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
 
-    # Give server time to initialize
-    time.sleep(1.5)
-
     url = f"http://127.0.0.1:{config.server_port}"
+
+    # Loading screen (shown while server boots)
+    loading_page = os.path.join(PROJECT_ROOT, "frontend", "loading.html")
+    with open(loading_page, "r", encoding="utf-8") as f:
+        loading_html = f.read().replace("|| '8000'", f"|| '{config.server_port}'")
 
     # Try pywebview for native window
     try:
         import webview
 
-        print(f"[Desktop] Opening native window -> {url}")
+        print(f"[Desktop] Opening loading screen...")
         window = webview.create_window(
             title="COD Game Automation Manager",
-            url=url,
+            html=loading_html,
             width=1400,
             height=900,
             min_size=(1024, 700),
@@ -65,6 +67,8 @@ def main():
         print("[Desktop] Install pywebview for native desktop window: pip install pywebview")
         import webbrowser
 
+        # Wait for server in browser mode
+        time.sleep(2)
         webbrowser.open(url)
 
         # Keep server alive

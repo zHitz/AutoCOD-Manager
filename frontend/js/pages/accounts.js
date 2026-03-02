@@ -4,10 +4,12 @@
  */
 const AccountsPage = {
     _accountsData: [],
+    _pendingAccounts: [],
     _selectedAccountId: null,
     _activeDetailTab: 'overview',
     _viewMode: 'table',
     _isLoading: true,
+    _comparisonCache: {},
 
     formatResource(valAbs) {
         if (!valAbs || isNaN(valAbs)) return '0M';
@@ -231,6 +233,7 @@ const AccountsPage = {
                 .res-cap.warn { color: var(--red-500); font-weight: 600; }
                 .delta-up   { color: var(--emerald-500); font-weight: 700; }
                 .delta-down { color: var(--red-500); font-weight: 700; }
+                .delta-loading { color: var(--muted-foreground); font-size: 11px; opacity: 0.5; }
 
                 .pet-card {
                     background: linear-gradient(90deg, #fdf4ff 0%, #faf5ff 100%);
@@ -334,6 +337,9 @@ const AccountsPage = {
                     </div>
                 </div>
 
+                <!-- Pending Queue Banner -->
+                <div id="pending-queue-container">${this._renderPendingBanner()}</div>
+
                 <!-- Main content: table or grid -->
                 <div class="${this._viewMode === 'grid' ? '' : 'card'}" style="overflow: auto; flex: 1; ${this._viewMode === 'table' ? 'padding:0;' : ''}">
                     ${this._viewMode === 'table' ? `
@@ -343,28 +349,30 @@ const AccountsPage = {
                                 <th class="th-group freeze-col-1 stt-col" colspan="1" style="background:var(--muted);z-index:11;text-align:left;padding-left:14px;"></th>
                                 <th class="th-group freeze-col-2" colspan="1" style="background:var(--muted);z-index:11;"></th>
                                 <th class="th-group freeze-col-3" colspan="1" style="background:var(--muted);z-index:11;text-align:left;">Identity</th>
-                                <th class="th-group" colspan="5" style="border-left:1px solid var(--border)">Account Details</th>
+                                <th class="th-group" colspan="6" style="border-left:1px solid var(--border)">Account Details</th>
                                 <th class="th-group" colspan="4" style="border-left:1px solid var(--border)">Progress & Social</th>
-                                <th class="th-group" colspan="4" style="border-left:1px solid var(--border)">Resources</th>
+                                <th class="th-group" colspan="5" style="border-left:1px solid var(--border)">Resources</th>
                                 <th class="th-group" colspan="1"></th>
                             </tr>
                             <tr>
                                 <th class="th-col freeze-col-1 stt-col" style="padding-left:14px;z-index:11;">#</th>
                                 <th class="th-col freeze-col-2" style="min-width:110px;z-index:11;">Emulator</th>
                                 <th class="th-col freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);">Name</th>
-                                <th class="th-col accent" style="text-align:right;border-left:1px solid var(--border);">Power</th>
+                                <th class="th-col" style="border-left:1px solid var(--border);font-size:11px;">Game ID</th>
+                                <th class="th-col accent" style="text-align:right;">Power</th>
                                 <th class="th-col">Login</th>
                                 <th class="th-col">Email</th>
-                                <th class="th-col">Target</th>
+                                <th class="th-col" style="text-align:center;">Status</th>
                                 <th class="th-col" style="text-align:center;">Sync</th>
                                 <th class="th-col" style="text-align:right;border-left:1px solid var(--border);">Hall</th>
                                 <th class="th-col" style="text-align:right;">Market</th>
                                 <th class="th-col">Alliance</th>
-                                <th class="th-col" style="text-align:center;">Accs</th>
+                                <th class="th-col" style="text-align:center;">Provider</th>
                                 <th class="th-col" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);">Gold</th>
                                 <th class="th-col" style="text-align:right;color:var(--emerald-600,#059669);">Wood</th>
                                 <th class="th-col" style="text-align:right;color:var(--indigo-500,#6366f1);">Ore</th>
                                 <th class="th-col" style="text-align:right;color:var(--orange-500,#f97316);">Pet 🐾</th>
+                                <th class="th-col" style="text-align:right;color:var(--purple-500,#a855f7);">Mana ✦</th>
                                 <th class="th-col" style="width:60px;"></th>
                             </tr>
                         </thead>
@@ -389,10 +397,10 @@ const AccountsPage = {
 
     _renderTableBody() {
         if (this._isLoading) {
-            return `<tr><td colspan="17" style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</td></tr>`;
+            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</td></tr>`;
         }
         if (this._accountsData.length === 0) {
-            return `<tr><td colspan="17" style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</td></tr>`;
+            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</td></tr>`;
         }
         return this._accountsData.map((row) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
@@ -406,11 +414,25 @@ const AccountsPage = {
             const goldFormatted = AccountsPage.formatResource(row.gold);
             const woodFormatted = AccountsPage.formatResource(row.wood);
             const oreFormatted = AccountsPage.formatResource(row.ore);
+            const manaFormatted = AccountsPage.formatResource(row.mana);
             const accMatching = row.lord_name ? 'Yes' : 'No';
-            const accountsTotal = row.provider ? 1 : 0; // naive total
             const ingameName = row.lord_name || '—';
             const displayEmail = row.email || '—';
             const displayAlliance = row.alliance || '—';
+            const gameId = row.game_id || '—';
+            const isLegacy = gameId.startsWith('LEGACY-');
+
+            // Active status badge
+            let statusBadge;
+            if (row.is_active === 1 && statusStr === 'online') {
+                statusBadge = '<span class="badge-status-yes">🟢 Active</span>';
+            } else if (row.is_active === 1) {
+                statusBadge = '<span style="background:rgba(234,179,8,0.1);color:var(--yellow-500);border:1px solid rgba(234,179,8,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
+            } else if (row.emulator_db_id) {
+                statusBadge = '<span style="background:var(--muted);color:var(--muted-foreground);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
+            } else {
+                statusBadge = '<span class="badge-status-no">🔴 None</span>';
+            }
 
             return `
             <tr class="account-row${isSelected ? ' selected' : ''}" onclick="AccountsPage.openDetail(${row.account_id})">
@@ -418,18 +440,17 @@ const AccountsPage = {
                 <td class="freeze-col-2" style="padding:11px 14px;font-size:13px;">
                     <div style="display:flex;align-items:center;gap:7px;">
                         <span class="${dotClass}" title="${statusStr}"></span>
-                        <span style="font-weight:500;">${row.emu_name || 'LDP-' + row.emu_index}</span>
+                        <span style="font-weight:500;">${row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : '—')}</span>
                     </div>
                 </td>
                 <td class="freeze-col-3" style="padding:11px 14px;font-size:13px;font-weight:700;color:var(--primary);border-right:2px solid var(--border);">${ingameName}</td>
-                <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;border-left:1px solid var(--border);">${powFormatted}</td>
+                <td style="padding:11px 14px;font-size:12px;font-family:monospace;color:var(--muted-foreground);border-left:1px solid var(--border);">${isLegacy ? '<span style="color:var(--yellow-500)" title="Legacy account - needs Game ID">⚠️</span>' : gameId}</td>
+                <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;">${powFormatted}</td>
                 <td style="padding:11px 14px;font-size:13px;">
                     <span style="border:1px solid ${loginColor}22;background:${loginColor}10;color:${loginColor};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${loginMethod}</span>
                 </td>
                 <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);max-width:160px;overflow:hidden;text-overflow:ellipsis;">${displayEmail}</td>
-                <td style="padding:11px 14px;font-size:13px;">
-                    <span style="background:var(--muted);color:var(--foreground);padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">#${row.emu_index}</span>
-                </td>
+                <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
                 <td style="padding:11px 14px;text-align:center;">
                     ${accMatching === 'Yes'
                     ? '<span class="badge-status-yes">✓ Linked</span>'
@@ -438,7 +459,7 @@ const AccountsPage = {
                 <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;border-left:1px solid var(--border);">${row.hall_level || 0}</td>
                 <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;">${row.market_level || 0}</td>
                 <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);">${displayAlliance}</td>
-                <td style="padding:11px 14px;text-align:center;font-size:13px;">${accountsTotal}</td>
+                <td style="padding:11px 14px;text-align:center;font-size:12px;">${row.provider || '—'}</td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
                     <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>
                 </td>
@@ -449,7 +470,10 @@ const AccountsPage = {
                     <span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${row.pet_token || 0}</span>
+                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>
+                </td>
+                <td style="padding:11px 14px;text-align:right;">
+                    <span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>
                 </td>
                 <td style="padding:11px 14px;">
                     <div class="hover-actions-arrow">
@@ -484,7 +508,7 @@ const AccountsPage = {
                         ${ingameName}
                         <span class="alliance-badge">${displayAlliance !== '—' ? displayAlliance : '—'}</span>
                     </div>
-                    <div class="account-emulator">${row.emu_name || 'LDP-' + row.emu_index} · #${row.emu_index}</div>
+                    <div class="account-emulator">${row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : 'No Emulator')} · ${row.game_id ? 'ID: ' + row.game_id : 'No ID'}</div>
                 </div>
                 <div class="account-power">
                     <div class="power-label">
@@ -495,7 +519,7 @@ const AccountsPage = {
                     <div class="sync-time">Synced: ${row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : 'Never'}</div>
                 </div>
                 <div class="card-actions">
-                    <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.id})">
+                    <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.account_id})">
                         View <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                     </button>
                     <div class="card-btn-icon" onclick="event.stopPropagation()" title="Sync">
@@ -560,10 +584,16 @@ const AccountsPage = {
             <div class="panel-body" style="padding: 24px 28px;">
                 <form id="accounts-add-edit-form" onsubmit="event.preventDefault(); AccountsPage.saveAccount('${mode}');">
                     
-                    <div style="margin-bottom:20px;">
-                        <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Emulator Index <span style="color:var(--red-500)">*</span></label>
-                        <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined ? acc.emu_index : ''}" required ${isEdit ? 'readonly' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
-                        ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">Emulator index cannot be changed.</p>' : ''}
+                    <div style="display:flex; gap:16px; margin-bottom:20px;">
+                        <div style="flex:1;">
+                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Game ID <span style="color:var(--red-500)">*</span></label>
+                            <input type="text" id="form-game-id" value="${acc.game_id || ''}" required ${isEdit ? 'readonly' : ''} placeholder="e.g. 12345678" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground); font-family:monospace;" />
+                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">Game ID cannot be changed.</p>' : '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">The unique in-game player ID (copy from game profile).</p>'}
+                        </div>
+                        <div style="flex:1;">
+                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Emulator Index</label>
+                            <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined && acc.emu_index !== null ? acc.emu_index : ''}" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" placeholder="Optional" />
+                        </div>
                     </div>
 
                     <div style="display:flex; gap:16px; margin-bottom:20px;">
@@ -576,7 +606,7 @@ const AccountsPage = {
                             <input type="number" step="0.1" id="form-power" value="${isEdit ? (acc.power ? (acc.power / 1000000).toFixed(1) : '') : ''}" ${isEdit ? 'disabled' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
                         </div>
                     </div>
-                    ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:-14px; margin-bottom:20px;">Identity metrics synchronize automatically via OCR.</p>' : ''}
+                    ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:-14px; margin-bottom:20px;">Identity metrics synchronize automatically via Full Scan.</p>' : ''}
 
                     <div style="display:flex; gap:16px; margin-bottom:20px;">
                         <div style="flex:1;">
@@ -598,8 +628,8 @@ const AccountsPage = {
                         <div style="flex:1;">
                             <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Provider</label>
                             <select id="form-provider" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);">
-                                <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global / Main</option>
-                                <option value="Sub-account" ${acc.provider === 'Sub-account' ? 'selected' : ''}>Sub-account</option>
+                                <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global</option>
+                                <option value="Funtap" ${acc.provider === 'Funtap' ? 'selected' : ''}>Funtap</option>
                             </select>
                         </div>
                         <div style="flex:1;">
@@ -625,6 +655,7 @@ const AccountsPage = {
     },
 
     async saveAccount(mode) {
+        const gameId = document.getElementById('form-game-id').value.trim();
         const emuIndex = document.getElementById('form-emu-index').value;
         const loginMethod = document.getElementById('form-login-method').value;
         const email = document.getElementById('form-email').value;
@@ -632,8 +663,14 @@ const AccountsPage = {
         const alliance = document.getElementById('form-alliance').value;
         const note = document.getElementById('form-note').value;
 
+        if (!gameId) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Game ID is required');
+            return;
+        }
+
         let payload = {
-            emu_index: emuIndex,
+            game_id: gameId,
+            emu_index: emuIndex || null,
             login_method: loginMethod,
             email: email,
             provider: provider,
@@ -668,7 +705,7 @@ const AccountsPage = {
             }
         } else if (mode === 'edit') {
             try {
-                const res = await fetch(`/api/accounts/${emuIndex}`, {
+                const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -692,10 +729,10 @@ const AccountsPage = {
         }
     },
 
-    async deleteAccount(emuIndex) {
-        if (!confirm('Are you sure you want to delete this account? Identity scan records will also be erased.')) return;
+    async deleteAccount(gameId) {
+        if (!confirm('Are you sure you want to delete this account? This action cannot be undone.')) return;
         try {
-            const res = await fetch(`/api/accounts/${emuIndex}`, { method: 'DELETE' });
+            const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, { method: 'DELETE' });
             const data = await res.json();
             if (data.status === 'deleted') {
                 this.closeDetail();
@@ -740,7 +777,7 @@ const AccountsPage = {
     },
 
     _renderSlideContent() {
-        const acc = this._accountsData.find(a => a.account_id === this._selectedAccountId);
+        const acc = this._accountsData.find(a => a.account_id == this._selectedAccountId);
         if (!acc) return '';
 
         const ingameName = acc.lord_name || 'No Name';
@@ -748,12 +785,24 @@ const AccountsPage = {
         const isOnline = (acc.emu_status || '').toLowerCase() === 'online';
         const statusColor = isOnline ? 'var(--emerald-500)' : 'var(--red-500,#ef4444)';
         const statusLabel = isOnline ? 'Online' : 'Offline';
-        const emuDisplay = acc.emu_name || 'LDP-' + acc.emu_index;
+        const emuDisplay = acc.emu_name || (acc.emu_index != null ? 'LDP-' + acc.emu_index : 'No Emulator');
         const powFormatted = AccountsPage.formatPower(acc.power);
         const accMatching = acc.lord_name ? 'Yes' : 'No';
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
         const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
+        const gameIdDisplay = acc.game_id || 'Unknown';
+        const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
+
+        // Status based on is_active
+        let activeStatus, activeColor;
+        if (acc.is_active === 1 && isOnline) {
+            activeStatus = '🟢 Active'; activeColor = 'var(--emerald-500)';
+        } else if (acc.is_active === 1) {
+            activeStatus = '⚪ Idle'; activeColor = 'var(--yellow-500)';
+        } else {
+            activeStatus = '🔴 None'; activeColor = 'var(--red-500,#ef4444)';
+        }
 
         return `
             <!-- Panel Header -->
@@ -776,16 +825,16 @@ const AccountsPage = {
                             </span>
                         </div>
                         <div style="font-size:12px;color:var(--muted-foreground);margin-top:3px;display:flex;gap:8px;align-items:center;">
-                            <span>${emuDisplay}</span>
+                            <span style="font-family:monospace;${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span>
                             <span style="color:var(--border);">|</span>
-                            <span>Target #${acc.emu_index}</span>
+                            <span>${emuDisplay}</span>
                             <span style="color:var(--border);">|</span>
                             <span>Last synced: ${timeAgo}</span>
                         </div>
                     </div>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-ghost btn-sm" style="color:var(--red-500);" onclick="AccountsPage.deleteAccount('${acc.emu_index}')">
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red-500);" onclick="AccountsPage.deleteAccount('${acc.game_id}')">
                         <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         Delete
                     </button>
@@ -858,7 +907,54 @@ const AccountsPage = {
             document.querySelectorAll('.panel-tab').forEach(el => {
                 el.classList.toggle('active', el.textContent.trim().toLowerCase().startsWith(tabId.toLowerCase().split(' ')[0]));
             });
+            // Auto-fetch comparison data for Resources tab
+            if (tabId === 'resources' && acc.game_id) {
+                this._fetchComparison(acc.game_id);
+            }
         }
+    },
+
+    async _fetchComparison(gameId) {
+        try {
+            const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}/comparison`);
+            const data = await res.json();
+            if (data && data.delta) {
+                this._comparisonCache[gameId] = data;
+                this._updateDeltaUI(data.delta, data.previous);
+            }
+        } catch (e) {
+            console.warn('[Accounts] Comparison fetch failed:', e);
+        }
+    },
+
+    _formatDelta(value) {
+        if (!value || value === 0) return '';
+        const abs = Math.abs(value);
+        let formatted;
+        if (abs >= 1_000_000_000) formatted = (abs / 1_000_000_000).toFixed(1) + 'B';
+        else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(1) + 'M';
+        else if (abs >= 1_000) formatted = (abs / 1_000).toFixed(1) + 'K';
+        else formatted = abs.toLocaleString();
+        const isUp = value > 0;
+        return `<span class="${isUp ? 'delta-up' : 'delta-down'}">${isUp ? '▲' : '▼'} ${isUp ? '+' : '-'}${formatted}</span>`;
+    },
+
+    _updateDeltaUI(delta, previous) {
+        const prevTime = previous ? new Date(previous.created_at).toLocaleDateString() : '';
+        // Update resource deltas
+        ['gold', 'wood', 'ore', 'mana'].forEach(key => {
+            const el = document.getElementById(`res-delta-${key}`);
+            if (el) el.innerHTML = this._formatDelta(delta[key]);
+        });
+        // Update pet token delta
+        const petEl = document.getElementById('res-delta-pet_token');
+        if (petEl) petEl.innerHTML = this._formatDelta(delta.pet_token);
+        // Update mana delta
+        const manaEl = document.getElementById('res-delta-mana');
+        if (manaEl) manaEl.innerHTML = this._formatDelta(delta.mana);
+        // Update comparison timestamp
+        const tsEl = document.getElementById('comparison-timestamp');
+        if (tsEl && prevTime) tsEl.textContent = `vs ${prevTime}`;
     },
 
     _renderActiveTab(acc) {
@@ -875,7 +971,7 @@ const AccountsPage = {
             const loginDotClass = loginMethod === 'Google' ? 'method-dot-google' : loginMethod === 'Facebook' ? 'method-dot-facebook' : 'method-dot-apple';
             const hallPct = Math.round(hallLvl / 25 * 100);
             const mktPct = Math.round(marketLvl / 25 * 100);
-            const emuDisplay = acc.emu_name || 'LDP-' + acc.emu_index;
+            const emuDisplay = acc.emu_name || (acc.emu_index != null ? 'LDP-' + acc.emu_index : 'No Emulator');
             const isOnline = (acc.emu_status || '').toLowerCase() === 'online';
 
             return `
@@ -986,18 +1082,42 @@ const AccountsPage = {
             const goldFormatted = AccountsPage.formatResource(acc.gold || 0);
             const woodFormatted = AccountsPage.formatResource(acc.wood || 0);
             const oreFormatted = AccountsPage.formatResource(acc.ore || 0);
+            const manaFormatted = AccountsPage.formatResource(acc.mana || 0);
             const petToken = acc.pet_token || 0;
             // Cap = 3000M (3B) for simplicity; pct based on that
             const goldPct = Math.min(Math.round((acc.gold || 0) / 3000000000 * 100), 100);
             const woodPct = Math.min(Math.round((acc.wood || 0) / 3000000000 * 100), 100);
             const orePct = Math.min(Math.round((acc.ore || 0) / 3000000000 * 100), 100);
+            const manaPct = Math.min(Math.round((acc.mana || 0) / 3000000000 * 100), 100);
             const oreIsCritical = orePct < 30;
             const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
+
+            // Pre-loaded comparison data (if cached)
+            const cached = this._comparisonCache[acc.game_id];
+            const delta = cached ? cached.delta : null;
+            const prevScan = cached ? cached.previous : null;
+            const prevTimeLabel = prevScan ? new Date(prevScan.created_at).toLocaleDateString() : '';
+
+            const mkDelta = (key) => {
+                if (!delta || !delta[key] || delta[key] === 0) return '<span id="res-delta-' + key + '" class="delta-loading">—</span>';
+                const v = delta[key];
+                const abs = Math.abs(v);
+                let fmt;
+                if (abs >= 1e9) fmt = (abs / 1e9).toFixed(1) + 'B';
+                else if (abs >= 1e6) fmt = (abs / 1e6).toFixed(1) + 'M';
+                else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
+                else fmt = abs.toLocaleString();
+                const up = v > 0;
+                return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}">${up ? '▲' : '▼'} ${up ? '+' : '-'}${fmt}</span>`;
+            };
 
             return `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
                     <div class="ov-section-title" style="margin:0;">Resource Stockpile</div>
-                    <span style="font-size:11px;color:var(--muted-foreground);font-family:monospace;">Last updated: ${timeAgo}</span>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span id="comparison-timestamp" style="font-size:11px;color:var(--primary);font-weight:600;">${prevTimeLabel ? 'vs ' + prevTimeLabel : ''}</span>
+                        <span style="font-size:11px;color:var(--muted-foreground);font-family:monospace;">Last updated: ${timeAgo}</span>
+                    </div>
                 </div>
 
                 <div class="res-grid">
@@ -1011,7 +1131,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill gold" style="width:${goldPct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap">Cap max</span>
-                            <span class="delta-up">▲</span>
+                            ${mkDelta('gold')}
                         </div>
                     </div>
 
@@ -1025,7 +1145,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill wood" style="width:${woodPct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap">Cap max</span>
-                            <span class="delta-up">▲</span>
+                            ${mkDelta('wood')}
                         </div>
                     </div>
 
@@ -1039,7 +1159,7 @@ const AccountsPage = {
                         <div class="res-bar"><div class="res-fill ${oreIsCritical ? 'critical-fill' : 'ore'}" style="width:${orePct}%"></div></div>
                         <div class="res-footer">
                             <span class="res-cap ${oreIsCritical ? 'warn' : ''}">Cap max</span>
-                            <span class="${orePct > 20 ? 'delta-down' : 'delta-up'}">${orePct > 20 ? '▼' : '▲'}</span>
+                            ${mkDelta('ore')}
                         </div>
                     </div>
                 </div>
@@ -1052,12 +1172,32 @@ const AccountsPage = {
                         </div>
                         <div>
                             <div class="pet-label-txt">Pet Tokens</div>
-                            <div class="pet-value">${acc.petToken}</div>
+                            <div class="pet-value">${(acc.pet_token || 0).toLocaleString()}</div>
                         </div>
                     </div>
                     <div class="pet-right">
                         <span class="pet-badge">Special Currency</span>
-                        <span class="pet-delta delta-up">▲ +2 today</span>
+                        <span id="res-delta-pet_token" class="pet-delta">${delta && delta.pet_token ? (delta.pet_token > 0 ? '<span class="delta-up">▲ +' + delta.pet_token.toLocaleString() + '</span>' : '<span class="delta-down">▼ ' + delta.pet_token.toLocaleString() + '</span>') : '<span class="delta-loading">—</span>'}</span>
+                    </div>
+                </div>
+
+                <!-- Mana -->
+                <div class="pet-card" style="margin-top:16px;">
+                    <div class="pet-left">
+                        <div class="pet-icon">
+                            <svg style="width:20px;color:#a855f7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                        </div>
+                        <div>
+                            <div class="pet-label-txt">Mana</div>
+                            <div class="pet-value">${manaFormatted}</div>
+                        </div>
+                    </div>
+                    <div class="pet-right">
+                        <span class="pet-badge" style="background:rgba(168,85,247,0.1);color:#a855f7;border-color:rgba(168,85,247,0.25);">Magic Resource</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <div class="res-bar" style="width:100px;height:6px;"><div class="res-fill" style="width:${manaPct}%;background:linear-gradient(90deg,#a855f7,#c084fc);"></div></div>
+                            ${mkDelta('mana')}
+                        </div>
                     </div>
                 </div>
 
@@ -1068,13 +1208,16 @@ const AccountsPage = {
                     </div>
                     <div>
                         <div class="ai-title">
-                            ✦ AI Insight
+                            ✦ Daily Summary
                         </div>
                         <div class="ai-body">
-                            ${oreIsCritical
-                    ? `<strong>Ore is critically low (${orePct}%)</strong> and declining — prioritize farming runs before your next Hall upgrade. `
-                    : 'Resources look healthy. '}
-                            Gold cap will be reached in <strong>~2 days</strong> at current production rates.
+                            ${delta
+                    ? `${delta.power > 0 ? '<strong>Power increased by ' + AccountsPage.formatPower(delta.power) + '</strong>. ' : delta.power < 0 ? '<strong>Power decreased by ' + AccountsPage.formatPower(Math.abs(delta.power)) + '</strong>. ' : ''}
+                       ${delta.gold > 0 ? 'Gold ▲' + AccountsPage.formatResource(delta.gold) + '. ' : delta.gold < 0 ? 'Gold ▼' + AccountsPage.formatResource(Math.abs(delta.gold)) + '. ' : ''}
+                       ${oreIsCritical ? '<strong>⚠ Ore is critically low (' + orePct + '%)</strong> — prioritize farming.' : 'Resources are stable.'}
+                       ${prevTimeLabel ? '<br><span style="font-size:11px;color:var(--muted-foreground);">Compared with scan from ' + prevTimeLabel + '</span>' : ''}`
+                    : `${oreIsCritical ? '<strong>Ore is critically low (' + orePct + '%)</strong> — prioritize farming runs.' : 'Resources look healthy.'}
+                       <span style="font-size:11px;color:var(--muted-foreground);">Run at least 2 daily scans to enable change tracking.</span>`}
                         </div>
                     </div>
                 </div>
@@ -1151,7 +1294,7 @@ const AccountsPage = {
         fb.classList.add('show');
 
         try {
-            const res = await fetch(`/api/accounts/${acc.emu_index}`, {
+            const res = await fetch(`/api/accounts/${encodeURIComponent(acc.game_id)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ note: ta.value })
@@ -1184,12 +1327,17 @@ const AccountsPage = {
         }
 
         try {
-            const res = await fetch('/api/accounts');
-            this._accountsData = await res.json();
+            const [accRes, pendRes] = await Promise.all([
+                fetch('/api/accounts'),
+                fetch('/api/pending-accounts'),
+            ]);
+            this._accountsData = await accRes.json();
+            const pendData = await pendRes.json();
+            this._pendingAccounts = Array.isArray(pendData) ? pendData : [];
         } catch (e) {
             console.error('Failed to fetch accounts:', e);
             this._accountsData = [];
-            Toast.show('Failed to load accounts', 'error');
+            this._pendingAccounts = [];
         } finally {
             this._isLoading = false;
             if (typeof router !== 'undefined' && router._currentPage === 'accounts') {
@@ -1199,12 +1347,151 @@ const AccountsPage = {
         }
     },
 
+    // ── Pending Queue ──
+
+    _renderPendingBanner() {
+        if (!this._pendingAccounts || this._pendingAccounts.length === 0) return '';
+
+        const count = this._pendingAccounts.length;
+        const cards = this._pendingAccounts.map(p => {
+            const emuName = p.emu_name || (p.emu_index != null ? 'LDP-' + p.emu_index : 'Unknown');
+            return `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;min-width:340px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;flex-shrink:0;">?</div>
+                    <div>
+                        <div style="font-weight:700;font-size:14px;">${p.lord_name || 'Unknown Lord'}</div>
+                        <div style="font-size:12px;color:var(--muted-foreground);font-family:monospace;">ID: ${p.game_id} &middot; ${emuName}</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-primary btn-sm" style="font-size:12px;padding:5px 14px;" onclick="event.stopPropagation(); AccountsPage.showConfirmForm(${p.id})">
+                        ✓ Confirm
+                    </button>
+                    <button class="btn btn-ghost btn-sm" style="font-size:12px;padding:5px 10px;color:var(--muted-foreground);" onclick="event.stopPropagation(); AccountsPage.dismissPending(${p.id})">
+                        ✗
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+
+        return `
+        <div style="background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(217,119,6,0.04));border:1px solid rgba(245,158,11,0.2);border-radius:12px;padding:16px 20px;margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                <span style="font-size:18px;">📋</span>
+                <span style="font-weight:700;font-size:14px;color:var(--foreground);">Pending Accounts</span>
+                <span style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid rgba(245,158,11,0.3);border-radius:20px;padding:1px 10px;font-size:12px;font-weight:700;">${count}</span>
+                <span style="font-size:12px;color:var(--muted-foreground);">New accounts discovered via Full Scan — confirm to add to your roster.</span>
+            </div>
+            <div id="pending-confirm-form-area"></div>
+            <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;">
+                ${cards}
+            </div>
+        </div>`;
+    },
+
+    showConfirmForm(pendingId) {
+        const p = this._pendingAccounts.find(x => x.id === pendingId);
+        if (!p) return;
+
+        const area = document.getElementById('pending-confirm-form-area');
+        if (!area) return;
+
+        area.innerHTML = `
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+                <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--indigo-500,#6366f1));color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;">✓</div>
+                <div>
+                    <div style="font-weight:700;font-size:14px;">Confirm: ${p.lord_name || 'Unknown'}</div>
+                    <div style="font-size:12px;color:var(--muted-foreground);font-family:monospace;">Game ID: ${p.game_id}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Login Method</label>
+                    <select id="pq-login-method" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
+                        <option value="">-- Select --</option>
+                        <option value="Google">Google</option>
+                        <option value="Facebook">Facebook</option>
+                        <option value="Apple">Apple</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Login Email</label>
+                    <input type="email" id="pq-email" placeholder="email@example.com" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Provider</label>
+                    <select id="pq-provider" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
+                        <option value="Global">Global / Main</option>
+                        <option value="Funtap">Funtap</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Alliance Tag</label>
+                    <input type="text" id="pq-alliance" placeholder="e.g. [ABC]" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Notes</label>
+                    <input type="text" id="pq-note" placeholder="Optional notes..." style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;" />
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('pending-confirm-form-area').innerHTML=''">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="AccountsPage.confirmPending(${pendingId})">Create Account</button>
+            </div>
+        </div>`;
+    },
+
+    async confirmPending(pendingId) {
+        const loginMethod = document.getElementById('pq-login-method')?.value || '';
+        const email = document.getElementById('pq-email')?.value || '';
+        const provider = document.getElementById('pq-provider')?.value || 'Global';
+        const alliance = document.getElementById('pq-alliance')?.value || '';
+        const note = document.getElementById('pq-note')?.value || '';
+
+        try {
+            const res = await fetch(`/api/pending-accounts/${pendingId}/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ login_method: loginMethod, email, provider, alliance, note }),
+            });
+            const data = await res.json();
+            if (data.status === 'confirmed') {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Account confirmed! ✓');
+                this.fetchData();
+            } else {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Confirm failed: ' + (data.error || 'Unknown'));
+            }
+        } catch (e) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error confirming account');
+        }
+    },
+
+    async dismissPending(pendingId) {
+        if (!confirm('Dismiss this pending account? It will reappear on next scan.')) return;
+        try {
+            const res = await fetch(`/api/pending-accounts/${pendingId}/dismiss`, { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'dismissed') {
+                this.fetchData();
+            } else {
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Dismiss failed: ' + (data.error || 'Unknown'));
+            }
+        } catch (e) {
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error dismissing');
+        }
+    },
+
     init() {
         this._noteOriginals = {};
         this.fetchData();
     },
     destroy() {
         this._selectedAccountId = null;
+        this._pendingAccounts = [];
         this._noteOriginals = {};
     }
 };

@@ -36,8 +36,10 @@ const API = {
     runTask(serial, taskType) {
         return this.post(`/api/tasks/run?serial=${serial}&task_type=${taskType}`);
     },
-    runAllTasks(taskType) {
-        return this.post(`/api/tasks/run-all?task_type=${taskType}`);
+    runAllTasks(taskType, indices) {
+        let url = `/api/tasks/run-all?task_type=${taskType}`;
+        if (indices && indices.length) url += `&indices=${indices.join(',')}`;
+        return this.post(url);
     },
     getQueue() { return this.get('/api/tasks/queue'); },
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
@@ -52,6 +54,8 @@ const API = {
 
     // ── Config ──
     getConfig() { return this.get('/api/config'); },
+    getOcrKeys() { return this.get('/api/config/ocr-keys'); },
+    saveOcrKeys(keys) { return this.post('/api/config/ocr-keys', { keys }); },
 
     // ── LDPlayer Emulators ──
     getAllEmulators() { return this.get('/api/emulators/all'); },
@@ -66,6 +70,27 @@ const API = {
     runMacro(index, filename) {
         return this.post(`/api/macros/run?index=${index}&filename=${encodeURIComponent(filename)}`);
     },
+
+    // ── Schedules ──
+    getSchedules() { return this.get('/api/schedules'); },
+    createSchedule(data) { return this.post('/api/schedules', data); },
+    getSchedule(id) { return this.get(`/api/schedules/${id}`); },
+    updateSchedule(id, data) {
+        return fetch(`/api/schedules/${id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }).then(r => r.json());
+    },
+    deleteSchedule(id) {
+        return fetch(`/api/schedules/${id}`, { method: 'DELETE' }).then(r => r.json());
+    },
+    executeSchedule(id) { return this.post(`/api/schedules/${id}/execute`); },
+
+    // ── APK Management ──
+    getApks() { return this.get('/api/apks'); },
+    downloadApk(appId) { return this.post(`/api/apks/${appId}/download`); },
+    installApk(appId, serial) { return this.post(`/api/apks/${appId}/install?serial=${serial}`); },
+    installApkAll(appId, indices) { return this.post(`/api/apks/${appId}/install-all`, { indices }); },
 };
 
 

@@ -3,7 +3,6 @@ OCR API Client — ocrapi.cloud integration with key rotation.
 
 Pipeline: upload PDF -> poll job status -> download markdown result -> parse.
 """
-import os
 import re
 import time
 import itertools
@@ -21,11 +20,9 @@ MAX_POLL_ATTEMPTS = 60
 
 def load_api_keys() -> list[str]:
     """Load API keys from config file (one per line, # = comment)."""
-    keys_file = getattr(config, "api_keys_file", "api_keys.txt")
-    if not os.path.isabs(keys_file):
-        keys_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), keys_file)
+    keys_file = config.get_api_keys_path()
 
-    if not os.path.exists(keys_file):
+    if not keys_file.exists():
         print(f"[OCR] Warning: API keys file not found: {keys_file}")
         return []
 
@@ -219,11 +216,16 @@ def parse_scan_markdown(md_text: str) -> dict:
                     i += 2
                 break
 
-        # Lord name
+        # Lord name (may span multiple lines if special chars cause height diff)
         if line_lower == "lord":
-            if i + 1 < len(lines):
-                result["lord_name"] = lines[i + 1]
-                i += 1
+            name_parts = []
+            j = i + 1
+            while j < len(lines) and lines[j].lower() not in ("power", "merits"):
+                name_parts.append(lines[j])
+                j += 1
+            if name_parts:
+                result["lord_name"] = " ".join(name_parts)
+                i = j - 1  # will be incremented by outer loop
 
         # Power
         elif line_lower == "power":

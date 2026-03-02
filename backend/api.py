@@ -24,6 +24,15 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="COD Game Automation Manager", version="1.0.0")
 
+# Allow loading screen (html= origin is null) to reach the API
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Serve static files
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
@@ -148,8 +157,8 @@ async def run_task(serial: str, task_type: str):
 
 
 @app.post("/api/tasks/run-all")
-async def run_all_tasks(task_type: str):
-    """Submit a task for all online devices."""
+async def run_all_tasks(task_type: str, indices: str = None):
+    """Submit a task for selected devices (by LDPlayer index) or all online."""
     try:
         tt = TaskType(task_type)
     except ValueError:
@@ -157,9 +166,46 @@ async def run_all_tasks(task_type: str):
 
     online = emulator_manager.get_online()
     if not online:
-        # Try discover first
         online = emulator_manager.discover()
         online = [e for e in online if e.status == "ONLINE"]
+
+    if not online:
+        return {"status": "error", "msg": "No online emulators found"}
+
+    # Filter by selected indices if provided (comma-separated, e.g. "0,2,3")
+    if indices:
+        selected = set(int(i) for i in indices.split(",") if i.strip().isdigit())
+        selected_serials = {f"emulator-{5554 + idx * 2}" for idx in selected}
+        online = [e for e in online if e.serial in selected_serials]
+        if not online:
+            return {"status": "error", "msg": "None of the selected emulators are online"}
+
+    if tt == TaskType.FULL_SCAN:
+        # Route each device through the dedicated full scan orchestrator
+        from backend.core import full_scan
+        from backend.core import ldplayer_manager
+        from backend.websocket import ws_manager
+
+        all_emus = ldplayer_manager.list_all_instances()
+        name_map = {e["index"]: e["name"] for e in all_emus}
+
+        results = []
+        for emu in online:
+            try:
+                port = int(emu.serial.split("-")[1])
+                idx = (port - 5554) // 2
+            except Exception:
+                results.append({"serial": emu.serial, "status": "error", "msg": "Cannot parse index"})
+                continue
+
+            name = name_map.get(idx, f"Emulator-{idx}")
+            result = full_scan.start_full_scan(idx, name, ws_callback=ws_manager.broadcast_sync)
+            if result.get("success"):
+                results.append({"serial": emu.serial, "task_id": f"fullscan-{idx}", "status": "accepted"})
+            else:
+                results.append({"serial": emu.serial, "status": "error", "msg": result.get("error")})
+
+        return {"status": "accepted", "count": len(results), "tasks": results}
 
     task_ids = []
     for emu in online:
@@ -209,6 +255,28 @@ async def get_latest_report(serial: str):
 async def get_config():
     """Get current app configuration."""
     return config.to_dict()
+
+
+@app.get("/api/config/ocr-keys")
+async def get_ocr_keys():
+    """Get OCR API keys as newline separated text."""
+    keys_path = config.get_api_keys_path()
+    if not keys_path.exists():
+        return {"keys": ""}
+
+    with open(keys_path, "r", encoding="utf-8") as f:
+        return {"keys": f.read()}
+
+
+@app.post("/api/config/ocr-keys")
+async def save_ocr_keys(payload: dict):
+    """Save OCR API keys file content."""
+    keys_text = (payload or {}).get("keys", "")
+    keys_path = config.get_api_keys_path()
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(keys_path, "w", encoding="utf-8") as f:
+        f.write(keys_text.rstrip() + ("\n" if keys_text.strip() else ""))
+    return {"status": "ok"}
 
 
 # ──────────────────────────────────────────────
@@ -405,21 +473,24 @@ async def get_accounts():
 
 @app.post("/api/accounts")
 async def create_account(body: dict):
-    """Create a new account manually."""
+    """Create a new account manually. Requires game_id."""
     if not body:
         return {"error": "Empty body"}
     
+    game_id = body.get("game_id", "").strip()
+    if not game_id:
+        return {"error": "game_id is required"}
+
     emu_index = body.get("emu_index")
-    if emu_index is None:
-        return {"error": "emu_index is required"}
-    
-    try:
-        emu_index = int(emu_index)
-    except ValueError:
-        return {"error": "emu_index must be an integer"}
+    if emu_index is not None:
+        try:
+            emu_index = int(emu_index)
+        except ValueError:
+            return {"error": "emu_index must be an integer"}
 
     try:
         acc_id = await database.upsert_account_full(
+            game_id=game_id,
             emulator_index=emu_index,
             lord_name=body.get("lord_name", ""),
             power=float(body.get("power", 0)),
@@ -429,39 +500,342 @@ async def create_account(body: dict):
             alliance=body.get("alliance", ""),
             note=body.get("note", "")
         )
-        return {"status": "ok", "account_id": acc_id, "emu_index": emu_index}
+        return {"status": "ok", "account_id": acc_id, "game_id": game_id}
     except Exception as e:
         return {"error": str(e)}
 
 
-@app.get("/api/accounts/{emu_index}")
-async def get_account(emu_index: int):
-    """Get single account by emulator index."""
-    acc = await database.get_account_by_emu_index(emu_index)
+@app.get("/api/accounts/{game_id}")
+async def get_account(game_id: str):
+    """Get single account by game_id."""
+    acc = await database.get_account_by_game_id(game_id)
     if acc:
         return acc
-    return {"error": "Account not found", "emu_index": emu_index}
+    return {"error": "Account not found", "game_id": game_id}
 
 
-@app.put("/api/accounts/{emu_index}")
-async def update_account(emu_index: int, body: dict):
-    """Update account fields (note, login_method, email, provider, alliance)."""
+@app.put("/api/accounts/{game_id}")
+async def update_account(game_id: str, body: dict):
+    """Update account fields (note, login_method, email, provider, alliance, lord_name)."""
     if not body:
-        return {"error": "Empty body", "emu_index": emu_index}
+        return {"error": "Empty body", "game_id": game_id}
+    body.pop("game_id", None)
     body.pop("emu_index", None)
-    ok = await database.update_account(emu_index, **body)
+    ok = await database.update_account(game_id, **body)
     if ok:
-        return {"status": "ok", "emu_index": emu_index}
-    return {"error": "Account not found or no valid fields", "emu_index": emu_index}
+        return {"status": "ok", "game_id": game_id}
+    return {"error": "Account not found or no valid fields", "game_id": game_id}
 
 
-@app.delete("/api/accounts/{emu_index}")
-async def delete_account(emu_index: int):
+@app.delete("/api/accounts/{game_id}")
+async def delete_account(game_id: str):
     """Delete an account record."""
-    ok = await database.delete_account(emu_index)
+    ok = await database.delete_account(game_id)
     if ok:
-        return {"status": "deleted", "emu_index": emu_index}
-    return {"error": "Account not found", "emu_index": emu_index}
+        return {"status": "deleted", "game_id": game_id}
+    return {"error": "Account not found", "game_id": game_id}
+
+
+@app.get("/api/accounts/{game_id}/comparison")
+async def get_scan_comparison(game_id: str):
+    """Get latest scan vs 24h-ago scan for delta comparison."""
+    result = await database.get_scan_comparison(game_id)
+    return result
+
+
+# ──────────────────────────────────────────────
+# Pending Account Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/pending-accounts")
+async def get_pending_accounts():
+    """Get all pending accounts awaiting user confirmation."""
+    return await database.get_pending_accounts()
+
+
+@app.post("/api/pending-accounts/{pending_id}/confirm")
+async def confirm_pending(pending_id: int, body: dict = None):
+    """Confirm a pending account and create it."""
+    body = body or {}
+    acc_id = await database.confirm_pending_account(
+        pending_id=pending_id,
+        login_method=body.get("login_method", ""),
+        email=body.get("email", ""),
+        provider=body.get("provider", "Global"),
+        alliance=body.get("alliance", ""),
+        note=body.get("note", ""),
+    )
+    if acc_id:
+        return {"status": "confirmed", "account_id": acc_id}
+    return {"error": "Pending account not found or already processed"}
+
+
+@app.post("/api/pending-accounts/{pending_id}/dismiss")
+async def dismiss_pending(pending_id: int):
+    """Dismiss a pending account (will reappear on next scan)."""
+    ok = await database.dismiss_pending_account(pending_id)
+    if ok:
+        return {"status": "dismissed"}
+    return {"error": "Pending account not found"}
+
+
+# ──────────────────────────────────────────────
+# Schedule Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/schedules")
+async def get_schedules():
+    """Get all scheduled jobs."""
+    return await database.get_all_schedules()
+
+
+@app.post("/api/schedules")
+async def create_schedule(body: dict):
+    """Create a new schedule."""
+    from backend.core.scheduler import calc_initial_next_run
+
+    name = body.get("name", "").strip()
+    macro_filename = body.get("macro_filename", "").strip()
+    if not name or not macro_filename:
+        return {"error": "name and macro_filename are required"}
+
+    schedule_type = body.get("schedule_type", "once")
+    schedule_value = body.get("schedule_value", "")
+    target_mode = body.get("target_mode", "all_online")
+    target_indices = body.get("target_indices", "[]")
+    is_enabled = 1 if body.get("is_enabled", True) else 0
+
+    # If target_indices is a list, JSON-encode it
+    import json as json_mod
+    if isinstance(target_indices, list):
+        target_indices = json_mod.dumps(target_indices)
+
+    next_run = calc_initial_next_run(schedule_type, schedule_value)
+
+    sched_id = await database.create_schedule(
+        name=name,
+        macro_filename=macro_filename,
+        schedule_type=schedule_type,
+        schedule_value=schedule_value,
+        target_mode=target_mode,
+        target_indices=target_indices,
+        is_enabled=is_enabled,
+        next_run_at=next_run,
+    )
+    return {"status": "created", "id": sched_id}
+
+
+@app.get("/api/schedules/{schedule_id}")
+async def get_schedule(schedule_id: int):
+    """Get single schedule."""
+    sched = await database.get_schedule(schedule_id)
+    if sched:
+        return sched
+    return {"error": "Schedule not found"}
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def update_schedule(schedule_id: int, body: dict):
+    """Update a schedule."""
+    from backend.core.scheduler import calc_initial_next_run
+    import json as json_mod
+
+    # If schedule_type or schedule_value changed, recalculate next_run
+    if "schedule_type" in body or "schedule_value" in body:
+        stype = body.get("schedule_type")
+        sval = body.get("schedule_value")
+        if stype and sval:
+            body["next_run_at"] = calc_initial_next_run(stype, sval)
+
+    # Convert target_indices list to JSON string
+    if "target_indices" in body and isinstance(body["target_indices"], list):
+        body["target_indices"] = json_mod.dumps(body["target_indices"])
+
+    # Convert is_enabled boolean to int
+    if "is_enabled" in body:
+        body["is_enabled"] = 1 if body["is_enabled"] else 0
+
+    ok = await database.update_schedule(schedule_id, **body)
+    if ok:
+        return {"status": "ok", "id": schedule_id}
+    return {"error": "Schedule not found or no valid fields"}
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: int):
+    """Delete a schedule."""
+    ok = await database.delete_schedule(schedule_id)
+    if ok:
+        return {"status": "deleted"}
+    return {"error": "Schedule not found"}
+
+
+@app.post("/api/schedules/{schedule_id}/execute")
+async def execute_schedule_now(schedule_id: int):
+    """Execute a schedule immediately (Execute Now)."""
+    from backend.core.scheduler import execute_schedule
+    import asyncio
+
+    sched = await database.get_schedule(schedule_id)
+    if not sched:
+        return {"error": "Schedule not found"}
+
+    # Run in background (don't block API response)
+    asyncio.create_task(execute_schedule(sched, ws_callback=ws_manager.broadcast_sync))
+    return {"status": "executing", "name": sched["name"]}
+
+
+# ──────────────────────────────────────────────
+# APK Install Management
+# ──────────────────────────────────────────────
+
+@app.get("/api/apks")
+async def list_apks():
+    """List all APKs in registry with download status."""
+    from backend.core import apk_manager
+    return apk_manager.get_apk_list()
+
+
+@app.post("/api/apks/{app_id}/download")
+async def download_apk(app_id: str):
+    """Download an APK from its registry URL."""
+    from backend.core import apk_manager
+    result = apk_manager.download_apk(app_id)
+    return result
+
+
+@app.post("/api/apks/{app_id}/install")
+async def install_apk_single(app_id: str, serial: str):
+    """Install APK on a single emulator."""
+    from backend.core import apk_manager
+    return apk_manager.install_apk(app_id, serial)
+
+
+@app.post("/api/apks/{app_id}/install-all")
+async def install_apk_all(app_id: str, payload: dict = None):
+    """Install APK on selected emulators (by LDPlayer index)."""
+    from backend.core import apk_manager
+
+    indices = (payload or {}).get("indices", [])
+    if not indices:
+        return {"success": False, "error": "No emulators selected"}
+
+    # Convert LDPlayer indices to ADB serials (index N -> emulator-{5554 + N*2})
+    serials = [f"emulator-{5554 + idx * 2}" for idx in indices]
+    result = apk_manager.install_apk_on_multiple(app_id, serials, ws_callback=ws_manager.broadcast_sync)
+    return result
+
+
+# ──────────────────────────────────────────────
+# Workflow API — Function Registry & Recipes
+# ──────────────────────────────────────────────
+
+# In-memory recipe storage (persists across requests, resets on restart)
+_saved_recipes: list[dict] = []
+_recipe_id_counter = 0
+
+
+@app.get("/api/workflow/functions")
+async def get_workflow_functions():
+    """Return the full function registry for the Recipe Builder."""
+    from backend.core.workflow.workflow_registry import get_functions
+    return get_functions()
+
+
+@app.get("/api/workflow/templates")
+async def get_workflow_templates():
+    """Return pre-built recipe templates."""
+    from backend.core.workflow.workflow_registry import get_templates
+    return get_templates()
+
+
+@app.get("/api/workflow/recipes")
+async def get_workflow_recipes():
+    """List all saved user recipes."""
+    return _saved_recipes
+
+
+@app.post("/api/workflow/recipes")
+async def save_workflow_recipe(body: dict):
+    """Save a new recipe or update an existing one."""
+    global _recipe_id_counter
+    recipe_id = body.get("id")
+
+    if recipe_id:
+        # Update existing
+        for i, r in enumerate(_saved_recipes):
+            if r["id"] == recipe_id:
+                _saved_recipes[i] = {**r, **body}
+                return {"status": "ok", "id": recipe_id, "action": "updated"}
+        return {"status": "error", "error": "Recipe not found"}
+
+    # Create new
+    _recipe_id_counter += 1
+    recipe_id = f"recipe_{_recipe_id_counter}"
+    recipe = {
+        "id": recipe_id,
+        "name": body.get("name", "Untitled Recipe"),
+        "description": body.get("description", ""),
+        "icon": body.get("icon", "📝"),
+        "steps": body.get("steps", []),
+    }
+    _saved_recipes.append(recipe)
+    return {"status": "ok", "id": recipe_id, "action": "created"}
+
+
+@app.delete("/api/workflow/recipes/{recipe_id}")
+async def delete_workflow_recipe(recipe_id: str):
+    """Delete a saved recipe."""
+    global _saved_recipes
+    before = len(_saved_recipes)
+    _saved_recipes = [r for r in _saved_recipes if r["id"] != recipe_id]
+    if len(_saved_recipes) < before:
+        return {"status": "deleted"}
+    return {"status": "error", "error": "Recipe not found"}
+
+
+# ──────────────────────────────────────────────
+# System Endpoints
+# ──────────────────────────────────────────────
+
+@app.post("/api/restart")
+async def restart_server():
+    """Restart the entire backend server process."""
+    import subprocess
+    import sys
+    import threading
+
+    project_root = str(Path(__file__).resolve().parent.parent)
+    main_script = os.path.join(project_root, "main.py")
+
+    def _do_restart():
+        import time
+        time.sleep(0.3)  # Let HTTP response flush
+        # Spawn shell that waits 2s (for port release) then starts new process
+        subprocess.Popen(
+            f'timeout /t 2 /nobreak > nul & "{sys.executable}" "{main_script}"',
+            cwd=project_root,
+            shell=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        os._exit(0)  # Kill current process — port released immediately
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"status": "restarting"}
+
+
+@app.post("/api/shutdown")
+async def shutdown_server():
+    """Shutdown the entire backend server process."""
+    import threading
+
+    def _do_shutdown():
+        import time
+        time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
+    return {"status": "shutting_down"}
 
 
 # ──────────────────────────────────────────────
@@ -479,6 +853,11 @@ async def startup():
 
     # Discover devices
     emulator_manager.discover()
+
+    # Start background scheduler
+    from backend.core.scheduler import start_scheduler
+    start_scheduler()
+
     print(f"[API] Started on port {config.server_port}")
     print(f"[API] Devices found: {len(emulator_manager.get_all())}")
 

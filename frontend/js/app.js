@@ -12,6 +12,7 @@ const router = {
         emulators: EmulatorsPage,
         accounts: AccountsPage,
         workflow: WorkflowPage,
+        scheduled: ScheduledPage,
         settings: SettingsPage,
     },
 
@@ -23,6 +24,7 @@ const router = {
         emulators: 'Emulators',
         accounts: 'Accounts',
         workflow: 'Workflows',
+        scheduled: 'Scheduled',
         settings: 'Settings',
     },
 
@@ -152,6 +154,56 @@ function setupWSEvents() {
         NotificationManager.add('error', 'Scan Failed', `${data.serial}: ${data.error || 'Unknown'}`);
         Toast.error('Scan Failed', `${data.serial}: ${data.error || 'Unknown error'}`);
     });
+}
+
+/**
+ * Restart the backend server process.
+ */
+async function restartServer() {
+    const ok = await ConfirmModal.show({
+        title: 'Restart Server',
+        message: 'The backend server will restart. This page will reload automatically once the server is back online.',
+        icon: 'restart',
+        confirmText: 'Restart',
+        cancelText: 'Cancel',
+        variant: 'default',
+    });
+    if (!ok) return;
+
+    try {
+        Toast.info('Restarting', 'Server is restarting...');
+        await fetch('/api/restart', { method: 'POST' });
+    } catch (e) {
+        // Expected — server dies before response completes
+    }
+
+    // Wait for new server to boot, then reload
+    setTimeout(() => {
+        location.reload();
+    }, 2500);
+}
+
+/**
+ * Exit the application — shutdown the backend server.
+ */
+async function exitApp() {
+    const ok = await ConfirmModal.show({
+        title: 'Exit Application',
+        message: 'This will shut down the backend server completely. You will need to restart it manually.',
+        icon: 'shutdown',
+        confirmText: 'Shut Down',
+        cancelText: 'Cancel',
+        variant: 'danger',
+    });
+    if (!ok) return;
+
+    try {
+        await fetch('/api/shutdown', { method: 'POST' });
+    } catch (e) {
+        // Expected — server dies before response
+    }
+    // Try to close window (works in pywebview, may be blocked in browser)
+    window.close();
 }
 
 /**

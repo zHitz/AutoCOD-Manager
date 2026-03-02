@@ -49,31 +49,130 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                     "detail": detail,
                 })
 
+        # ── Step 0: Capture Game ID via WORKFLOW module ──
+        _broadcast("extracting_id", "Extracting Game ID from profile...")
+
+        import os
+        from backend.config import config as app_config
+        from backend.core.workflow.state_detector import GameStateDetector
+        from backend.core.workflow import core_actions
+
+        templates_dir = os.path.join(os.path.dirname(__file__), "workflow", "templates")
+        detector = GameStateDetector(app_config.adb_path, templates_dir)
+
+        APP_PACKAGE = "com.farlightgames.samo.gp.vn"
+        game_id = ""
+        try:
+            # Boot game + navigate to Lobby (handles network issues, stuck states)
+            if core_actions.startup_to_lobby(serial, detector, APP_PACKAGE):
+                # Navigate to profile menu
+                if core_actions.go_to_profile(serial, detector):
+                    # Extract player ID via clipboard
+                    player_id = core_actions.extract_player_id(serial, detector)
+                    if player_id:
+                        game_id = player_id
+                        _broadcast("id_extracted", f"Game ID: {game_id}")
+
+                    # Back to lobby before screenshot capture
+                    core_actions.back_to_lobby(serial, detector)
+
+        except Exception as e:
+            print(f"[FullScan] Game ID extraction error: {e}")
+
+        # STOP if no Game ID — scan is useless without identity
+        if not game_id:
+            _broadcast("failed", "Cannot identify account — Game ID extraction failed. Scan aborted.")
+            raise RuntimeError("Game ID extraction failed — aborting Full Scan")
+
         # ── Step 1: Capture Screenshots ──
         _broadcast("capturing", "Navigating and capturing screenshots...")
-        from backend.core.screen_capture import run_full_capture
+        from backend.core.screen_capture import run_full_capture_modern
 
         def progress_cb(phase, step, total):
             _broadcast(f"capturing ({step}/{total})", f"Phase: {phase}")
 
-        pdf_path = run_full_capture(serial, WORK_DIR, progress_callback=progress_cb)
+        pdf_path = run_full_capture_modern(serial, detector, WORK_DIR, progress_callback=progress_cb)
 
         if not pdf_path:
             raise RuntimeError("Screenshot capture failed - no PDF created")
 
-        # ── Step 2: OCR API ──
-        _broadcast("ocr_processing", "Uploading PDF to OCR API...")
+        # ── Step 2: OCR API (retry up to 3 times) ──
         from backend.core.ocr_client import run_ocr
 
-        ocr_result = run_ocr(pdf_path)
+        ocr_result = None
+        max_ocr_retries = 3
+        for ocr_attempt in range(1, max_ocr_retries + 1):
+            _broadcast("ocr_processing", f"Uploading PDF to OCR API... (attempt {ocr_attempt}/{max_ocr_retries})")
+            ocr_result = run_ocr(pdf_path)
+            if ocr_result["success"]:
+                break
+            print(f"[FullScan] OCR attempt {ocr_attempt} failed: {ocr_result['error']}")
+            if ocr_attempt < max_ocr_retries:
+                _broadcast("ocr_retry", f"OCR failed, retrying ({ocr_attempt}/{max_ocr_retries})...")
+                time.sleep(2)
 
-        if not ocr_result["success"]:
-            raise RuntimeError(f"OCR failed: {ocr_result['error']}")
+        if not ocr_result or not ocr_result["success"]:
+            raise RuntimeError(f"OCR failed after {max_ocr_retries} attempts: {ocr_result['error']}")
 
         _broadcast("parsing", "Parsing OCR results...")
 
         parsed_data = ocr_result["parsed"]
         raw_text = ocr_result["text"]
+
+        # ── Step 2.5: DATA VALIDATION — Reject corrupted OCR results ──
+        _broadcast("validating", "Verifying OCR data integrity...")
+
+        res = parsed_data.get("resources", {})
+        total_resources = sum([
+            res.get("gold", 0), res.get("wood", 0),
+            res.get("ore", 0), res.get("mana", 0),
+        ])
+        power = parsed_data.get("power", 0)
+        hall = parsed_data.get("hall_level", 0)
+        market = parsed_data.get("market_level", 0)
+
+        # GATE 1: If ALL critical fields are zero, OCR clearly failed
+        if power == 0 and hall == 0 and market == 0 and total_resources == 0:
+            raise RuntimeError(
+                "OCR data validation failed — all fields are 0. "
+                "Screenshot capture likely failed. Scan aborted to protect existing data."
+            )
+
+        # GATE 2: Compare with latest DB snapshot — refuse to overwrite non-zero with zero
+        try:
+            import asyncio as _aio
+            from backend.storage.database import database as _db
+
+            async def _check_previous():
+                return await _db.get_emulator_data(emulator_index=emulator_index)
+
+            prev = _aio.run(_check_previous())
+            if prev:
+                prev_hall = prev.get("hall_level", 0)
+                prev_power = prev.get("power", 0)
+
+                # If previous had real data but new has zeros in critical fields
+                if prev_hall > 0 and hall == 0:
+                    print(f"[FullScan] WARNING: Hall was {prev_hall}, new OCR says 0. Keeping old value.")
+                    parsed_data["hall_level"] = prev_hall
+
+                if prev_power > 0 and power == 0:
+                    print(f"[FullScan] WARNING: Power was {prev_power}, new OCR says 0. Keeping old value.")
+                    parsed_data["power"] = prev_power
+
+                prev_market = prev.get("market_level", 0)
+                if prev_market > 0 and market == 0:
+                    print(f"[FullScan] WARNING: Market was {prev_market}, new OCR says 0. Keeping old value.")
+                    parsed_data["market_level"] = prev_market
+
+                for key in ["gold", "wood", "ore", "mana"]:
+                    prev_val = prev.get(key, 0) or 0
+                    if prev_val > 0 and res.get(key, 0) == 0:
+                        print(f"[FullScan] WARNING: {key} was {prev_val}, new OCR says 0. Keeping old value.")
+                        parsed_data["resources"][key] = prev_val
+
+        except Exception as val_err:
+            print(f"[FullScan] Validation comparison skipped: {val_err}")
 
         # ── Step 3: Save to Database ──
         _broadcast("saving", "Saving to database...")
@@ -84,7 +183,7 @@ def _scan_worker(emulator_index: int, emulator_name: str,
 
         # Run async save in event loop
         async def _save():
-            await database.save_scan_snapshot(
+            snap_id = await database.save_scan_snapshot(
                 emulator_index=emulator_index,
                 serial=serial,
                 emulator_name=emulator_name,
@@ -92,16 +191,24 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                 scan_status="completed",
                 scan_duration_ms=elapsed_ms,
                 raw_ocr_text=raw_text,
+                game_id=game_id,
             )
 
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(_save(), loop).result(timeout=10)
-            else:
-                loop.run_until_complete(_save())
-        except RuntimeError:
-            asyncio.run(_save())
+            # Auto-link account if we have a game_id
+            link_result = None
+            if game_id:
+                emu_id = await database.get_emulator_id(emu_index=emulator_index)
+                if emu_id:
+                    lord_name = parsed_data.get("lord_name", "")
+                    link_result = await database.auto_link_account(
+                        emulator_id=emu_id,
+                        game_id=game_id,
+                        lord_name=lord_name,
+                        snapshot_id=snap_id,
+                    )
+            return snap_id, link_result
+
+        snap_id, link_result = asyncio.run(_save())
 
         # ── Done ──
         with _lock:
@@ -113,6 +220,8 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                 "step": "done",
                 "elapsed_ms": elapsed_ms,
                 "data": parsed_data,
+                "game_id": game_id,
+                "link_result": link_result,
             }
 
         if ws_callback:
@@ -121,9 +230,11 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                 "serial": serial,
                 "elapsed_ms": elapsed_ms,
                 "data": parsed_data,
+                "game_id": game_id,
+                "link_result": link_result,
             })
 
-        print(f"[FullScan] Completed #{emulator_index} ({emulator_name}) in {elapsed_ms}ms")
+        print(f"[FullScan] Completed #{emulator_index} ({emulator_name}) in {elapsed_ms}ms | Game ID: {game_id or 'N/A'}")
 
     except Exception as e:
         import traceback

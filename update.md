@@ -1,6 +1,165 @@
 # COD Game Automation Manager - Update Log
 
-## Version 1.0.4 (Current)
+## Version 1.0.9 (Current)
+*Install Apps System, Full Scan Fix, Settings Hotfix & Workflow V3 Theme Sync*
+
+- **Critical Bug Fix — App UI Freeze (`frontend/js/pages/settings.js`)**
+  - **Root Cause:** `const ocrKeys` bị khai báo **2 lần** trong cùng scope tại `loadOcrKeys()` → `SyntaxError` → `SettingsPage` không tồn tại → `app.js` crash khi build `router._pages` → `ReferenceError: SettingsPage is not defined`.
+  - **Cascade Failure:** WebSocket `wsClient.connect()` và `router.navigate('dashboard')` không bao giờ chạy → UI đơ hoàn toàn: sidebar tĩnh, content trống, trạng thái "Disconnected".
+  - **4 Lỗi Đã Fix:**
+    1. `const ocrKeys` duplicate (dòng 260 & 263) → xóa bản copy thừa
+    2. HTML OCR section bị copy-paste (dòng 122-134) → block trùng lặp gây duplicate DOM IDs (`cfg-ocr-keys` x2)
+    3. `API.saveOcrKeys()` gọi 2 lần liên tiếp trong `saveConfig()` → xóa bản thừa
+    4. `loadConfig()` + `loadOcrKeys()` gọi 2 lần trong `init()` → xóa bản thừa
+
+- **Install Apps System (`backend/core/apk_manager.py` — MỚI)**
+  - **APK Manager Module:** Registry 4 apps (ADB Clipper, ZArchiver, GSpace, QuickTouch) với download URL, version, post-install commands. APK files lưu trong `data/apks/`.
+  - **Download & Install Flow:** User bấm Install → nếu chưa tải → `ConfirmModal` hỏi tải → download từ URL → cài qua `adb install -r` trên **đúng emulator đã chọn** (không phải tất cả online).
+  - **Target Emulator Fix:** Backend `install-all` nhận `{indices}` từ frontend, chuyển thành ADB serial → chỉ cài trên emulator user đã tick trong Target Emulators tab.
+  - **UI Rewrite (`frontend/js/pages/task-runner.js`):** Cards load động từ API, badge 🟢 DOWNLOADED / ⬜ NOT DOWNLOADED / 🟡 NO URL, spinner khi downloading/installing, kết quả ✓/✗ hiển thị inline.
+  - **4 API Endpoints:**
+    - `GET /api/apks` — list registry + download status
+    - `POST /api/apks/{id}/download` — download APK
+    - `POST /api/apks/{id}/install?serial=...` — install single
+    - `POST /api/apks/{id}/install-all` — install trên selected emulators (body: `{indices}`)
+  - **Post-install:** Clipper tự start `ClipboardService` sau khi cài.
+
+- **Full Scan Fix (`backend/api.py`)**
+  - **Bug:** `POST /api/tasks/run-all?task_type=full_scan` submit vào generic `task_queue` nhưng Full Scan cần routing đặc biệt qua `full_scan.start_full_scan()`. Endpoint `run_task` (single) đã xử lý đúng, `run_all_tasks` thì không → bấm Full Scan từ Scan Operations tab ghi "queued" nhưng không có gì xảy ra.
+  - **Fix:** Thêm `FULL_SCAN` routing vào `run_all_tasks()` — route từng emulator online qua `full_scan.start_full_scan()`.
+
+- **OCR Data Validation Gate (`backend/core/full_scan.py`)**
+  - **Vấn đề:** Nếu screenshot capture lỗi → OCR trả toàn 0 → ghi đè data tốt (ví dụ Hall 25 → 0).
+  - **Gate 1 — Hard Reject:** Nếu TẤT CẢ fields (`power`, `hall_level`, `market_level`, `resources`) đều = 0 → abort scan, không ghi DB.
+  - **Gate 2 — Smart Merge:** So sánh với snapshot trước đó trong DB. Nếu field cũ có giá trị (ví dụ Hall=25) mà OCR mới trả 0 → giữ giá trị cũ, không ghi đè.
+  - Áp dụng cho: `hall_level`, `market_level`, `power`, `gold`, `wood`, `ore`, `mana`.
+
+- **Scan Comparison — Daily Delta Tracking**
+  - **Backend:** Thêm `get_scan_comparison(game_id)` trong `database.py` — query latest scan vs scan ≥24h trước, tính delta cho tất cả fields.
+  - **API:** `GET /api/accounts/{game_id}/comparison` trả `{current, previous, delta}`.
+  - **Frontend:** Account detail → Resources tab hiện delta thực (▲/▼ + giá trị) cho Gold, Wood, Ore, Mana, Pet Token.
+  - **AI Daily Summary:** Thay hardcoded "AI Insight" bằng daily summary dựa trên data thực (power change, resource trends).
+  - Nếu chưa có 2 scans cách nhau 24h thì hiện placeholder "—" và hướng dẫn scan thêm.
+
+- **Workflow V3 — UI/UX Theme Synchronization (`frontend/css/workflow.css`)**
+  - **Full CSS Rewrite:** Thay thế toàn bộ **20+ hardcoded dark colors** (`#0c0e14`, `#252a3a`, `#64748b`…) bằng design-system variables (`var(--card)`, `var(--border)`, `var(--muted-foreground)`, `var(--accent)`…). Workflow giờ dùng chung Light Theme với toàn bộ app — không còn hiệu ứng "split-screen" dark/light.
+  - **Button Standardization:** Chuyển từ custom `wf-tb-btn` sang app classes: `btn btn-primary btn-sm` (Create New, Run), `btn btn-outline btn-sm` (Save, Refresh), `btn btn-ghost btn-sm` (Back) — giống pattern `scheduled.js`.
+  - **Thêm nút Refresh** trên List View + method `refreshList()`.
+
+---
+
+## Version 1.0.8
+*Workflow V3 Recipe Builder, App Loading Screen, Custom Modals, Workflow Migration R2 & System Controls*
+
+- **Workflow V3: Recipe Builder (`backend/core/workflow/workflow_registry.py` — MỚI)**
+  - **Backend Function Registry:** Tạo mới `workflow_registry.py` — catalog tập trung **16 core functions** phân thành 6 categories: Core Actions (Boot to Lobby, Open Profile, Extract Player ID…), ADB Actions (Tap, Swipe, Back, Screenshot), App Control (Launch, Check Running), Scan Operations (Full Scan), Flow Control (Delay) và Advanced (Wait for State).
+  - **4 Pre-built Templates:** Farm Loop (5 steps), ID Extraction (4 steps), Full Scan Cycle (3 steps), Swap & Repeat (4 steps) — user click để dùng ngay.
+  - **4 API Endpoints mới (`backend/api.py`):**
+    - `GET /api/workflow/functions` — trả toàn bộ registry kèm icon, params, defaults
+    - `GET /api/workflow/templates` — danh sách template có sẵn
+    - `GET /api/workflow/recipes` & `POST` — CRUD recipe (lưu in-memory)
+    - `DELETE /api/workflow/recipes/{id}` — xóa recipe
+
+- **Two-Layer Workflow UI (`frontend/js/pages/workflow.js`)**
+  - **Layer 1 — Recipe List View:** Trang gallery hiển thị Template cards (viền trái xanh, badge `TEMPLATE`) và My Recipes (grid responsive `auto-fill 300px`). Header dạng `page-header` chuẩn app với nút `Refresh` + `Create New`. Empty state với hướng dẫn rõ ràng.
+  - **Layer 2 — Recipe Editor View:** Click template/recipe → chuyển sang Editor. Sidebar trái chứa function library (search filter), center là step cards sequential (numbered, config fields inline: number/text/select). Insert `[+]` button giữa mỗi step. Nút Back/Save/Run trên toolbar. Execution Panel trượt lên từ bottom với progress bar + log timeline.
+  - **Function Picker Modal:** Overlay modal phân category, tìm kiếm real-time, click chọn function → tự thêm step với default config.
+
+- **UI/UX Theme Synchronization (`frontend/css/workflow.css`)**
+  - **Full CSS Rewrite:** Thay thế toàn bộ **20+ hardcoded dark colors** (`#0c0e14`, `#252a3a`, `#64748b`…) bằng design-system variables (`var(--card)`, `var(--border)`, `var(--muted-foreground)`, `var(--accent)`…). Workflow giờ dùng chung Light Theme với toàn bộ app.
+  - **Button Standardization:** Chuyển từ custom `wf-tb-btn` sang app classes: `btn btn-primary btn-sm` (Create New, Run), `btn btn-outline btn-sm` (Save, Refresh), `btn btn-ghost btn-sm` (Back) — giống hệt pattern `scheduled.js`.
+  - **Component Sync:** Cards dùng `var(--card)` + `var(--shadow-sm)`, config fields dùng `var(--muted)` background, modals dùng `var(--shadow-xl)`, spinners dùng `var(--indigo-500)`.
+
+- **Custom Confirm Modal (`frontend/js/components/confirm-modal.js` — MỚI)**
+  - **Thay thế native `confirm()`:** Popup xác nhận tùy chỉnh đồng bộ design system, sử dụng Promise-based API: `const ok = await ConfirmModal.show({title, message, icon, variant})`.
+  - **5 Icon variants:** `restart`, `shutdown`, `warning`, `danger`, `info` — SVG inline.
+  - **2 Style variants:** `default` (nút xanh) và `danger` (nút đỏ destructive).
+  - **UX hoàn chỉnh:** Backdrop blur + scale animation vào/ra, keyboard support (Escape = Cancel, Enter = Confirm), click backdrop = dismiss.
+  - **Áp dụng:** `restartServer()` dùng icon restart + variant default, `exitApp()` dùng icon shutdown + variant danger.
+
+- **App Loading Screen (`frontend/loading.html` — MỚI)**
+  - **Giải quyết "Can't reach 127.0.0.1":** Thay vì pywebview mở thẳng server URL (gây lỗi khi server chưa boot), giờ load loading.html trước — hiển thị logo + spinner dark theme.
+  - **Auto-poll & Redirect:** Loading screen poll `GET /api/config` mỗi 500ms, khi server sẵn sàng → spinner xanh + "Connected" → tự redirect vào app.
+  - **Timeout Warning:** Sau >5s hiển thị "Server is taking longer than usual..."
+  - **`main.py` Updated:** Đọc loading.html → inject port → truyền qua pywebview `html=` parameter. Xóa bỏ `time.sleep(1.5)` hardcoded.
+
+- **Workflow Migration Round 2 (`backend/core/workflow/`)**
+  - **`state_detector.py` — Construction System:** Thêm `construction_templates` dict + `construction_configs` mapping (HALL, MARKET, ELIXIR_HEALING). Method mới: `is_menu_expanded()` kiểm tra lobby menu mở rộng, `check_construction()` nhận diện building trên màn hình. Thay thế `lobby_resources` state bằng `items_artifacts` / `items_resources`.
+  - **`core_actions.py` — 6 Functions mới:** `ensure_lobby_menu_open()` (kiểm tra/mở menu lobby), `go_to_resources()` (navigate Items → Resources tab), `go_to_construction(name)` (generic construction nav via data lookup), `go_to_hall()`, `go_to_market()`, `go_to_pet_token()`. Update `back_to_lobby()` thêm `target_lobby` swap (IN_CITY ↔ OUT_CITY).
+  - **`clipper_helper.py` — Multi-Fallback:** Fallback 1: native `cmd clipboard get` (Android 9+). Fallback 2: wake Clipper service trước khi broadcast (chống Android Memory kill).
+  - **`construction_data.py` — MỚI:** Tap coordinates cho HALL, MARKET, ELIXIR_HEALING.
+  - **`screen_capture.py` — MỚI:** 5-phase capture pipeline (profile → resources → hall → market → pet_token) + crop regions + combine PDF.
+  - **Template Images:** Thêm `items_artifacts.png`, `items_resources.png`, folder `contructions/` (3 ảnh). Xóa `lobby_resources.png` cũ.
+
+- **System Endpoints (`backend/api.py`)**
+  - **`POST /api/restart`:** Restart backend server — spawn process mới với `timeout /t 2` chờ port release trước khi khởi lại.
+  - **`POST /api/shutdown`:** Tắt server hoàn toàn.
+  - **CORS Middleware:** Thêm `CORSMiddleware(allow_origins=["*"])` hỗ trợ loading screen (origin null) gọi API.
+
+- **OCR Parser Fix (`backend/core/ocr_client.py`)**
+  - **Lord Name Multi-line:** Fix lỗi tên Lord dùng special characters (chữ nhỏ) bị OCR thành 2 dòng (VD: `dragonball` + `Goten`). Parser giờ collect tất cả dòng giữa "Lord" và keyword tiếp theo ("Power"/"Merits"), ghép bằng dấu cách → `dragonball Goten`.
+
+---
+
+## Version 1.0.7
+*Scheduled Tasks, Account UX Fixes & Workflow V2*
+
+- **Scheduled Tasks Page (`frontend/js/pages/scheduled.js` — MỚI)**
+  - Trang quản lý lịch trình chạy macro tự động hoàn chỉnh: List View (bảng 10 cột) + Detail View (form tạo/sửa).
+  - Hỗ trợ 4 loại schedule: Once (datetime), Interval (30m/2h), Daily (HH:MM), Cron expression.
+  - Target mode: All Online hoặc chọn Specific emulators (checkbox list).
+  - Actions: Toggle Enable/Disable, Execute Now, Delete. API CRUD đầy đủ.
+
+- **Account Page Fixes (`frontend/js/pages/accounts.js`)**
+  - Fix detail panel click — bấm vào Account row giờ mở chi tiết đúng cách.
+  - Pet Token format: thêm dấu phân cách nghìn (1245 → 1,245).
+  - Resource hiển thị: tự động chuyển đơn vị M → B khi vượt 1000M.
+  - Hall Level max 25, Market Level max 25.
+
+- **Workflow V2 (`frontend/js/pages/workflow.js`)**
+  - Trang Workflow Basic — linear builder không kéo thả, palette cố định.
+
+---
+
+## Version 1.0.6
+*Account-GameID Architecture & WORKFLOW Module Integration*
+
+- **Account Architecture Overhaul (`backend/storage/database.py`)**
+  - **Game ID là Primary Identity:** Mỗi Account giờ dùng `game_id` (ID in-game duy nhất) làm khóa chính thay vì `emulator_id`. Cho phép **nhiều Account trên cùng một Emulator**.
+  - **Schema Migration:** Tự động migrate DB cũ — Account cũ không có Game ID sẽ nhận placeholder `LEGACY-{id}`. Migration chạy tự động khi khởi động, idempotent.
+  - **Bảng `pending_accounts` (Mới):** Account mới phát hiện qua Full Scan sẽ vào **hàng chờ** để User xác nhận thay vì tạo thẳng. Hỗ trợ trạng thái `pending` / `confirmed` / `dismissed`.
+  - **Auto-Link Logic (`auto_link_account`):** Sau mỗi lần Scan, hệ thống tự nhận diện — nếu `game_id` đã tồn tại thì cập nhật trạng thái Active, nếu chưa thì đưa vào Pending Queue.
+  - **`scan_snapshots`** giờ có cột `game_id` liên kết trực tiếp scan data với Account cụ thể.
+  - Viết lại toàn bộ CRUD: `upsert_account`, `get_all_accounts` (LEFT JOIN), `update_account`, `delete_account` — tất cả dùng `game_id`.
+
+- **WORKFLOW Module Integration (`backend/core/workflow/`)**
+  - **Di chuyển TEST/WORKFLOW vào App Core:** Toàn bộ module `adb_helper`, `clipper_helper`, `core_actions`, `state_detector` + templates được tích hợp thành package `backend.core.workflow`.
+  - **Logic giữ nguyên 100%:** Tất cả hàm (`extract_player_id`, `go_to_profile`, `wait_for_state`, `back_to_lobby`) hoạt động y hệt gốc — chỉ adapt import path cho app context.
+  - **State Detection:** Sử dụng OpenCV template matching để nhận diện trạng thái game (Loading, Lobby, Profile Menu...) trước khi thao tác.
+
+- **Full Scan — Game ID Capture (`backend/core/full_scan.py`)**
+  - **Step 0 (Mới):** Trước khi chụp screenshot, Full Scan sẽ chạy WORKFLOW module:
+    1. `wait_for_state()` — Chờ game vào Lobby
+    2. `go_to_profile()` — Navigate tới Profile Menu (có state detection)
+    3. `extract_player_id()` — Tap nút Copy ID + đọc clipboard qua ADB Clipper
+    4. `back_to_lobby()` — Quay về Lobby để tiếp tục scan
+  - Game ID được ghi vào `scan_snapshots` và gọi `auto_link_account()` sau khi save.
+
+- **API Endpoints Rework (`backend/api.py`)**
+  - `POST /api/accounts` giờ yêu cầu `game_id` (bắt buộc), `emu_index` là tùy chọn.
+  - `GET/PUT/DELETE /api/accounts/{game_id}` — dùng Game ID thay cho emu_index.
+  - **3 Endpoint mới:** `GET /api/pending-accounts`, `POST .../confirm`, `POST .../dismiss`.
+
+- **Account Page UI (`frontend/js/pages/accounts.js`)**
+  - **Cột Game ID:** Hiển thị ID in-game, Legacy account có icon ⚠️ cảnh báo.
+  - **Cột Status:** Badge trạng thái 🟢 Active / ⚪ Idle / 🔴 None thay cho cột Target cũ.
+  - **Form Add/Edit:** Game ID là trường bắt buộc (monospace font), Emulator Index chuyển thành tùy chọn.
+  - **Slide Panel:** Header hiển thị `ID: 12345678`, nút Delete dùng `game_id`.
+  - Cập nhật Grid View, `_saveNote()`, tất cả API call — đồng bộ hoàn toàn với backend mới.
+
+---
+
+## Version 1.0.4
 *Emulator Workspace Organization, Menus & UX Polish*
 
 - **Chrome-Style Tabs (`frontend/js/pages/emulators.js`)**

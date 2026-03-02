@@ -754,3 +754,54 @@ body {
         flex-direction: column;
     }
 }
+/* ── Install Apps Tab ── */
+.apk-library {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+}
+
+.apk-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    background: linear-gradient(160deg, hsla(222, 55%, 98%, 0.96) 0%, hsla(0, 0%, 100%, 1) 100%);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.apk-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.apk-card-name {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--foreground);
+}
+
+.apk-card-package {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin-top: 2px;
+}
+
+.apk-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+}
+
+.apk-card-note {
+    font-size: 12px;
+    color: var(--foreground);
+    margin: 0;
+    min-height: 32px;
+}

@@ -14,6 +14,7 @@ const TaskRunnerPage = {
 
     _macros: [],
     _currentTab: 'emulators',
+    _apkList: [],  // loaded from API
     // key=`${index}-${filename}`, value={startTime, timer, duration}
 
     render() {
@@ -43,6 +44,10 @@ const TaskRunnerPage = {
                     <button class="actions-tab" data-tab="scan" onclick="TaskRunnerPage.switchTab('scan')">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         <span>Scan Operations</span>
+                    </button>
+                    <button class="actions-tab" data-tab="install-apps" onclick="TaskRunnerPage.switchTab('install-apps')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span>Install Apps</span>
                     </button>
                 </div>
 
@@ -88,6 +93,7 @@ const TaskRunnerPage = {
             case 'emulators': el.innerHTML = this._renderEmuTab(); this._loadEmuList(); break;
             case 'recorder': el.innerHTML = this._renderRecorderTab(); this.loadMacros(); break;
             case 'scan': el.innerHTML = this._renderScanTab(); break;
+            case 'install-apps': el.innerHTML = this._renderInstallAppsTab(); this._loadApkList(); break;
         }
     },
 
@@ -430,11 +436,175 @@ const TaskRunnerPage = {
             return;
         }
         try {
-            const result = await API.runAllTasks(type);
+            const result = await API.runAllTasks(type, GlobalStore.state.selectedEmus);
             this.addFeed('active', `▶ Batch: ${result.count || 0} × ${type} queued`);
             Toast.success('Scan Started', `${type} scan on ${result.count || 0} devices`);
         } catch (e) {
             Toast.error('Error', 'Failed to run scan');
+        }
+    },
+
+    // ═══════════════════════════════════════════
+    // TAB 4: Install Apps
+    // ═══════════════════════════════════════════
+
+    _renderInstallAppsTab() {
+        const targetHtml = this._targetBadge();
+        return `
+            <div class="tab-panel">
+                <div class="tab-panel-header">
+                    <div>
+                        <h3 class="tab-panel-title">Install Apps</h3>
+                        <p class="text-sm text-muted">Download and install APKs on target emulators via ADB.</p>
+                    </div>
+                    <div class="tab-panel-actions">
+                        <button class="btn btn-outline btn-sm" onclick="TaskRunnerPage._loadApkList()">
+                            <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="tab-panel-body">
+                    ${targetHtml}
+                    <div class="apk-library" id="apk-library-grid">
+                        <div class="text-muted text-sm" style="padding:24px;text-align:center;grid-column:1/-1"><span class="spinner"></span></div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    async _loadApkList() {
+        const grid = document.getElementById('apk-library-grid');
+        if (!grid) return;
+        grid.innerHTML = '<div class="text-muted text-sm" style="padding:24px;text-align:center;grid-column:1/-1"><span class="spinner"></span></div>';
+
+        try {
+            this._apkList = await API.getApks();
+            grid.innerHTML = this._renderApkCards();
+        } catch (e) {
+            grid.innerHTML = '<div class="text-muted text-sm" style="padding:24px;text-align:center;grid-column:1/-1">Failed to load app list.</div>';
+        }
+    },
+
+    _renderApkCards() {
+        if (!this._apkList || this._apkList.length === 0) {
+            return '<div class="text-muted text-sm" style="padding:24px;text-align:center;grid-column:1/-1">No apps registered.</div>';
+        }
+        return this._apkList.map(app => {
+            const statusBadge = app.downloaded
+                ? '<span class="badge badge-online">DOWNLOADED</span>'
+                : app.has_url
+                    ? '<span class="badge badge-outline">NOT DOWNLOADED</span>'
+                    : '<span class="badge badge-busy">NO URL</span>';
+
+            const btnId = `apk-btn-${app.id}`;
+            const statusId = `apk-status-${app.id}`;
+
+            return `
+                <div class="apk-card">
+                    <div class="apk-card-header">
+                        <div>
+                            <div class="apk-card-name">${app.name}</div>
+                            <div class="apk-card-package">${app.package}</div>
+                        </div>
+                        ${statusBadge}
+                    </div>
+                    <div class="apk-card-meta">
+                        <span>Version ${app.version}</span>
+                        <span>•</span>
+                        <span>${app.size}</span>
+                    </div>
+                    <p class="apk-card-note">${app.note}</p>
+                    <div id="${statusId}" style="min-height:20px;margin-bottom:6px"></div>
+                    <button class="btn btn-default btn-sm" style="width:100%;gap:6px" id="${btnId}"
+                        onclick="TaskRunnerPage.installApp('${app.id}')">
+                        <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Install on selected emulators
+                    </button>
+                </div>
+            `;
+        }).join('');
+    },
+
+    async installApp(appId) {
+        if (GlobalStore.state.selectedEmus.length === 0) {
+            Toast.warning('No Target', 'Select emulators in the Target Emulators tab first.');
+            return;
+        }
+
+        const app = this._apkList.find(a => a.id === appId);
+        if (!app) return;
+
+        const btn = document.getElementById(`apk-btn-${appId}`);
+        const statusEl = document.getElementById(`apk-status-${appId}`);
+
+        // If not downloaded, ask to download first
+        if (!app.downloaded) {
+            if (!app.has_url) {
+                Toast.error('No URL', `No download URL for ${app.name}. Place the APK manually in data/apks/`);
+                return;
+            }
+
+            const ok = await ConfirmModal.show({
+                title: 'Download Required',
+                message: `"${app.name}" has not been downloaded yet. Download it now?\n\nSize: ${app.size}`,
+                confirmText: 'Download & Install',
+                cancelText: 'Cancel',
+                icon: 'info',
+                variant: 'default'
+            });
+            if (!ok) return;
+
+            // Download phase
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Downloading...'; }
+            if (statusEl) statusEl.innerHTML = '<div class="text-xs text-muted" style="display:flex;align-items:center;gap:6px"><span class="spinner" style="width:12px;height:12px"></span> Downloading APK...</div>';
+
+            try {
+                const dlResult = await API.downloadApk(appId);
+                if (!dlResult.success) {
+                    Toast.error('Download Failed', dlResult.error);
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Install on selected emulators'; }
+                    if (statusEl) statusEl.innerHTML = '';
+                    return;
+                }
+                app.downloaded = true;
+                this.addFeed('done', `📥 Downloaded "${app.name}" successfully`);
+                Toast.success('Downloaded', `${app.name} ready for install`);
+            } catch (e) {
+                Toast.error('Error', `Download failed: ${e.message}`);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Install on selected emulators'; }
+                if (statusEl) statusEl.innerHTML = '';
+                return;
+            }
+        }
+
+        // Install phase
+        const emuCount = GlobalStore.state.selectedEmus.length;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Installing...'; }
+        if (statusEl) statusEl.innerHTML = `<div class="text-xs text-muted" style="display:flex;align-items:center;gap:6px"><span class="spinner" style="width:12px;height:12px"></span> Installing on ${emuCount} emulator(s)...</div>`;
+        this.addFeed('active', `📦 Installing "${app.name}" on ${emuCount} emulator(s)...`);
+
+        try {
+            const result = await API.installApkAll(appId, GlobalStore.state.selectedEmus);
+            if (result.success) {
+                const msg = `${result.installed}/${result.total} installed`;
+                if (statusEl) statusEl.innerHTML = `<div class="text-xs" style="display:flex;align-items:center;gap:6px;color:var(--emerald-500)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="20 6 9 17 4 12"/></svg> ${msg}</div>`;
+                this.addFeed('done', `✓ "${app.name}" — ${msg}`);
+                Toast.success('Install Complete', `${app.name}: ${msg}`);
+            } else {
+                if (statusEl) statusEl.innerHTML = `<div class="text-xs" style="color:var(--red-500)">${result.error || 'Install failed'}</div>`;
+                this.addFeed('fail', `✗ "${app.name}" install failed: ${result.error}`);
+                Toast.error('Install Failed', result.error);
+            }
+        } catch (e) {
+            if (statusEl) statusEl.innerHTML = `<div class="text-xs" style="color:var(--red-500)">Error: ${e.message}</div>`;
+            Toast.error('Error', e.message);
+        }
+
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Install on selected emulators';
         }
     },
 

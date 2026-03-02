@@ -1,0 +1,273 @@
+"""
+Workflow Function Registry — Central catalog of all composable workflow functions.
+Serves the frontend Recipe Builder with available functions + metadata.
+"""
+
+FUNCTION_REGISTRY = [
+    # ── Core Actions ──
+    {
+        "id": "startup_to_lobby",
+        "label": "Boot to Lobby",
+        "category": "Core Actions",
+        "icon": "🚀",
+        "color": "#6366f1",
+        "description": "Boot game if not running, then navigate to lobby",
+        "params": [
+            {"key": "timeout", "label": "Load Timeout (sec)", "type": "number", "default": 120, "min": 30, "max": 300}
+        ]
+    },
+    {
+        "id": "go_to_profile",
+        "label": "Open Profile",
+        "category": "Core Actions",
+        "icon": "👤",
+        "color": "#6366f1",
+        "description": "Navigate to profile menu from lobby",
+        "params": []
+    },
+    {
+        "id": "go_to_profile_details",
+        "label": "Open Profile Details",
+        "category": "Core Actions",
+        "icon": "📋",
+        "color": "#6366f1",
+        "description": "Navigate to profile details from profile menu",
+        "params": []
+    },
+    {
+        "id": "extract_player_id",
+        "label": "Extract Player ID",
+        "category": "Core Actions",
+        "icon": "🆔",
+        "color": "#6366f1",
+        "description": "Copy player ID from profile via clipboard intercept",
+        "params": []
+    },
+    {
+        "id": "back_to_lobby",
+        "label": "Back to Lobby",
+        "category": "Core Actions",
+        "icon": "↩️",
+        "color": "#6366f1",
+        "description": "Navigate back to lobby from any state",
+        "params": [
+            {"key": "max_attempts", "label": "Max Attempts", "type": "number", "default": 15, "min": 5, "max": 30}
+        ]
+    },
+    {
+        "id": "wait_for_state",
+        "label": "Wait for State",
+        "category": "Core Actions",
+        "icon": "⏳",
+        "color": "#6366f1",
+        "description": "Block until emulator reaches a target game state",
+        "params": [
+            {"key": "target_state", "label": "Target State", "type": "select", "default": "IN-GAME LOBBY (IN_CITY)",
+             "options": [
+                 "IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)",
+                 "IN-GAME LOBBY (PROFILE MENU)", "IN-GAME LOBBY (PROFILE MENU DETAIL)",
+                 "LOADING SCREEN"
+             ]},
+            {"key": "timeout_sec", "label": "Timeout (sec)", "type": "number", "default": 60, "min": 10, "max": 300}
+        ]
+    },
+
+    # ── ADB Actions ──
+    {
+        "id": "adb_tap",
+        "label": "Tap Screen",
+        "category": "ADB Actions",
+        "icon": "👆",
+        "color": "#fb923c",
+        "description": "Tap a specific X,Y coordinate on device screen",
+        "params": [
+            {"key": "x", "label": "X", "type": "number", "default": 540, "min": 0, "max": 1920},
+            {"key": "y", "label": "Y", "type": "number", "default": 960, "min": 0, "max": 1080}
+        ]
+    },
+    {
+        "id": "adb_swipe",
+        "label": "Swipe Screen",
+        "category": "ADB Actions",
+        "icon": "👋",
+        "color": "#fb923c",
+        "description": "Swipe from (x1,y1) to (x2,y2) on device",
+        "params": [
+            {"key": "x1", "label": "From X", "type": "number", "default": 540},
+            {"key": "y1", "label": "From Y", "type": "number", "default": 800},
+            {"key": "x2", "label": "To X", "type": "number", "default": 540},
+            {"key": "y2", "label": "To Y", "type": "number", "default": 300},
+            {"key": "duration", "label": "Duration (ms)", "type": "number", "default": 300}
+        ]
+    },
+    {
+        "id": "adb_press_back",
+        "label": "Press Back",
+        "category": "ADB Actions",
+        "icon": "⬅️",
+        "color": "#fb923c",
+        "description": "Send BACK key event to device",
+        "params": [
+            {"key": "count", "label": "Times", "type": "number", "default": 1, "min": 1, "max": 10},
+            {"key": "delay", "label": "Delay Between (sec)", "type": "number", "default": 1.5}
+        ]
+    },
+    {
+        "id": "adb_screencap",
+        "label": "Screenshot",
+        "category": "ADB Actions",
+        "icon": "📸",
+        "color": "#fb923c",
+        "description": "Capture screenshot from device",
+        "params": []
+    },
+
+    # ── App Control ──
+    {
+        "id": "open_app",
+        "label": "Launch App",
+        "category": "App Control",
+        "icon": "📱",
+        "color": "#22c55e",
+        "description": "Launch the game application on device",
+        "params": []
+    },
+    {
+        "id": "check_app_foreground",
+        "label": "Check App Running",
+        "category": "App Control",
+        "icon": "🔍",
+        "color": "#22c55e",
+        "description": "Check if game app is in foreground",
+        "params": []
+    },
+
+    # ── Scan Operations ──
+    {
+        "id": "scan_full",
+        "label": "Full Scan",
+        "category": "Scan Operations",
+        "icon": "🔬",
+        "color": "#38bdf8",
+        "description": "Complete data scan (profile, resources, levels)",
+        "params": []
+    },
+    {
+        "id": "scan_profile",
+        "label": "Profile Scan",
+        "category": "Scan Operations",
+        "icon": "👤",
+        "color": "#38bdf8",
+        "description": "Scan player name and power level only",
+        "params": []
+    },
+
+    # ── Scripts ──
+    {
+        "id": "run_macro",
+        "label": "Run Macro",
+        "category": "Scripts",
+        "icon": "⚡",
+        "color": "#a855f7",
+        "description": "Execute a recorded .record macro file",
+        "params": [
+            {"key": "file", "label": "Macro File", "type": "text", "default": ""},
+            {"key": "loop", "label": "Loop Count", "type": "number", "default": 1, "min": 1, "max": 100}
+        ]
+    },
+
+    # ── Flow Control ──
+    {
+        "id": "flow_delay",
+        "label": "Delay",
+        "category": "Flow Control",
+        "icon": "⏱️",
+        "color": "#f59e0b",
+        "description": "Wait for a specified number of seconds",
+        "params": [
+            {"key": "seconds", "label": "Duration (sec)", "type": "number", "default": 10, "min": 1, "max": 3600}
+        ]
+    },
+    {
+        "id": "check_state",
+        "label": "Detect Game State",
+        "category": "Flow Control",
+        "icon": "🧠",
+        "color": "#f59e0b",
+        "description": "Use OpenCV to detect the current game state",
+        "params": [
+            {"key": "threshold", "label": "Match Threshold", "type": "number", "default": 0.8}
+        ]
+    },
+]
+
+
+# Pre-built recipe templates
+RECIPE_TEMPLATES = [
+    {
+        "id": "tpl_farm_loop",
+        "name": "Farm Loop",
+        "description": "Boot → Run farm macro → Scan → Back to lobby",
+        "icon": "🌾",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "run_macro", "config": {"file": "FARM +4", "loop": 1}},
+            {"function_id": "flow_delay", "config": {"seconds": 30}},
+            {"function_id": "scan_full", "config": {}},
+            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+        ]
+    },
+    {
+        "id": "tpl_id_extract",
+        "name": "ID Extraction",
+        "description": "Boot → Profile → Extract Player ID → Back",
+        "icon": "🆔",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "go_to_profile", "config": {}},
+            {"function_id": "extract_player_id", "config": {}},
+            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+        ]
+    },
+    {
+        "id": "tpl_full_scan",
+        "name": "Full Scan Cycle",
+        "description": "Boot → Full Scan → Save to DB",
+        "icon": "🔬",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "scan_full", "config": {}},
+            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+        ]
+    },
+    {
+        "id": "tpl_swap_macro",
+        "name": "Swap & Repeat",
+        "description": "Run character swap macro in a loop",
+        "icon": "🔁",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "run_macro", "config": {"file": "Swap_Charactor", "loop": 5}},
+            {"function_id": "flow_delay", "config": {"seconds": 10}},
+            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+        ]
+    },
+]
+
+
+def get_functions():
+    """Return the full function registry."""
+    return FUNCTION_REGISTRY
+
+
+def get_templates():
+    """Return all pre-built recipe templates."""
+    return RECIPE_TEMPLATES
+
+
+def get_function_by_id(func_id: str):
+    """Find a function definition by its ID."""
+    for fn in FUNCTION_REGISTRY:
+        if fn["id"] == func_id:
+            return fn
+    return None
