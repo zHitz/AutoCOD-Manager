@@ -154,6 +154,25 @@ function setupWSEvents() {
         NotificationManager.add('error', 'Scan Failed', `${data.serial}: ${data.error || 'Unknown'}`);
         Toast.error('Scan Failed', `${data.serial}: ${data.error || 'Unknown error'}`);
     });
+
+    // ──────────────────────────────────────────────
+    // Bot / Workflow Execution Events  (Activity Log)
+    // ──────────────────────────────────────────────
+    wsClient.on('workflow_log', (data) => {
+        if (router._currentPage === 'workflow' && typeof WF3 !== 'undefined' && WF3.addBotLog) {
+            const typeMap = { ok: 'ok', err: 'err', run: 'info', info: 'info' };
+            const t = typeMap[data.log_type] || 'muted';
+            WF3.addBotLog(t, `[EMU-${data.emulator_index}] ${data.message}`);
+        }
+    });
+
+    wsClient.on('workflow_status', (data) => {
+        if (router._currentPage === 'workflow' && typeof WF3 !== 'undefined' && WF3.addBotLog) {
+            const icon = data.status === 'SUCCESS' ? '✅' : data.status === 'ERROR' ? '❌' : '▶';
+            WF3.addBotLog(data.status === 'SUCCESS' ? 'ok' : data.status === 'ERROR' ? 'err' : 'info',
+                `${icon} EMU-${data.emulator_index}: ${data.status}`);
+        }
+    });
 }
 
 /**

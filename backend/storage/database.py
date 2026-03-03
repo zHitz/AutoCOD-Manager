@@ -145,6 +145,14 @@ CREATE TABLE IF NOT EXISTS schedules (
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Account Groups
+CREATE TABLE IF NOT EXISTS account_groups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    account_ids     TEXT DEFAULT '[]',
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_snap_emu_time ON scan_snapshots(emulator_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_res_snap ON scan_resources(snapshot_id);
@@ -962,6 +970,85 @@ class Database:
             )
             await db.commit()
 
+    async def get_task_history(self, limit: int = 200) -> list[dict]:
+        """Get unified task execution history from task_runs + scan_snapshots."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
+            # Query task_runs
+            cursor = await db.execute(
+                """SELECT t.id, t.task_type, t.status, t.error, t.duration_ms,
+                          t.result_json, t.started_at, t.finished_at,
+                          e.serial, e.name as emu_name, e.emu_index
+                   FROM task_runs t
+                   LEFT JOIN emulators e ON t.emulator_id = e.id
+                   ORDER BY t.started_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            task_rows = await cursor.fetchall()
+
+            # Query scan_snapshots (full scans not routed through task_queue)
+            cursor2 = await db.execute(
+                """SELECT s.id, 'full_scan' as task_type,
+                          CASE WHEN s.scan_status = 'completed' THEN 'success'
+                               WHEN s.scan_status = 'failed' THEN 'failed'
+                               ELSE s.scan_status END as status,
+                          '' as error, s.duration_ms,
+                          '' as result_json, s.created_at as started_at,
+                          s.created_at as finished_at,
+                          e.serial, e.name as emu_name, e.emu_index,
+                          s.lord_name, s.power, s.hall_level, s.market_level,
+                          s.game_id
+                   FROM scan_snapshots s
+                   LEFT JOIN emulators e ON s.emulator_id = e.id
+                   ORDER BY s.created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            )
+            scan_rows = await cursor2.fetchall()
+
+            results = []
+
+            # Process task_runs
+            for row in task_rows:
+                r = dict(row)
+                r["source"] = "task_queue"
+                results.append(r)
+
+            # Process scan_snapshots (avoid duplicates — skip if same timestamp+serial exists in tasks)
+            task_keys = set()
+            for r in results:
+                task_keys.add(f"{r.get('serial','')}-{r.get('started_at','')}")
+
+            for row in scan_rows:
+                r = dict(row)
+                key = f"{r.get('serial','')}-{r.get('started_at','')}"
+                if key in task_keys:
+                    continue
+                r["source"] = "full_scan"
+                # Build data summary for scan
+                r["result_json"] = ""
+                data = {}
+                if r.get("lord_name"):
+                    data["lord_name"] = r["lord_name"]
+                if r.get("power"):
+                    data["power"] = r["power"]
+                if r.get("hall_level"):
+                    data["hall_level"] = r["hall_level"]
+                if r.get("market_level"):
+                    data["market_level"] = r["market_level"]
+                if r.get("game_id"):
+                    data["game_id"] = r["game_id"]
+                if data:
+                    import json
+                    r["result_json"] = json.dumps(data)
+                results.append(r)
+
+            # Sort all by started_at descending
+            results.sort(key=lambda x: x.get("started_at", "") or "", reverse=True)
+            return results[:limit]
+
     async def get_task_runs(self, emulator_index: int = None,
                              limit: int = 50) -> list[dict]:
         """Get task execution history."""
@@ -1469,6 +1556,55 @@ class Database:
                    WHERE id = ?""",
                 (datetime.now().isoformat(), next_run_at, schedule_id),
             )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    # ──────────────────────────────────────────
+    # Account Groups
+    # ──────────────────────────────────────────
+
+    async def get_all_groups(self) -> list[dict]:
+        """Get all account groups."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM account_groups ORDER BY created_at DESC")
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def create_group(self, name: str, account_ids: str = '[]') -> int:
+        """Create a new account group."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                "INSERT INTO account_groups (name, account_ids) VALUES (?, ?)",
+                (name, account_ids),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def update_group(self, group_id: int, name: str = None, account_ids: str = None) -> bool:
+        """Update an account group."""
+        fields = {}
+        if name is not None:
+            fields["name"] = name
+        if account_ids is not None:
+            fields["account_ids"] = account_ids
+
+        if not fields:
+            return False
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [group_id]
+
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                f"UPDATE account_groups SET {set_clause} WHERE id = ?", values
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def delete_group(self, group_id: int) -> bool:
+        """Delete an account group."""
+        async with self._get_conn() as db:
+            cursor = await db.execute("DELETE FROM account_groups WHERE id = ?", (group_id,))
             await db.commit()
             return cursor.rowcount > 0
 

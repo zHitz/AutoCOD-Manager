@@ -365,3 +365,20 @@ def go_to_pet_token(serial: str, detector: GameStateDetector) -> bool:
     adb_helper.tap(serial, 100, 375)
     time.sleep(3)
     return True
+
+def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Navigates to the Capture Pet screen.
+    From lobby: taps the pet/bestiary icon, then enters the capture flow.
+    Returns True on success.
+    """
+    print(f"[{serial}] Navigating to Capture Pet...")
+    back_to_lobby(serial, detector)
+    # Tap the beast/pet icon in the lobby (bottom-right area)
+    adb_helper.tap(serial, 50, 680)
+    time.sleep(2)
+    adb_helper.tap(serial, 50, 680)
+    time.sleep(2)
+    print(f"[{serial}] -> Pet capture screen initiated.")
+    return True
+

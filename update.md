@@ -1,7 +1,33 @@
 # COD Game Automation Manager - Update Log
 
-## Version 1.0.9 (Current)
-*Install Apps System, Full Scan Fix, Settings Hotfix & Workflow V3 Theme Sync*
+## Version 1.1.0 (Current)
+*Workflow Bot Run Execution, Emulator Index Architecture Fix & UI/UX Real-time Logging*
+
+- **Workflow Bot Run Engine (`backend/api.py`, `backend/core/workflow/executor.py`)**
+  - **Live Execution Endpoint:** Thêm `POST /api/bot/run` để nhận danh sách hoạt động (activities) và group_id. Tự động parse danh sách action thành chuỗi `steps` cho Executor chạy thực tế thay vì mock data.
+  - **Activity-to-Step Mapping:** Xây dựng dictionary `_ACTIVITY_TO_STEPS` để map tên hoạt động trên UI (Capture Pet, Market, Resources...) thành dãy lệnh function_id tương ứng (`nav_to_capture_pet`, `nav_to_market`...).
+  - **Streaming Logs (`ws_client`):** Tích hợp WebSocket trực tiếp vào process `execute_recipe()`. Toàn bộ log console in ra từ giả lập giờ sẽ được stream ngược thẳng về trình duyệt.
+
+- **Frontend Bot Run & Real-time Console (`frontend/js/pages/workflow.js`)**
+  - **Start Bot Action:** Bổ sung nút "▶ Start Bot" góc phải Tab Activity Log. Khi nhấn, tự động trích xuất các hoạt động đang Enable của Group, gửi request REST API và tự động chuyển view sang tab Log.
+  - **Activity Console System:** Triển khai khung Terminal dạng `div` với hiệu ứng màu chữ log (Info=White, Success=Green, Warning=Yellow, Error=Red), hỗ trợ tự động cuộn (auto-scroll) xuống cuối khi có dòng mới.
+  - **Global WebSocket Routing (`app.js`):** Bổ sung event listener cho `workflow_log` và `workflow_status` tại `setupWSEvents()`. Dữ liệu realtime từ WebSocket được chặn và truyền thẳng vào `WF3.addBotLog()` khi user đang dừng ở trang Workflow.
+
+- **Emulator Resolution Architecture Fix (Critical)**
+  - **The Bug ("No emulators found for this group"):** Quá trình Start Bot liên tục bị từ chối do Backend không thể tra cứu được ID giả lập dựa vào danh sách `account_ids`, nguyên nhân bảng `accounts` lưu FK (`emulator_id`) nhưng API lại cần `emu_index`.
+  - **JS Object Key Mismatch:** Trên giao diện, API trả về danh sách có khóa `account_id` nhưng code JS bộ lọc Group Account lại so sánh nhầm qua khóa `id` (undefined), dẫn đến việc lấy danh sách ID rỗng gửi cho Backend.
+  - **The Fix:**
+    1. Viết lại hàm `runBotActivities()` đẩy việc tính toán `emulator_indices` lên Frontend. Frontend sẽ lặp qua danh sách `accountsData`, lọc ra `account_id` và trích xuất `emu_index` chính xác, nhét trực tiếp vào mảng payload.
+    2. Sửa lỗi syntax `acc.id` thành `acc.account_id` ở logic render Checkbox của bảng Edit Group.
+    3. Cập nhật giao diện cột Emulator fix lỗi hiển thị cọc cạch `?`: Chuyển cách đọc từ `emulator_name`/`emulator_id` sang đúng cấu trúc API mới nhất: `${acc.emu_name || (acc.emu_index != null ? 'Emulator ' + acc.emu_index : '?')}`.
+
+- **Core Actions Expansions (`backend/core/workflow/core_actions.py`)**
+  - **Capture Pet Flow:** Implement mới logic `go_to_capture_pet()` bằng cách tận dụng hàm `back_to_lobby(target_lobby="OUT_CITY")` để game thoát ra world map, sau đó nhấn mục Pet để mở tính năng bắt thú.
+  - Cập nhật Executor để ghi nhận và thông dịch được các ID action mới: `nav_to_capture_pet`, `nav_to_pet_token`, `nav_to_market`...
+
+---
+
+## Version 1.0.9
 
 - **Critical Bug Fix — App UI Freeze (`frontend/js/pages/settings.js`)**
   - **Root Cause:** `const ocrKeys` bị khai báo **2 lần** trong cùng scope tại `loadOcrKeys()` → `SyntaxError` → `SettingsPage` không tồn tại → `app.js` crash khi build `router._pages` → `ReferenceError: SettingsPage is not defined`.
@@ -45,6 +71,15 @@
   - **Full CSS Rewrite:** Thay thế toàn bộ **20+ hardcoded dark colors** (`#0c0e14`, `#252a3a`, `#64748b`…) bằng design-system variables (`var(--card)`, `var(--border)`, `var(--muted-foreground)`, `var(--accent)`…). Workflow giờ dùng chung Light Theme với toàn bộ app — không còn hiệu ứng "split-screen" dark/light.
   - **Button Standardization:** Chuyển từ custom `wf-tb-btn` sang app classes: `btn btn-primary btn-sm` (Create New, Run), `btn btn-outline btn-sm` (Save, Refresh), `btn btn-ghost btn-sm` (Back) — giống pattern `scheduled.js`.
   - **Thêm nút Refresh** trên List View + method `refreshList()`.
+
+- **History Page Fixes (`backend/storage/database.py`, `backend/api.py`, `frontend/js/pages/history.js`)**
+  - **Bug:** Trang History luôn báo lỗi hoặc hiện empty mock data. Nguyên nhân là frontend gọi endpoint `/api/tasks/history` không tồn tại, và Full Scan module không ghi data vào bảng `task_runs`.
+  - **Fix Database:** Thêm DB method `get_task_history()` query gộp 2 bảng: `task_runs` cho các task xếp hàng, và `scan_snapshots` cho các Full Scan chạy direct. Lọc trùng data dựa vào serial+timestamp và sort theo thời gian mới nhất.
+  - **Fix API:** Thêm endpoint `GET /api/tasks/history` public method cho frontend.
+  - **Fix UI Detail Panel:**
+    - Cập nhật mapping `history.js` để parse cấu trúc trả về mới.
+    - Thêm object details: hiển thị Output JSON, Runtime Logs, Status Info và lỗi.
+    - Thêm CSS classes (`.history-expand-row`, `.expand-panel`, `.expand-grid`) cho Grid layout 4 columns render thông tin expand.
 
 ---
 

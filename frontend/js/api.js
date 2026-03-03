@@ -91,6 +91,22 @@ const API = {
     downloadApk(appId) { return this.post(`/api/apks/${appId}/download`); },
     installApk(appId, serial) { return this.post(`/api/apks/${appId}/install?serial=${serial}`); },
     installApkAll(appId, indices) { return this.post(`/api/apks/${appId}/install-all`, { indices }); },
+
+    // ── Account Groups ──
+    getGroups() { return this.get('/api/groups'); },
+    createGroup(data) { return this.post('/api/groups', data); },
+    updateGroup(id, data) {
+        return fetch(`${this.BASE}/api/groups/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        }).then(res => res.json());
+    },
+    deleteGroup(id) {
+        return fetch(`${this.BASE}/api/groups/${id}`, {
+            method: 'DELETE',
+        }).then(res => res.json());
+    },
 };
 
 

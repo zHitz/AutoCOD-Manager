@@ -544,6 +544,16 @@ async def get_scan_comparison(game_id: str):
 
 
 # ──────────────────────────────────────────────
+# Task History Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/tasks/history")
+async def get_task_history(limit: int = 200):
+    """Get unified task execution history."""
+    return await database.get_task_history(limit)
+
+
+# ──────────────────────────────────────────────
 # Pending Account Endpoints
 # ──────────────────────────────────────────────
 
@@ -783,6 +793,142 @@ async def save_workflow_recipe(body: dict):
     return {"status": "ok", "id": recipe_id, "action": "created"}
 
 
+@app.post("/api/workflow/run")
+async def run_workflow_recipe(body: dict):
+    """Run a recipe on a specific emulator."""
+    from backend.core.workflow.executor import execute_recipe
+    from backend.core.ldplayer_manager import list_all_instances
+    import asyncio
+
+    emulator_index = body.get("emulator_index")
+    steps = body.get("steps", [])
+    
+    if emulator_index is None:
+        return {"status": "error", "error": "target emulator index is required"}
+    if not steps:
+        return {"status": "error", "error": "recipe steps are required"}
+        
+    try:
+        emulator_index = int(emulator_index)
+    except ValueError:
+        return {"status": "error", "error": "invalid emulator index"}
+
+    # Find name
+    name = f"Emulator-{emulator_index}"
+    for e in list_all_instances():
+        if e["index"] == emulator_index:
+            name = e["name"]
+            break
+
+    # Spawn execution in background
+    asyncio.create_task(execute_recipe(
+        emulator_index=emulator_index,
+        emulator_name=name,
+        steps=steps,
+        ws_callback=ws_manager.broadcast_sync
+    ))
+    
+    return {"status": "accepted", "msg": f"Workflow started on {name}"}
+
+
+# Activity<->executor step mapping
+_ACTIVITY_TO_STEPS = {
+    "Capture Pet":              [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_capture_pet", "config": {}}],
+    "Pet Token":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_pet_token", "config": {}}],
+    "Market":                   [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_market", "config": {}}],
+    "Resources":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_resources", "config": {}}],
+    "City Hall":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_hall", "config": {}}],
+    "Boot to Lobby":            [{"function_id": "startup_to_lobby", "config": {"timeout": 120}}],
+    "Back to Lobby":            [{"function_id": "nav_to_lobby", "config": {}}],
+    "Detect State":             [{"function_id": "adv_detect_state", "config": {}}],
+    "Full Scan":                [{"function_id": "startup_to_lobby", "config": {}}, {"function_id": "scan_full", "config": {}}],
+    "Extract Player ID":        [{"function_id": "startup_to_lobby", "config": {}}, {"function_id": "nav_to_profile"}, {"function_id": "adv_copy_id", "config": {}}],
+}
+
+
+@app.post("/api/bot/run")
+async def run_bot_activities(body: dict):
+    """
+    Run bot activities for a group.
+    Body: { group_id: int, activities: [str], emulator_indices: [int] }
+    Streams logs to WS as workflow_log events → Activity Log in frontend.
+    """
+    from backend.core.workflow.executor import execute_recipe
+    from backend.core.ldplayer_manager import list_all_instances
+    import asyncio
+    import json as json_mod
+    import aiosqlite
+
+    group_id = body.get("group_id")
+    activities = body.get("activities", [])
+    emulator_indices = body.get("emulator_indices")  # optional override
+
+    if not activities:
+        return {"status": "error", "error": "No activities provided"}
+
+    # Build step list
+    steps = []
+    for act in activities:
+        act_steps = _ACTIVITY_TO_STEPS.get(act)
+        if act_steps:
+            steps.extend(act_steps)
+        else:
+            steps.append({"function_id": "flow_delay", "config": {"seconds": 1}})
+
+    if not steps:
+        return {"status": "error", "error": "No valid activities mapped to steps"}
+
+    # Resolve emulator indices from group's account_ids
+    if not emulator_indices and group_id:
+        try:
+            async with aiosqlite.connect(config.db_path) as db:
+                db.row_factory = aiosqlite.Row
+
+                # Get group's account_ids JSON array
+                cursor = await db.execute(
+                    "SELECT account_ids FROM account_groups WHERE id = ?",
+                    (int(group_id),)
+                )
+                row = await cursor.fetchone()
+                if row:
+                    account_ids = json_mod.loads(row["account_ids"] or "[]")
+
+                    if account_ids:
+                        placeholders = ",".join("?" for _ in account_ids)
+                        # Join accounts → emulators to get emu_index
+                        cursor2 = await db.execute(
+                            f"""SELECT e.emu_index
+                                FROM accounts a
+                                LEFT JOIN emulators e ON a.emulator_id = e.id
+                                WHERE a.id IN ({placeholders})
+                                  AND e.emu_index IS NOT NULL""",
+                            account_ids
+                        )
+                        rows = await cursor2.fetchall()
+                        emulator_indices = [r["emu_index"] for r in rows]
+        except Exception as exc:
+            print(f"[bot/run] Error resolving emulators: {exc}")
+
+    if not emulator_indices:
+        return {"status": "error", "error": "No emulators found for this group. Make sure the group's accounts have emulators assigned."}
+
+    name_map = {e["index"]: e["name"] for e in list_all_instances()}
+
+    launched = []
+    for idx in emulator_indices:
+        name = name_map.get(idx, f"Emulator-{idx}")
+        asyncio.create_task(execute_recipe(
+            emulator_index=idx,
+            emulator_name=name,
+            steps=steps,
+            ws_callback=ws_manager.broadcast_sync
+        ))
+        launched.append({"index": idx, "name": name})
+
+    return {"status": "accepted", "emulators": launched, "steps": len(steps)}
+
+
+
 @app.delete("/api/workflow/recipes/{recipe_id}")
 async def delete_workflow_recipe(recipe_id: str):
     """Delete a saved recipe."""
@@ -836,6 +982,70 @@ async def shutdown_server():
 
     threading.Thread(target=_do_shutdown, daemon=True).start()
     return {"status": "shutting_down"}
+
+
+
+# ──────────────────────────────────────────────
+# Account Group Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/groups")
+async def get_groups():
+    """Get all account groups."""
+    return await database.get_all_groups()
+
+
+@app.post("/api/groups")
+async def create_group(body: dict):
+    """Create a new account group."""
+    import json
+    name = body.get("name", "").strip()
+    if not name:
+        return {"error": "Name is required"}
+    
+    account_ids = body.get("account_ids", [])
+    account_ids_json = json.dumps(account_ids)
+
+    try:
+        group_id = await database.create_group(name=name, account_ids=account_ids_json)
+        return {"status": "created", "id": group_id}
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            return {"error": f"Group name '{name}' already exists"}
+        return {"error": str(e)}
+
+
+@app.put("/api/groups/{group_id}")
+async def update_group(group_id: int, body: dict):
+    """Update an account group."""
+    import json
+    name = body.get("name")
+    if name is not None:
+        name = name.strip()
+        if not name:
+            return {"error": "Name cannot be empty"}
+
+    account_ids = body.get("account_ids")
+    account_ids_json = json.dumps(account_ids) if account_ids is not None else None
+
+    try:
+        ok = await database.update_group(group_id, name=name, account_ids=account_ids_json)
+        if ok:
+            return {"status": "ok", "id": group_id}
+        return {"error": "Group not found"}
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            return {"error": f"Group name '{name}' already exists"}
+        return {"error": str(e)}
+
+
+@app.delete("/api/groups/{group_id}")
+async def delete_group(group_id: int):
+    """Delete an account group."""
+    ok = await database.delete_group(group_id)
+    if ok:
+        return {"status": "deleted"}
+    return {"error": "Group not found"}
 
 
 # ──────────────────────────────────────────────

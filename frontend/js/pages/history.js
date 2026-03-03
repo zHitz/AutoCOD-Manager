@@ -66,15 +66,15 @@ const HistoryPage = {
     render() {
         return `
             <div class="page-enter history-page" id="history-page-root">
-                <div class="page-header history-header-row">
+                <div class="page-header">
                     <div class="page-header-info">
                         <h2>History & Logs</h2>
                         <p>Track task execution, reliability, and scan output over time.</p>
                     </div>
-                    <div class="history-header-actions">
-                        <div class="search-input-wrap">
+                    <div class="page-actions">
+                        <div class="search-wrapper">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                            <input id="history-search" type="text" placeholder="Search task, device..." value="${this.state.filters.search}">
+                            <input id="history-search" class="search-input" type="text" placeholder="Search task, device..." value="${this.state.filters.search}">
                         </div>
                         <button id="history-refresh-btn" class="btn btn-outline btn-sm" onclick="HistoryPage.load()">
                             <svg class="refresh-icon" style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
@@ -88,7 +88,7 @@ const HistoryPage = {
 
                 <div class="card history-table-card" id="history-state-area"></div>
 
-                <div class="history-footer" id="history-footer">Showing 0 results</div>
+                <div class="history-footer" id="history-footer" style="padding: 16px 0; text-align: center; color: var(--muted-foreground); font-size: 13px;">Showing 0 results</div>
             </div>
         `;
     },
@@ -120,9 +120,42 @@ const HistoryPage = {
 
         try {
             const history = await API.getHistory(200);
-            this.state.items = Array.isArray(history) ? history : [];
+            // Normalize API response to match expected format
+            const items = Array.isArray(history) ? history : [];
+            this.state.items = items.map(item => {
+                let parsedData = {};
+                if (item.result_json) {
+                    try {
+                        parsedData = typeof item.result_json === 'string' ? JSON.parse(item.result_json) : item.result_json;
+                        if (typeof parsedData === 'string') parsedData = JSON.parse(parsedData); // Double stringify fix
+                        if (parsedData && parsedData.data) parsedData = parsedData.data; // Unwrap .data wrapper
+                    } catch (e) { parsedData = { raw: item.result_json }; }
+                }
+
+                // If no real data, don't show an empty object
+                const hasData = parsedData && Object.keys(parsedData).length > 0;
+
+                return {
+                    id: String(item.id || `${item.serial}-${item.started_at}`),
+                    task_id: String(item.id || '').slice(-8).toUpperCase(),
+                    task_type: item.task_type || 'unknown',
+                    serial: item.serial || item.emu_name || '--',
+                    status: (item.status || 'UNKNOWN').toUpperCase(),
+                    data: hasData ? parsedData : null,
+                    error: item.error || null,
+                    is_reliable: !item.error,
+                    reliability: item.error ? 40 : 95,
+                    started_at: item.started_at || item.created_at || null,
+                    finished_at: item.finished_at || null,
+                    duration_ms: item.duration_ms || 0,
+                    source: item.source || 'system',
+                    logs: item.logs || [],
+                    emu_name: item.emu_name || '',
+                };
+            });
             this.state.useMockData = false;
         } catch (e) {
+            console.warn('[History] API failed, using mock:', e);
             this.state.error = null;
             this.state.items = [...this.mockItems];
             this.state.useMockData = true;
@@ -190,14 +223,15 @@ const HistoryPage = {
         const filtered = this.getFilteredItems();
         footer.textContent = `Showing ${filtered.length} result${filtered.length === 1 ? '' : 's'}${this.state.useMockData ? ' • mock data' : ''}`;
 
+        // Always render quick filters so user can reset them if they lead to 0 results
+        quickFilters.innerHTML = this.renderQuickFilters();
+
         if (!filtered.length) {
-            quickFilters.innerHTML = '';
             stateArea.innerHTML = this.renderEmptyState();
             this.bindInlineEvents();
             return;
         }
 
-        quickFilters.innerHTML = this.renderQuickFilters();
         stateArea.innerHTML = this.renderDataTable(filtered);
         this.bindInlineEvents();
     },
@@ -206,19 +240,25 @@ const HistoryPage = {
         const devices = ['all', ...new Set(this.state.items.map((item) => item.serial).filter(Boolean))];
         const tasks = ['all', ...new Set(this.state.items.map((item) => item.task_type).filter(Boolean))];
 
+        container.style.padding = '16px';
+        container.style.marginBottom = '16px';
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.gap = '12px';
+
         container.innerHTML = `
-            <div class="history-filter-grid">
+            <div class="grid-4" style="margin-bottom: 0;">
                 ${this.renderSelect('Date Range', 'history-filter-date', this.state.filters.date, [
-                    { value: 'all', label: 'All time' },
-                    { value: 'today', label: 'Today' },
-                ])}
+            { value: 'all', label: 'All time' },
+            { value: 'today', label: 'Today' },
+        ])}
                 ${this.renderSelect('Device', 'history-filter-device', this.state.filters.device, devices.map((value) => ({ value, label: value === 'all' ? 'All devices' : value })))}
                 ${this.renderSelect('Status', 'history-filter-status', this.state.filters.status, [
-                    { value: 'all', label: 'All status' },
-                    { value: 'SUCCESS', label: 'Success' },
-                    { value: 'FAILED', label: 'Failed' },
-                    { value: 'RUNNING', label: 'Running' },
-                ])}
+            { value: 'all', label: 'All status' },
+            { value: 'SUCCESS', label: 'Success' },
+            { value: 'FAILED', label: 'Failed' },
+            { value: 'RUNNING', label: 'Running' },
+        ])}
                 ${this.renderSelect('Task Type', 'history-filter-task', this.state.filters.task, tasks.map((value) => ({ value, label: value === 'all' ? 'All tasks' : value })))}
             </div>
         `;
@@ -226,9 +266,9 @@ const HistoryPage = {
 
     renderSelect(label, id, selected, options) {
         return `
-            <label class="history-filter-item">
-                <span>${label}</span>
-                <select id="${id}">
+            <label class="form-group" style="margin: 0; display: flex; flex-direction: column; gap: 6px;">
+                <span class="text-sm font-medium text-muted">${label}</span>
+                <select id="${id}" class="form-select">
                     ${options.map((opt) => `<option value="${opt.value}" ${opt.value === selected ? 'selected' : ''}>${opt.label}</option>`).join('')}
                 </select>
             </label>
@@ -244,11 +284,11 @@ const HistoryPage = {
         ];
 
         return `
-            <div class="quick-chip-row">
+            <div style="display: flex; gap: 8px; margin-bottom: 24px;">
                 ${quicks.map((chip) => `
-                    <button class="quick-chip ${this.state.filters.quick === chip.value ? 'active' : ''}" data-quick="${chip.value}">${chip.label}</button>
+                    <button class="badge badge-outline ${this.state.filters.quick === chip.value ? 'active bg-primary text-white' : ''}" data-quick="${chip.value}" style="cursor: pointer;">${chip.label}</button>
                 `).join('')}
-                <button class="quick-chip ${this.state.filters.quick === 'all' ? 'active' : ''}" data-quick="all">Reset</button>
+                <button class="badge badge-outline ${this.state.filters.quick === 'all' ? 'active bg-primary text-white' : ''}" data-quick="all" style="cursor: pointer;">Reset</button>
             </div>
         `;
     },
@@ -274,15 +314,21 @@ const HistoryPage = {
 
     renderEmptyState() {
         return `
-            <div class="state-wrap">
-                <div class="history-state-card empty-state-card">
-                    <div class="state-icon">🔍</div>
-                    <h3>No history yet</h3>
-                    <p>Run your first scan to see execution logs here.</p>
-                    <div class="state-actions">
-                        <button class="btn btn-primary btn-sm" data-action="run-scan">Run Scan</button>
-                        <button class="btn btn-outline btn-sm" data-action="learn-more">Learn More</button>
-                    </div>
+            <div class="empty-state card" style="margin: 24px 0;">
+                <div class="empty-state-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 600; color: var(--foreground); margin-top: 8px;">No history yet</h3>
+                <p style="font-size: 14px; margin-top: 4px; max-width: 320px;">Run your first scan to see execution logs and details here.</p>
+                <div style="display: flex; gap: 12px; margin-top: 24px;">
+                    <button class="btn btn-primary btn-sm" onclick="App.router.navigate('scan-operations')">Run Scan</button>
+                    <button class="btn btn-outline btn-sm" onclick="window.open('https://github.com/mlem16/COD_CHECK', '_blank')">Learn More</button>
                 </div>
             </div>
         `;
@@ -290,14 +336,18 @@ const HistoryPage = {
 
     renderErrorState() {
         return `
-            <div class="state-wrap">
-                <div class="history-state-card error-state-card">
-                    <div class="state-icon">⚠</div>
-                    <h3>Failed to load history</h3>
-                    <p>Something went wrong while fetching logs.</p>
-                    <div class="state-actions">
-                        <button class="btn btn-primary btn-sm" data-action="retry-load">Retry</button>
-                    </div>
+            <div class="empty-state card" style="margin: 24px 0; border-color: var(--red-200); background: var(--red-50);">
+                <div class="empty-state-icon" style="background: var(--red-100); color: var(--red-500);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                </div>
+                <h3 style="font-size: 16px; font-weight: 600; color: var(--red-600); margin-top: 8px;">Failed to load history</h3>
+                <p style="font-size: 14px; color: var(--red-500); margin-top: 4px;">Something went wrong while fetching logs from the database.</p>
+                <div style="margin-top: 24px;">
+                    <button class="btn btn-primary btn-sm" onclick="HistoryPage.load()" style="background: var(--red-600); border-color: var(--red-600);">Retry Loading</button>
                 </div>
             </div>
         `;
@@ -327,20 +377,24 @@ const HistoryPage = {
     },
 
     renderDataRow(item, index) {
-        const rowId = item.id || `${item.serial || 'device'}-${item.started_at || item.created_at || index}`;
+        const rowId = String(item.id || `${item.serial || 'device'}-${item.started_at || item.created_at || index}`);
         const status = this.normalizeStatus(item.status);
         const statusClass = status === 'SUCCESS' ? 'success' : status === 'FAILED' ? 'failed' : status === 'RUNNING' ? 'running' : 'neutral';
         const time = item.started_at ? new Date(item.started_at).toLocaleString() : (item.created_at || '--');
         const duration = item.duration_ms ? `${(item.duration_ms / 1000).toFixed(2)}s` : '--';
         const reliability = this.getReliabilityInfo(item);
         const isExpanded = this.state.expandedRowId === rowId;
+        const deviceLabel = item.emu_name ? `${item.emu_name} (${item.serial})` : (item.serial || '--');
+        const sourceBadge = item.source === 'full_scan'
+            ? '<span class="badge badge-outline" style="font-size:10px;margin-left:4px;">scan</span>'
+            : '';
 
         return `
             <tr class="history-data-row ${isExpanded ? 'expanded' : ''}" data-row-id="${rowId}">
                 <td class="text-sm text-mono">${time}</td>
-                <td><span class="badge badge-outline" style="text-transform:capitalize">${item.task_type || 'unknown'}</span></td>
+                <td><span class="badge badge-outline" style="text-transform:capitalize">${item.task_type || 'unknown'}</span>${sourceBadge}</td>
                 <td><span class="status-badge ${statusClass}">${status}</span></td>
-                <td class="text-mono">${item.serial || '--'}</td>
+                <td class="text-mono">${deviceLabel}</td>
                 <td class="text-mono">${duration}</td>
                 <td><span class="reliability ${reliability.className}">${reliability.icon} ${reliability.value}</span></td>
                 <td><button class="btn btn-ghost btn-sm" data-toggle-row="${rowId}">${isExpanded ? 'Hide' : 'View'} details</button></td>
@@ -348,12 +402,31 @@ const HistoryPage = {
             <tr class="history-expand-row ${isExpanded ? 'open' : ''}">
                 <td colspan="7">
                     <div class="expand-panel">
-                        <div class="expand-title">Task execution details</div>
+                        <div class="expand-title">Script Output & Execution Details</div>
                         <div class="expand-grid">
-                            <div><strong>Logs</strong><pre>${this.safeJson(item.logs || item.log || { message: 'No logs' })}</pre></div>
-                            <div><strong>JSON payload</strong><pre>${this.safeJson(item.data || {})}</pre></div>
-                            <div><strong>Errors</strong><pre>${this.safeJson(item.error || 'None')}</pre></div>
-                            <div><strong>Metadata</strong><pre>${this.safeJson({ id: item.id, retries: item.retries, source: item.source || 'system' })}</pre></div>
+                            <div>
+                                <strong>📋 Output Data</strong>
+                                <pre>${item.data ? this.safeJson(item.data) : 'No data output'}</pre>
+                            </div>
+                            <div>
+                                <strong>📊 Status Info</strong>
+                                <pre>${this.safeJson({
+            task_type: item.task_type,
+            status: status,
+            source: item.source || 'system',
+            duration: duration,
+            started: item.started_at,
+            finished: item.finished_at || '--',
+        })}</pre>
+                            </div>
+                            <div>
+                                <strong>❌ Errors</strong>
+                                <pre>${item.error ? item.error : 'None'}</pre>
+                            </div>
+                            <div>
+                                <strong>📝 Logs</strong>
+                                <pre>${item.logs && item.logs.length ? item.logs.join('\n') : 'No detailed logs'}</pre>
+                            </div>
                         </div>
                     </div>
                 </td>
@@ -368,6 +441,11 @@ const HistoryPage = {
         } catch (e) {
             return '--';
         }
+    },
+
+    toggleRow(rowId) {
+        this.state.expandedRowId = this.state.expandedRowId === rowId ? null : rowId;
+        this.renderContent();
     },
 
     normalizeStatus(status) {
@@ -389,6 +467,7 @@ const HistoryPage = {
     },
 
     bindInlineEvents() {
+        // ... (existing filter bindings)
         const filterDate = document.getElementById('history-filter-date');
         const filterDevice = document.getElementById('history-filter-device');
         const filterStatus = document.getElementById('history-filter-status');
@@ -414,21 +493,31 @@ const HistoryPage = {
             };
         });
 
-        document.querySelectorAll('[data-toggle-row]').forEach((btn) => {
-            btn.onclick = () => {
-                const rowId = btn.dataset.toggleRow;
-                this.state.expandedRowId = this.state.expandedRowId === rowId ? null : rowId;
-                this.renderContent();
-            };
-        });
+        const stateArea = document.getElementById('history-state-area');
+        if (stateArea) {
+            stateArea.onclick = (e) => {
+                const btn = e.target.closest('[data-toggle-row]');
+                if (btn) {
+                    const rowId = btn.dataset.toggleRow;
+                    this.toggleRow(rowId);
 
-        document.querySelectorAll('[data-action]').forEach((actionBtn) => {
-            actionBtn.onclick = () => {
-                const action = actionBtn.dataset.action;
-                if (action === 'retry-load') return this.load();
-                if (action === 'run-scan') return router.navigate('runner');
-                if (action === 'learn-more') return router.navigate('task');
+                    const actionBtn = e.target.closest('[data-action]');
+                    if (actionBtn) {
+                        const action = actionBtn.dataset.action;
+                        if (action === 'retry-load') return this.load();
+                        if (action === 'run-scan') return App.router.navigate('scan-operations');
+                        if (action === 'learn-more') return window.open('https://github.com/mlem16/COD_CHECK', '_blank');
+                    }
+                } else {
+                    const actionBtn = e.target.closest('[data-action]');
+                    if (actionBtn) {
+                        const action = actionBtn.dataset.action;
+                        if (action === 'retry-load') return this.load();
+                        if (action === 'run-scan') return App.router.navigate('scan-operations');
+                        if (action === 'learn-more') return window.open('https://github.com/mlem16/COD_CHECK', '_blank');
+                    }
+                }
             };
-        });
-    },
+        }
+    }
 };

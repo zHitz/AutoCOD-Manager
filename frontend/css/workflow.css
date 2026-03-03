@@ -12,6 +12,60 @@
     overflow: hidden;
 }
 
+/* ── MAIN TABS ── */
+.wf-main-tabs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.wf-main-tab {
+    background: transparent;
+    border: none;
+    color: var(--muted-foreground);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    position: relative;
+    transition: color var(--duration-fast);
+}
+
+.wf-main-tab:hover {
+    color: var(--foreground);
+}
+
+.wf-main-tab.active {
+    color: var(--indigo-500);
+}
+
+.wf-main-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -9px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--indigo-500);
+    border-radius: 2px 2px 0 0;
+}
+
+.wf-section-container {
+    display: none;
+    flex: 1;
+    overflow: hidden;
+}
+
+.wf-section-container.active {
+    display: flex;
+    flex-direction: column;
+}
+
 /* ═══════════════════════════════════════════════
    LAYER 1: LIST VIEW (Recipe Gallery)
    ═══════════════════════════════════════════════ */
@@ -1051,4 +1105,1133 @@
         opacity: 0;
         transform: translateY(10px) scale(.95);
     }
+}
+
+/* ═══════════════════════════════════════════════
+   ACTIVITY SECTION
+   ═══════════════════════════════════════════════ */
+.wf-activity-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 0;
+    background: var(--card);
+    /* Light theme background */
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    color: var(--foreground);
+}
+
+/* ── LEFT PANEL ── */
+.wf-activity-left {
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--card);
+}
+
+.wf-activity-tabs {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px 0;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.wf-activity-tab,
+.wf-activity-tab-header {
+    background: transparent;
+    border: none;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 4px;
+    cursor: pointer;
+    text-transform: uppercase;
+    position: relative;
+    transition: color var(--duration-fast);
+}
+
+.wf-activity-tab-header {
+    cursor: default;
+    color: var(--primary);
+    border-bottom: 2px solid var(--primary);
+}
+
+.wf-activity-tab:hover {
+    color: var(--foreground);
+}
+
+.wf-activity-tab.active {
+    color: var(--primary);
+    border-bottom: 2px solid var(--primary);
+}
+
+.wf-activity-content {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--background);
+}
+
+/* ── LIST ROWS (ACTIVITIES) ── */
+.wf-act-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.wf-act-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    transition: background var(--duration-fast);
+}
+
+.wf-act-list-item:hover {
+    background: var(--accent);
+}
+
+.wf-act-status {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    background: var(--muted);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+/* ── MISC SETTINGS ── */
+.wf-misc-list {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.wf-misc-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--foreground);
+}
+
+.wf-misc-subrow {
+    margin-left: 24px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted-foreground);
+}
+
+.wf-misc-hint {
+    margin-left: 24px;
+    font-size: 11px;
+    color: var(--indigo-500);
+}
+
+/* ── FORMS/INPUTS ── */
+.wf-misc-input {
+    background: var(--card);
+    border: 1px solid var(--input);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    width: 44px;
+    text-align: center;
+    outline: none;
+    transition: border-color var(--duration-fast);
+}
+
+.wf-misc-input:focus {
+    border-color: var(--indigo-500);
+}
+
+/* Checkbox Styling */
+.wf-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.wf-checkbox-label input[type="checkbox"] {
+    display: none;
+}
+
+.wf-checkbox-custom {
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--input);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    transition: all var(--duration-fast);
+    flex-shrink: 0;
+}
+
+.wf-checkbox-label:hover .wf-checkbox-custom {
+    border-color: var(--foreground);
+}
+
+.wf-checkbox-label input[type="checkbox"]:checked+.wf-checkbox-custom {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.wf-checkbox-label input[type="checkbox"]:checked+.wf-checkbox-custom::after {
+    content: '';
+    width: 4px;
+    height: 8px;
+    border: solid var(--primary-foreground);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    margin-bottom: 2px;
+}
+
+/* ── RIGHT PANEL (CONSOLE LOG) ── */
+.wf-activity-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--background);
+    border-left: 1px solid var(--border);
+}
+
+.wf-activity-console {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--foreground);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* ═══════════════════════════════════════════════
+   ACTIVITY (BOT) — PREMIUM REDESIGN
+   ═══════════════════════════════════════════════ */
+
+/* ── Groups Bar (top) ── */
+.acv-groups-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 12px;
+    flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+}
+
+.acv-groups-bar-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.acv-groups-chips {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.acv-group-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    white-space: nowrap;
+}
+
+.acv-group-chip:hover {
+    background: var(--accent);
+    color: var(--foreground);
+    border-color: var(--indigo-500);
+}
+
+.acv-group-chip.active {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: var(--indigo-500);
+    color: var(--indigo-500);
+}
+
+.acv-chip-count {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--indigo-500);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-mono);
+}
+
+.acv-group-chip.active .acv-chip-count {
+    background: rgba(99, 102, 241, 0.25);
+}
+
+.acv-chip-skeleton,
+.acv-chip-empty {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    font-style: italic;
+}
+
+/* ── Main Layout ── */
+.acv-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 12px;
+}
+
+.acv-left {
+    width: 340px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.acv-right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* ── Panel Card ── */
+.acv-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+/* ── Panel Header ── */
+.acv-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--muted);
+    flex-shrink: 0;
+    min-height: 44px;
+}
+
+.acv-panel-tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 100%;
+}
+
+.acv-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    position: relative;
+    white-space: nowrap;
+}
+
+.acv-tab:hover {
+    color: var(--foreground);
+}
+
+.acv-tab.active {
+    color: var(--indigo-500);
+    border-bottom-color: var(--indigo-500);
+}
+
+.acv-tab svg {
+    opacity: 0.7;
+}
+
+.acv-tab.active svg {
+    opacity: 1;
+}
+
+.acv-group-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--indigo-500);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Panel Body ── */
+.acv-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.acv-log-pane {
+    background: hsl(220, 20%, 98%);
+}
+
+/* ── Activities List ── */
+.acv-activities-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.acv-empty-hint {
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.acv-activity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    transition: background var(--duration-fast);
+    cursor: default;
+}
+
+.acv-activity-row:last-child {
+    border-bottom: none;
+}
+
+.acv-activity-row:hover {
+    background: var(--accent);
+}
+
+.acv-activity-row.enabled .acv-activity-name {
+    color: var(--foreground);
+    font-weight: 500;
+}
+
+.acv-activity-name {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    flex: 1;
+    transition: color var(--duration-fast);
+}
+
+/* Config button per activity */
+.acv-cfg-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    opacity: 0;
+    transition: all var(--duration-fast);
+    flex-shrink: 0;
+}
+
+.acv-activity-row:hover .acv-cfg-btn {
+    opacity: 1;
+}
+
+.acv-cfg-btn:hover {
+    background: var(--muted);
+    border-color: var(--border);
+    color: var(--indigo-500);
+}
+
+/* ── Misc Tab ── */
+.acv-misc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px 0;
+}
+
+.acv-misc-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--foreground);
+}
+
+.acv-misc-item:last-child {
+    border-bottom: none;
+}
+
+.acv-misc-sub {
+    margin-left: 26px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+}
+
+.acv-misc-hint {
+    margin-left: 26px;
+    font-size: 11px;
+    color: var(--indigo-500);
+}
+
+.acv-input-num {
+    background: var(--card);
+    border: 1px solid var(--input);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 3px 7px;
+    border-radius: var(--radius-sm);
+    width: 48px;
+    text-align: center;
+    outline: none;
+    transition: border-color var(--duration-fast);
+}
+
+.acv-input-num:focus {
+    border-color: var(--indigo-500);
+}
+
+/* ── Checkbox (Activity tab) ── */
+.acv-check-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+}
+
+.acv-check-label input[type="checkbox"] {
+    display: none;
+}
+
+.acv-check-box {
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--input);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    transition: all var(--duration-fast);
+    flex-shrink: 0;
+}
+
+.acv-check-label:hover .acv-check-box {
+    border-color: var(--indigo-500);
+}
+
+.acv-check-label input[type="checkbox"]:checked+.acv-check-box {
+    background: var(--indigo-500);
+    border-color: var(--indigo-500);
+}
+
+.acv-check-label input[type="checkbox"]:checked+.acv-check-box::after {
+    content: '';
+    width: 4px;
+    height: 7px;
+    border: solid white;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+    margin-bottom: 2px;
+}
+
+/* ── Activity Log Console ── */
+.acv-console {
+    flex: 1;
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.7;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.acv-log-line {
+    display: flex;
+    gap: 10px;
+}
+
+.acv-log-ts {
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.acv-log-info {
+    color: var(--blue-500);
+}
+
+.acv-log-muted {
+    color: var(--muted-foreground);
+}
+
+.acv-log-ok {
+    color: var(--emerald-500);
+}
+
+.acv-log-err {
+    color: var(--red-500);
+}
+
+/* ── Config Panel ── */
+.acv-config-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.acv-cfg-header {
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.acv-cfg-back-row {
+    margin-bottom: 12px;
+}
+
+.acv-cfg-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-md);
+    transition: all var(--duration-fast);
+}
+
+.acv-cfg-back:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+.acv-cfg-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--foreground);
+    margin-bottom: 4px;
+}
+
+.acv-cfg-sub {
+    font-size: 12px;
+    color: var(--muted-foreground);
+}
+
+.acv-cfg-fields {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.acv-cfg-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.acv-cfg-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.acv-cfg-select,
+.acv-cfg-input {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color var(--duration-fast);
+    max-width: 200px;
+}
+
+.acv-cfg-select:focus,
+.acv-cfg-input:focus {
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+/* ═══════════════════════════════════════════════
+   ACCOUNT GROUPS — PREMIUM REDESIGN
+   ═══════════════════════════════════════════════ */
+
+.grp-layout {
+    display: flex;
+    height: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+}
+
+/* ── Sidebar ── */
+.grp-sidebar {
+    width: 260px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    background: var(--muted);
+    flex-shrink: 0;
+}
+
+.grp-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.grp-sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--foreground);
+}
+
+.grp-new-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--indigo-500);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.grp-new-btn:hover {
+    background: var(--indigo-600);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.grp-sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.grp-list-empty {
+    padding: 24px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    line-height: 1.6;
+}
+
+.grp-list-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    border: 1px solid transparent;
+}
+
+.grp-list-item:hover {
+    background: var(--accent);
+    border-color: var(--border);
+}
+
+.grp-list-item.active {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+.grp-list-item-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+    background: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+    transition: all var(--duration-fast);
+    border: 1px solid var(--border);
+}
+
+.grp-list-item.active .grp-list-item-icon {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--indigo-500);
+    border-color: rgba(99, 102, 241, 0.2);
+}
+
+.grp-list-item-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.grp-list-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.grp-list-item.active .grp-list-item-name {
+    color: var(--indigo-500);
+}
+
+.grp-list-item-meta {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin-top: 1px;
+}
+
+.grp-list-item-arrow {
+    color: var(--muted-foreground);
+    opacity: 0;
+    transition: opacity var(--duration-fast);
+    flex-shrink: 0;
+}
+
+.grp-list-item:hover .grp-list-item-arrow,
+.grp-list-item.active .grp-list-item-arrow {
+    opacity: 1;
+}
+
+/* ── Content Area ── */
+.grp-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+}
+
+/* ── Editor ── */
+.grp-editor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.grp-editor-topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 24px 28px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--card);
+}
+
+.grp-editor-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--muted-foreground);
+    margin-bottom: 4px;
+}
+
+.grp-editor-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--foreground);
+    margin: 0;
+    line-height: 1.2;
+}
+
+.grp-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.grp-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--indigo-500);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.grp-btn-primary:hover {
+    background: var(--indigo-600);
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+    transform: translateY(-1px);
+}
+
+.grp-btn-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+    color: var(--red-500);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.grp-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.06);
+    border-color: var(--red-500);
+}
+
+.grp-editor-body {
+    flex: 1;
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+}
+
+.grp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.grp-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+.grp-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.grp-count-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--indigo-500);
+    background: rgba(99, 102, 241, 0.1);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    font-family: var(--font-mono);
+}
+
+.grp-input {
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    padding: 10px 14px;
+    outline: none;
+    transition: all var(--duration-fast);
+    font-weight: 500;
+}
+
+.grp-input:focus {
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+.grp-input::placeholder {
+    color: var(--muted-foreground);
+    font-weight: 400;
+    font-size: 14px;
+}
+
+.grp-table-wrap {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--background);
+}
+
+.grp-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 13px;
+}
+
+.grp-table thead {
+    position: sticky;
+    top: 0;
+    background: var(--muted);
+    z-index: 1;
+}
+
+.grp-table th {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+}
+
+.grp-table tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background var(--duration-fast);
+}
+
+.grp-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.grp-table tbody tr:hover {
+    background: var(--accent);
+}
+
+.grp-table td {
+    padding: 10px 14px;
+    color: var(--foreground);
+}
+
+.grp-table-empty {
+    padding: 32px;
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 13px;
+}
+
+/* ── Empty State ── */
+.grp-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 32px;
+    text-align: center;
+    background: var(--card);
+}
+
+.grp-empty-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--muted);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+    margin-bottom: 20px;
+}
+
+.grp-empty-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--foreground);
+    margin-bottom: 8px;
+}
+
+.grp-empty-sub {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    line-height: 1.6;
+    max-width: 300px;
+    margin-bottom: 24px;
 }

@@ -679,6 +679,62 @@
     background: hsla(210, 40%, 96%, 0.3);
 }
 
+.history-expand-row {
+    display: none;
+}
+
+.history-expand-row.open {
+    display: table-row;
+}
+
+.history-expand-row td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+}
+
+.expand-panel {
+    padding: 24px;
+    border-top: 1px dashed var(--border);
+}
+
+.expand-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--foreground);
+}
+
+.expand-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.expand-grid div strong {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.expand-grid pre {
+    margin: 0;
+    padding: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--foreground);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
 /* ── Empty State ── */
 .empty-state {
     display: flex;
@@ -1451,7 +1507,7 @@
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0,0,0,0.03);
+    box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0, 0, 0, 0.03);
     padding: 32px;
     width: 380px;
     max-width: calc(100vw - 32px);
@@ -1515,13 +1571,23 @@
 }
 
 @keyframes confirmOverlayIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
 @keyframes confirmOverlayOut {
-    from { opacity: 1; }
-    to { opacity: 0; }
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+    }
 }
 
 @keyframes confirmModalIn {
@@ -1529,6 +1595,7 @@
         opacity: 0;
         transform: scale(0.95) translateY(8px);
     }
+
     to {
         opacity: 1;
         transform: scale(1) translateY(0);
@@ -1540,6 +1607,7 @@
         opacity: 1;
         transform: scale(1) translateY(0);
     }
+
     to {
         opacity: 0;
         transform: scale(0.95) translateY(8px);
