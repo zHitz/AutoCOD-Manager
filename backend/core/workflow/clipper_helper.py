@@ -1,7 +1,3 @@
-"""
-Clipper Helper — ADB Clipper broadcast logic for clipboard access.
-Migrated from TEST/workflow/clipper_helper.py with multi-fallback support.
-"""
 import subprocess
 import os
 

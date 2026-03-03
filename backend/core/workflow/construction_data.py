@@ -1,7 +1,6 @@
-"""
-Construction Data — Tap coordinate sequences for building navigation.
-Each entry maps a construction name to a list of (x, y) coordinates to tap in order.
-"""
+# Construction data: maps construction names to their tap sequences.
+# Each entry is a list of (x, y) coordinates to tap in order.
+# The construction name must match the key in state_detector's construction_configs.
 
 CONSTRUCTION_TAPS = {
     "HALL": [

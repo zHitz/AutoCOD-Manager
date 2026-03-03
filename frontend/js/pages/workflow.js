@@ -139,13 +139,13 @@ const WorkflowPage = {
            ============================================== -->
       <div id="wf-section-activity" class="wf-section-container" style="display:none">
 
-        <!-- TARGET GROUPS — Compact horizontal scroller -->
+        <!-- TARGET GROUPS — Checkbox List -->
         <div class="acv-groups-bar">
           <div class="acv-groups-bar-label">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             TARGET GROUPS
           </div>
-          <div id="wf-activity-group-list" class="acv-groups-chips">
+          <div id="wf-activity-group-list" class="acv-groups-list">
             <div class="acv-chip-skeleton">Loading...</div>
           </div>
         </div>
@@ -328,10 +328,30 @@ const WorkflowPage = {
                   <input type="text" id="wf-group-name" class="grp-input" placeholder="e.g. Farm Bots — Alpha Team">
                 </div>
 
-                <div class="grp-field" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+                <!-- View Mode: shows only selected accounts -->
+                <div id="wf-group-view-mode" class="grp-field" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+                  <div class="grp-label-row">
+                    <label class="grp-label">Members</label>
+                    <span id="wf-group-member-count" class="grp-count-badge">0 accounts</span>
+                    <button class="grp-btn-edit" onclick="WF3.enterGroupEditMode()">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      Edit
+                    </button>
+                  </div>
+                  <div id="wf-group-members-list" class="grp-members-list">
+                    <div class="grp-table-empty">No accounts selected.</div>
+                  </div>
+                </div>
+
+                <!-- Edit Mode: full account table with checkboxes (hidden by default) -->
+                <div id="wf-group-edit-mode" class="grp-field" style="flex:1; min-height:0; display:flex; flex-direction:column; display:none;">
                   <div class="grp-label-row">
                     <label class="grp-label">Select Accounts</label>
                     <span id="wf-group-selected-count" class="grp-count-badge">0 selected</span>
+                    <button class="grp-btn-edit" onclick="WF3.exitGroupEditMode()">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                      Done
+                    </button>
                   </div>
                   <div class="grp-table-wrap">
                     <table class="grp-table">
@@ -629,39 +649,38 @@ const WF3 = {
             const accs = JSON.parse(g.account_ids || '[]');
             const isSelected = this.activitySelectedGroupId === g.id;
             return `
-                <button class="acv-group-chip ${isSelected ? 'active' : ''}" onclick="WF3.selectActivityGroup(${g.id})">
+                <label class="acv-group-item ${isSelected ? 'active' : ''}">
+                    <input type="checkbox" class="acv-group-cb" value="${g.id}" ${isSelected ? 'checked' : ''}
+                        onchange="WF3.toggleActivityGroup(${g.id}, this.checked)">
+                    <span class="acv-check-box"></span>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                    <span>${g.name}</span>
+                    <span class="acv-group-item-name">${g.name}</span>
                     <span class="acv-chip-count">${accs.length}</span>
-                </button>
+                </label>
             `;
         }).join('');
 
         // Auto-select first group if none selected
         if (!this.activitySelectedGroupId && this.groupsData.length > 0) {
-            this.selectActivityGroup(this.groupsData[0].id);
+            this.toggleActivityGroup(this.groupsData[0].id, true);
         }
     },
 
-    selectActivityGroup(groupId) {
-        this.activitySelectedGroupId = groupId;
-        this.updateActivityGroupList();
-        this.renderActivitiesForGroup(groupId);
+    toggleActivityGroup(groupId, checked) {
+        if (checked) {
+            this.activitySelectedGroupId = groupId;
+            // Uncheck other checkboxes (single-select for now, activities render per one group)
+            document.querySelectorAll('.acv-group-cb').forEach(cb => {
+                if (parseInt(cb.value) !== groupId) cb.checked = false;
+            });
+            document.querySelectorAll('.acv-group-item').forEach(el => el.classList.remove('active'));
+            const activeCb = document.querySelector(`.acv-group-cb[value="${groupId}"]`);
+            if (activeCb) activeCb.closest('.acv-group-item').classList.add('active');
+        } else {
+            this.activitySelectedGroupId = null;
+        }
+        this.renderActivitiesForGroup(this.activitySelectedGroupId);
     },
-
-    // Real workflow activities from core_actions.py
-    _defaultActivities: [
-        { name: 'Boot to Lobby', desc: 'Start game and navigate to main lobby' },
-        { name: 'Capture Pet', desc: 'Navigate to pet capture screen and run capture flow' },
-        { name: 'Pet Token', desc: 'Navigate to Pet Token area' },
-        { name: 'Market', desc: 'Open the in-game Market' },
-        { name: 'Resources', desc: 'Navigate to Resources / Items menu' },
-        { name: 'City Hall', desc: 'Navigate to City Hall construction' },
-        { name: 'Back to Lobby', desc: 'Return to main lobby from any state' },
-        { name: 'Detect State', desc: 'Detect and log current game state via OpenCV' },
-        { name: 'Full Scan', desc: 'Run full data scan (profile, resources, levels)' },
-        { name: 'Extract Player ID', desc: 'Copy player ID via clipboard intercept' },
-    ],
 
     getActivityConfig(groupId) {
         try {
@@ -669,14 +688,18 @@ const WF3 = {
             if (raw) {
                 const parsed = JSON.parse(raw);
                 // Migrate old string format to object format if needed
-                return parsed.map(item => typeof item === 'string'
-                    ? { name: item, enabled: false, desc: '' }
+                const validParsed = parsed.map(item => typeof item === 'string'
+                    ? { id: item, name: item, enabled: false, desc: '' }
                     : item
                 );
+                // Still need to make sure fresh backend functions exist in the mapping, but this is a simple local storage return
             }
         } catch (e) { }
-        // Return default config (all unchecked) from real activity list
-        return this._defaultActivities.map(a => ({ name: a.name, enabled: false, desc: a.desc || '' }));
+
+        // Return default config (all unchecked) from matching backend functions.
+        return this.functions.map(fn => (
+            { id: fn.id, name: fn.label, enabled: false, desc: fn.description || '' }
+        ));
     },
 
     saveActivityConfig(groupId) {
@@ -929,11 +952,13 @@ const WF3 = {
 
     createNewGroup() {
         this.currentGroupId = null;
+        this._currentGroupAccountIds = [];
         document.getElementById('wf-group-editor-title').textContent = 'Create New Group';
         document.getElementById('wf-group-name').value = '';
         document.getElementById('wf-group-btn-delete').style.display = 'none';
 
         this.renderGroupAccounts([]);
+        this.enterGroupEditMode();
         this.showGroupEditor();
         this.renderGroupList();
     },
@@ -948,7 +973,9 @@ const WF3 = {
         document.getElementById('wf-group-btn-delete').style.display = '';
 
         const accountIds = JSON.parse(group.account_ids || '[]');
-        this.renderGroupAccounts(accountIds);
+        this._currentGroupAccountIds = accountIds;
+        this.renderGroupMembersView(accountIds);
+        this.exitGroupEditMode();
         this.showGroupEditor();
         this.renderGroupList();
     },
@@ -956,6 +983,59 @@ const WF3 = {
     showGroupEditor() {
         document.getElementById('wf-group-empty').style.display = 'none';
         document.getElementById('wf-group-editor').style.display = 'flex';
+    },
+
+    // ── View / Edit Mode for Account Groups ──
+    _currentGroupAccountIds: [],
+
+    renderGroupMembersView(accountIds) {
+        const container = document.getElementById('wf-group-members-list');
+        const countEl = document.getElementById('wf-group-member-count');
+        if (!container) return;
+
+        if (!accountIds || accountIds.length === 0) {
+            container.innerHTML = '<div class="grp-table-empty">No accounts selected. Click <strong>Edit</strong> to add accounts.</div>';
+            if (countEl) countEl.textContent = '0 accounts';
+            return;
+        }
+
+        // Resolve account data
+        const members = this.accountsData.filter(a => accountIds.includes(a.account_id));
+        if (countEl) countEl.textContent = `${members.length} account${members.length !== 1 ? 's' : ''}`;
+
+        container.innerHTML = members.map(acc => `
+            <div class="grp-member-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <div class="grp-member-info">
+                    <span class="grp-member-name">${acc.lord_name || 'Unknown'}</span>
+                    <span class="grp-member-meta">${acc.emu_name || (acc.emu_index != null ? 'Emu ' + acc.emu_index : '?')} · ${acc.game_id}</span>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    enterGroupEditMode() {
+        const viewMode = document.getElementById('wf-group-view-mode');
+        const editMode = document.getElementById('wf-group-edit-mode');
+        if (viewMode) viewMode.style.display = 'none';
+        if (editMode) editMode.style.display = 'flex';
+
+        // Load full account table with current selections
+        this.renderGroupAccounts(this._currentGroupAccountIds || []);
+    },
+
+    exitGroupEditMode() {
+        const viewMode = document.getElementById('wf-group-view-mode');
+        const editMode = document.getElementById('wf-group-edit-mode');
+        if (viewMode) viewMode.style.display = 'flex';
+        if (editMode) editMode.style.display = 'none';
+
+        // Update _currentGroupAccountIds from checkboxes if edit mode was active
+        const cbs = document.querySelectorAll('.wf-group-account-cb:checked');
+        if (cbs.length > 0 || document.querySelectorAll('.wf-group-account-cb').length > 0) {
+            this._currentGroupAccountIds = Array.from(cbs).map(cb => parseInt(cb.value));
+        }
+        this.renderGroupMembersView(this._currentGroupAccountIds);
     },
 
     renderGroupAccounts(selectedIds = []) {

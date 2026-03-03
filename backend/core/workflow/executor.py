@@ -26,29 +26,42 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
     async def log(msg: str, log_type: str = "info"):
         print(f"[{emulator_name}] {msg}")
         if ws_callback:
-            await ws_callback({
-                "type": "workflow_log",
+            # handle both async and sync callbacks just in case, or just call it directly since broadcast_sync is sync
+            import inspect
+            data = {
                 "emulator_index": emulator_index,
                 "log_type": log_type,
                 "message": msg
-            })
+            }
+            if inspect.iscoroutinefunction(ws_callback):
+                await ws_callback("workflow_log", data)
+            else:
+                ws_callback("workflow_log", data)
             
     async def progress(current: int, total: int):
         if ws_callback:
-            await ws_callback({
-                "type": "workflow_progress",
+            import inspect
+            data = {
                 "emulator_index": emulator_index,
                 "current": current,
                 "total": total
-            })
+            }
+            if inspect.iscoroutinefunction(ws_callback):
+                await ws_callback("workflow_progress", data)
+            else:
+                ws_callback("workflow_progress", data)
 
     async def status(state: str):
         if ws_callback:
-            await ws_callback({
-                "type": "workflow_status",
+            import inspect
+            data = {
                 "emulator_index": emulator_index,
                 "status": state  # e.g., "RUNNING", "SUCCESS", "ERROR"
-            })
+            }
+            if inspect.iscoroutinefunction(ws_callback):
+                await ws_callback("workflow_status", data)
+            else:
+                ws_callback("workflow_status", data)
 
     await status("RUNNING")
     await log(f"▶ Workflow execution started on {emulator_name}", "info")
@@ -104,10 +117,60 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                 adb_helper.kill_app(serial, pkg)
                 await asyncio.sleep(2)
                 
-            elif fn_id == "sys_back_btn":
+            elif fn_id in ("sys_back_btn", "adb_press_back"):
                 adb_helper.press_back(serial)
                 await asyncio.sleep(1.5)
-                
+
+            # ── Startup / Boot ──
+            elif fn_id == "startup_to_lobby":
+                timeout = int(config.get("timeout", 120))
+                ok = core_actions.startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp", load_timeout=timeout)
+
+            # ── Full Scan ──
+            elif fn_id == "scan_full":
+                from backend.core import full_scan as full_scan_module
+                result = full_scan_module.start_full_scan(
+                    emulator_index, emulator_name,
+                    ws_callback=ws_callback
+                )
+                if result and not result.get("success", True):
+                    await log(f"  Full scan reported error: {result.get('error', 'unknown')}", "err")
+                    ok = False
+                else:
+                    await log("  Full Scan completed", "ok")
+
+            # ── ADB Tap (registry id: adb_tap) ──
+            elif fn_id == "adb_tap":
+                x = int(config.get("x", 0))
+                y = int(config.get("y", 0))
+                adb_helper.tap(serial, x, y)
+                await asyncio.sleep(0.5)
+
+            # ── Check Game State (registry id: check_state) ──
+            elif fn_id == "check_state":
+                current_state = detector.check_state(serial)
+                await log(f"  Detected State: {current_state}", "info")
+
+            # ── Run Macro (registry id: run_macro) ──
+            elif fn_id == "run_macro":
+                from backend.core import macro_replay
+                from backend.core import ldplayer_manager
+                macro_file = config.get("file", "")
+                loop_count = int(config.get("loop", 1))
+                if macro_file:
+                    import os
+                    filepath = os.path.join(ldplayer_manager._get_operations_dir(), macro_file)
+                    if os.path.exists(filepath):
+                        for loop_i in range(loop_count):
+                            await log(f"  Macro '{macro_file}' loop {loop_i + 1}/{loop_count}", "info")
+                            macro_replay.start_replay(emulator_index, filepath, macro_file, ws_callback=ws_callback)
+                    else:
+                        await log(f"  Macro file not found: {macro_file}", "err")
+                        ok = False
+                else:
+                    await log("  No macro file specified", "err")
+                    ok = False
+
             # Game Navigation Macros
             elif fn_id == "nav_to_lobby":
                 ok = core_actions.back_to_lobby(serial, detector)
@@ -147,8 +210,9 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                 ok = core_actions.go_to_hall(serial, detector)
 
             else:
-                await log(f"  [Warning] Function '{fn_id}' is not implemented yet in python backend.", "err")
-                ok = False
+                await log(f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.", "warn")
+                # Don't abort — just skip unrecognized steps
+                ok = True
 
             if ok:
                 await log(f"  ✓ {fn_id} complete", "ok")

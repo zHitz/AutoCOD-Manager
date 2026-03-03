@@ -1,6 +1,6 @@
 """
 ADB Helper — Low-level ADB command wrapper.
-Copied from TEST/WORKFLOW/adb_helper.py with import paths adapted for app context.
+Extracted and enhanced from cod_app_sync.py.
 """
 import subprocess
 import time

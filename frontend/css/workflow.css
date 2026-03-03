@@ -1330,9 +1330,9 @@
 /* ── Groups Bar (top) ── */
 .acv-groups-bar {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
@@ -1352,41 +1352,55 @@
     color: var(--muted-foreground);
     white-space: nowrap;
     flex-shrink: 0;
+    padding-top: 4px;
 }
 
-.acv-groups-chips {
+/* Target Groups — Checkbox List */
+.acv-groups-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+}
+
+.acv-group-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-}
-
-.acv-group-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    background: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 500;
     color: var(--muted-foreground);
     cursor: pointer;
     transition: all var(--duration-fast);
-    white-space: nowrap;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    user-select: none;
 }
 
-.acv-group-chip:hover {
+.acv-group-item input[type="checkbox"] {
+    display: none;
+}
+
+.acv-group-item:hover {
     background: var(--accent);
     color: var(--foreground);
-    border-color: var(--indigo-500);
+    border-color: var(--border);
 }
 
-.acv-group-chip.active {
-    background: rgba(99, 102, 241, 0.1);
-    border-color: var(--indigo-500);
+.acv-group-item.active {
+    background: rgba(99, 102, 241, 0.08);
+    border-color: rgba(99, 102, 241, 0.25);
     color: var(--indigo-500);
+    font-weight: 600;
+}
+
+.acv-group-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .acv-chip-count {
@@ -1397,9 +1411,10 @@
     padding: 1px 6px;
     border-radius: var(--radius-full);
     font-family: var(--font-mono);
+    flex-shrink: 0;
 }
 
-.acv-group-chip.active .acv-chip-count {
+.acv-group-item.active .acv-chip-count {
     background: rgba(99, 102, 241, 0.25);
 }
 
@@ -1408,6 +1423,7 @@
     font-size: 12px;
     color: var(--muted-foreground);
     font-style: italic;
+    padding: 4px 0;
 }
 
 /* ── Main Layout ── */
@@ -2234,4 +2250,82 @@
     line-height: 1.6;
     max-width: 300px;
     margin-bottom: 24px;
+}
+
+/* ── Account Groups: Members View (Read-only) ── */
+.grp-members-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--background);
+    padding: 4px 0;
+}
+
+.grp-member-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background var(--duration-fast);
+}
+
+.grp-member-item:last-child {
+    border-bottom: none;
+}
+
+.grp-member-item:hover {
+    background: var(--accent);
+}
+
+.grp-member-item svg {
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+}
+
+.grp-member-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.grp-member-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.grp-member-meta {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Edit Button (Account Groups) ── */
+.grp-btn-edit {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--muted);
+    color: var(--indigo-500);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    margin-left: auto;
+}
+
+.grp-btn-edit:hover {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: var(--indigo-500);
 }

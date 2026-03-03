@@ -1,7 +1,3 @@
-"""
-Game State Detector — OpenCV template matching for game state detection.
-Migrated from TEST/workflow/state_detector.py with import paths adapted for app context.
-"""
 import os
 import cv2
 import numpy as np
@@ -38,7 +34,32 @@ class GameStateDetector:
             "contructions/con_hall.png": "HALL",
             "contructions/con_market.png": "MARKET",
             "contructions/con_elixir_healing.png": "ELIXIR_HEALING",
+            "contructions/con_pet_sanctuary.png": "PET_SANCTUARY",
+            "contructions/con_pet_enclosure.png": "PET_ENCLOSURE",
+            "contructions/con_markers.png": "MARKERS_MENU",
         }
+        
+        # Special templates — loaded separately, called on specific conditions
+        self.special_configs = {
+            "loading_server_maintenance.png": "SERVER_MAINTENANCE",
+            "auto_capture_pet.png": "AUTO_CAPTURE_PET"
+        }
+        self.special_templates = {}
+        
+        # Activity templates — returns name + center coordinates when matched
+        self.activity_configs = {
+            "activities/legion_1.png": "LEGION_1",
+            "activities/legion_2.png": "LEGION_2",
+            "activities/legion_3.png": "LEGION_3",
+            "activities/legion_4.png": "LEGION_4",
+            "activities/legion_5.png": "LEGION_5",
+            "activities/legion_idle.png": "LEGION_IDLE",
+            "activities/create_legion.png": "CREATE_LEGION",
+            "icon_markers/rss_center.png": "RSS_CENTER_MARKER",
+            "activities/legion_view.png": "RSS_VIEW",
+            "activities/legion_gather.png": "RSS_GATHER",
+        }
+        self.activity_templates = {}
         
         self._load_templates()
 
@@ -65,6 +86,26 @@ class GameStateDetector:
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is not None:
                 self.construction_templates[name] = img
+                
+        # Load special templates separately
+        for filename, name in self.special_configs.items():
+            path = os.path.join(self.templates_dir, filename)
+            if not os.path.exists(path):
+                print(f"[WARNING] Special template missing: {path}")
+                continue
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is not None:
+                self.special_templates[name] = img
+
+        # Load activity templates separately
+        for filename, name in self.activity_configs.items():
+            path = os.path.join(self.templates_dir, filename)
+            if not os.path.exists(path):
+                print(f"[WARNING] Activity template missing: {path}")
+                continue
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is not None:
+                self.activity_templates[name] = img
 
     def screencap_memory(self, serial: str) -> np.ndarray:
         """Captures screen directly to RAM, no disk IO. Faster and cleaner for Multi-Emulator."""
@@ -157,4 +198,49 @@ class GameStateDetector:
             if max_val >= threshold:
                 return name
         
+        return None
+
+    def check_special_state(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
+        """
+        Checks for special screens on demand (e.g. Server Maintenance).
+        Returns the matched special state name or None.
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return None
+            
+        checks = {target: self.special_templates[target]} if target and target in self.special_templates else self.special_templates
+        
+        for name, template in checks.items():
+            res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val >= threshold:
+                return name
+                
+        return None
+
+    def check_activity(self, serial: str, target: str = None, threshold: float = 0.98) -> tuple:
+        """
+        Activity Detector — finds a template on screen and returns its name + center coordinates.
+        Unlike other check methods, this returns WHERE the match is, not just WHAT it is.
+        
+        Returns: (name, center_x, center_y) if found, or None if not found.
+        Usage in wait_for_state: check_mode="activity"
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return None
+            
+        checks = {target: self.activity_templates[target]} if target and target in self.activity_templates else self.activity_templates
+        
+        for name, template in checks.items():
+            res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val >= threshold:
+                h, w = template.shape[:2]
+                center_x = max_loc[0] + w // 2
+                center_y = max_loc[1] + h // 2
+                print(f"[ACTIVITY] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
+                return (name, center_x, center_y)
+                
         return None
