@@ -696,6 +696,10 @@ const WF3 = {
         }
         const config = this.getActivityConfig(groupId);
         const enabled = config.filter(a => a.enabled).map(a => a.name);
+        const activityConfig = enabled.reduce((acc, activityName) => {
+            acc[activityName] = this.getPerActivityConfig(activityName, groupId);
+            return acc;
+        }, {});
         if (enabled.length === 0) {
             WfToast.show('w', 'No Activities', 'Enable at least one activity first.');
             return;
@@ -726,7 +730,8 @@ const WF3 = {
         try {
             const payload = {
                 group_id: groupId,
-                activities: enabled
+                activities: enabled,
+                activity_config: activityConfig
             };
             if (emulatorIndices.length > 0) {
                 payload.emulator_indices = emulatorIndices;

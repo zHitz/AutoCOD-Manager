@@ -861,6 +861,7 @@ async def run_bot_activities(body: dict):
 
     group_id = body.get("group_id")
     activities = body.get("activities", [])
+    activity_config = body.get("activity_config") or {}
     emulator_indices = body.get("emulator_indices")  # optional override
 
     if not activities:
@@ -868,11 +869,27 @@ async def run_bot_activities(body: dict):
 
     # Build step list
     steps = []
+    config_warnings = []
     for act in activities:
         act_steps = _ACTIVITY_TO_STEPS.get(act)
+        act_cfg = activity_config.get(act) or {}
+
         if act_steps:
-            steps.extend(act_steps)
+            for template_step in act_steps:
+                step = dict(template_step)
+                merged_cfg = dict(step.get("config") or {})
+                if act_cfg:
+                    merged_cfg.update(act_cfg)
+                if merged_cfg:
+                    step["config"] = merged_cfg
+                elif "config" in step:
+                    del step["config"]
+                steps.append(step)
         else:
+            if act_cfg:
+                warning = f"Activity '{act}' does not support config. Ignoring config keys: {', '.join(sorted(act_cfg.keys()))}"
+                print(f"[bot/run] {warning}")
+                config_warnings.append(warning)
             steps.append({"function_id": "flow_delay", "config": {"seconds": 1}})
 
     if not steps:
@@ -925,7 +942,19 @@ async def run_bot_activities(body: dict):
         ))
         launched.append({"index": idx, "name": name})
 
-    return {"status": "accepted", "emulators": launched, "steps": len(steps)}
+    if config_warnings:
+        for warning in config_warnings:
+            ws_manager.broadcast_sync("workflow_log", {
+                "type": "workflow_log",
+                "emulator_index": None,
+                "log_type": "warn",
+                "message": warning,
+            })
+
+    response = {"status": "accepted", "emulators": launched, "steps": len(steps)}
+    if config_warnings:
+        response["warnings"] = config_warnings
+    return response
 
 
 
