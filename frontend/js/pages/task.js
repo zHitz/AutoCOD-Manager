@@ -7,6 +7,9 @@ const TaskPage = {
     _priorityFilter: 'all',
     _showShortcutHelp: false,
     _boundKeydown: null,
+    _isLoading: false,
+    _loadError: null,
+    _hasFetched: false,
 
     _checklistTemplates: [
         { key: 'login', label: 'Điểm danh', shortLabel: 'Điểm danh', critical: true },
@@ -17,37 +20,132 @@ const TaskPage = {
         { key: 'event', label: 'Nhận thưởng sự kiện', shortLabel: 'Sự kiện', critical: false },
     ],
 
-    _generateMockData() {
-        const priorities = ['high', 'medium', 'low'];
-        const statuses = ['on-track', 'at-risk', 'overdue'];
-        const regions = ['Global', 'Asia', 'EU'];
-        const data = [];
+    async fetchData() {
+        this._isLoading = true;
+        this._loadError = null;
 
-        for (let i = 1; i <= 100; i += 1) {
-            const checks = {
-                login: Math.random() > 0.25,
-                collect: Math.random() > 0.35,
-                alliance: Math.random() > 0.45,
-                patrol: Math.random() > 0.4,
-                shop: Math.random() > 0.5,
-                event: Math.random() > 0.55,
-            };
+        try {
+            const [accountsRes, historyRes] = await Promise.all([
+                fetch('/api/accounts'),
+                fetch('/api/tasks/history?limit=500'),
+            ]);
 
-            data.push({
-                id: i,
-                accountName: `ACC_${String(i).padStart(3, '0')}`,
-                emulator: `LDPlayer-${String((i % 12) + 1).padStart(2, '0')}`,
-                owner: `Nhóm ${String.fromCharCode(65 + (i % 6))}`,
-                region: regions[i % regions.length],
-                priority: priorities[i % priorities.length],
-                status: statuses[i % statuses.length],
-                checks,
-                note: i % 4 === 0 ? 'Theo dõi event giờ vàng' : 'Ổn định',
-                nextReset: `${String((i % 24)).padStart(2, '0')}:00`,
+            if (!accountsRes.ok || !historyRes.ok) {
+                throw new Error('Không thể tải dữ liệu task từ backend.');
+            }
+
+            const [accountsRaw, taskHistoryRaw] = await Promise.all([
+                accountsRes.json(),
+                historyRes.json(),
+            ]);
+
+            const accounts = Array.isArray(accountsRaw) ? accountsRaw : [];
+            const taskHistory = Array.isArray(taskHistoryRaw) ? taskHistoryRaw : [];
+
+            const historyByGameId = new Map();
+            const historyByEmu = new Map();
+
+            taskHistory.forEach((entry) => {
+                let parsedResult = null;
+                if (entry.result_json) {
+                    try {
+                        parsedResult = JSON.parse(entry.result_json);
+                    } catch (e) {
+                        parsedResult = null;
+                    }
+                }
+
+                const gameId = parsedResult?.game_id;
+                if (gameId && !historyByGameId.has(gameId)) {
+                    historyByGameId.set(gameId, []);
+                }
+                if (gameId) historyByGameId.get(gameId).push(entry);
+
+                const emuKey = entry.emu_name || (entry.emu_index != null ? `EMU-${entry.emu_index}` : null);
+                if (emuKey && !historyByEmu.has(emuKey)) {
+                    historyByEmu.set(emuKey, []);
+                }
+                if (emuKey) historyByEmu.get(emuKey).push(entry);
             });
-        }
 
-        return data;
+            this._accounts = accounts.map((acc, index) => {
+                const accountId = Number(acc.account_id) || index + 1;
+                const emulatorName = acc.emu_name || (acc.emu_index != null ? `EMU-${acc.emu_index}` : 'N/A');
+                const accountHistory = historyByGameId.get(acc.game_id) || historyByEmu.get(emulatorName) || [];
+
+                const latest = accountHistory[0] || null;
+                const hasFailed = accountHistory.some((item) => item.status === 'failed');
+                const hasRunning = accountHistory.some((item) => item.status === 'running');
+
+                const checks = {
+                    login: false,
+                    collect: false,
+                    alliance: false,
+                    patrol: false,
+                    shop: false,
+                    event: false,
+                };
+
+                accountHistory.forEach((item) => {
+                    if (item.status !== 'success') return;
+                    const type = item.task_type || '';
+                    if (type === 'full_scan') {
+                        checks.login = true;
+                        checks.collect = true;
+                    } else if (type.includes('collect')) {
+                        checks.collect = true;
+                    } else if (type.includes('alliance')) {
+                        checks.alliance = true;
+                    } else if (type.includes('patrol') || type.includes('quest')) {
+                        checks.patrol = true;
+                    } else if (type.includes('shop')) {
+                        checks.shop = true;
+                    } else if (type.includes('event')) {
+                        checks.event = true;
+                    } else {
+                        checks.login = true;
+                    }
+                });
+
+                const status = hasFailed
+                    ? 'overdue'
+                    : hasRunning
+                        ? 'at-risk'
+                        : latest
+                            ? 'on-track'
+                            : 'at-risk';
+
+                const doneChecks = Object.values(checks).filter(Boolean).length;
+                const priority = status === 'overdue'
+                    ? 'high'
+                    : doneChecks <= 2
+                        ? 'medium'
+                        : 'low';
+
+                return {
+                    id: accountId,
+                    accountName: acc.lord_name || acc.game_id || `Account-${accountId}`,
+                    emulator: emulatorName,
+                    owner: acc.alliance || 'Chưa có nhóm',
+                    region: acc.provider || 'Global',
+                    priority,
+                    status,
+                    checks,
+                    note: acc.note || 'Chưa có ghi chú',
+                    nextReset: latest?.finished_at ? String(latest.finished_at).slice(11, 16) : '--:--',
+                };
+            });
+
+            this._selectedIndex = 0;
+            this._hasFetched = true;
+        } catch (e) {
+            console.error('TaskPage fetch failed:', e);
+            this._accounts = [];
+            this._loadError = e?.message || 'Không thể tải dữ liệu task.';
+            this._hasFetched = true;
+        } finally {
+            this._isLoading = false;
+        }
     },
 
     _getProgress(account) {
@@ -73,7 +171,7 @@ const TaskPage = {
             if (acc.status === 'overdue') overdue += 1;
         });
 
-        const coverage = Math.round((doneTasks / totalTasks) * 100);
+        const coverage = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
         const target = 85;
 
         return {
@@ -115,13 +213,66 @@ const TaskPage = {
     },
 
     render() {
-        if (!this._accounts.length) {
-            this._accounts = this._generateMockData();
-        }
-
         this._applyFilters();
         const stats = this._computeStats();
         const selected = this._filteredAccounts[this._selectedIndex];
+        const isEmpty = !this._isLoading && !this._loadError && this._accounts.length === 0;
+        const mainContent = this._isLoading
+            ? '<div class="task-panel"><div class="task-panel-title">Đang tải dữ liệu...</div><div class="task-focus-sub">Vui lòng đợi trong giây lát.</div></div>'
+            : this._loadError
+                ? `<div class="task-panel"><div class="task-panel-title" style="color:#b91c1c">Tải dữ liệu thất bại</div><div class="task-focus-sub">${this._loadError}</div><button class="btn btn-sm btn-outline" id="task-retry-load" style="margin-top:10px;">Thử lại</button></div>`
+                : isEmpty
+                    ? '<div class="task-panel"><div class="task-panel-title">Chưa có account</div><div class="task-focus-sub">Không có dữ liệu từ API /api/accounts để hiển thị checklist.</div></div>'
+                    : `
+                    <div class="task-table-wrap">
+                        <div class="task-table-scroll" id="task-table-scroll">
+                            <table class="task-table">
+                                <thead>
+                                    <tr>
+                                        <th class="task-sticky-col"><span class="th-content">Account <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Trạng thái <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Ưu tiên <span class="th-sort">↕</span></span></th>
+                                        ${this._checklistTemplates.map((item) => `<th title="${item.label}"><span class="th-content">${item.shortLabel}<span class="th-sort">↕</span></span></th>`).join('')}
+                                        <th><span class="th-content">Tiến độ <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Ghi chú <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Reset <span class="th-sort">↕</span></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="task-tbody">${this._renderRows()}</tbody>
+                            </table>
+                        </div>
+                        <div class="task-scroll-hint" id="task-scroll-hint">← Cuộn ngang để xem thêm cột →</div>
+                    </div>
+
+                    <div class="task-side-col">
+                        <div class="task-panel">
+                            <div class="task-panel-title-row">
+                                <div class="task-panel-title">Cần ưu tiên hôm nay</div>
+                            </div>
+                            ${this._renderFocusItems()}
+                            <div class="task-focus-sub" style="margin-top:8px;">Tỷ lệ hiển thị dạng <b>x/y task</b> = số task đã xong / tổng task ngày.</div>
+                        </div>
+
+                        <div class="task-panel">
+                            <div class="task-panel-title-row">
+                                <div class="task-panel-title">Tiện ích</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline task-util-btn">Gán checklist mẫu theo nhóm</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Sắp xếp theo giờ reset gần nhất</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Xuất báo cáo ngày</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Đánh dấu thiếu task quan trọng</button>
+
+                            ${this._showShortcutHelp ? `
+                            <div class="task-shortcut-pop">
+                                <div class="task-panel-title" style="margin-bottom:8px;">Phím tắt</div>
+                                <div class="task-shortcut-row"><span>Focus ô tìm kiếm</span><span class="task-kbd">/</span></div>
+                                <div class="task-shortcut-row"><span>Chọn dòng kế tiếp / trước</span><span class="task-kbd">J / K</span></div>
+                                <div class="task-shortcut-row"><span>Toggle task pending đầu</span><span class="task-kbd">Space</span></div>
+                                <div class="task-shortcut-row"><span>Đánh dấu xong account chọn</span><span class="task-kbd">Ctrl + Enter</span></div>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>`;
 
         return `
             <style>
@@ -231,55 +382,7 @@ const TaskPage = {
                 </div>
 
                 <div class="task-main-grid">
-                    <div class="task-table-wrap">
-                        <div class="task-table-scroll" id="task-table-scroll">
-                            <table class="task-table">
-                                <thead>
-                                    <tr>
-                                        <th class="task-sticky-col"><span class="th-content">Account <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Trạng thái <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Ưu tiên <span class="th-sort">↕</span></span></th>
-                                        ${this._checklistTemplates.map((item) => `<th title="${item.label}"><span class="th-content">${item.shortLabel}<span class="th-sort">↕</span></span></th>`).join('')}
-                                        <th><span class="th-content">Tiến độ <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Ghi chú <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Reset <span class="th-sort">↕</span></span></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="task-tbody">${this._renderRows()}</tbody>
-                            </table>
-                        </div>
-                        <div class="task-scroll-hint" id="task-scroll-hint">← Cuộn ngang để xem thêm cột →</div>
-                    </div>
-
-                    <div class="task-side-col">
-                        <div class="task-panel">
-                            <div class="task-panel-title-row">
-                                <div class="task-panel-title">Cần ưu tiên hôm nay</div>
-                            </div>
-                            ${this._renderFocusItems()}
-                            <div class="task-focus-sub" style="margin-top:8px;">Tỷ lệ hiển thị dạng <b>x/y task</b> = số task đã xong / tổng task ngày.</div>
-                        </div>
-
-                        <div class="task-panel">
-                            <div class="task-panel-title-row">
-                                <div class="task-panel-title">Tiện ích</div>
-                            </div>
-                            <button class="btn btn-sm btn-outline task-util-btn">Gán checklist mẫu theo nhóm</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Sắp xếp theo giờ reset gần nhất</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Xuất báo cáo ngày</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Đánh dấu thiếu task quan trọng</button>
-
-                            ${this._showShortcutHelp ? `
-                            <div class="task-shortcut-pop">
-                                <div class="task-panel-title" style="margin-bottom:8px;">Phím tắt</div>
-                                <div class="task-shortcut-row"><span>Focus ô tìm kiếm</span><span class="task-kbd">/</span></div>
-                                <div class="task-shortcut-row"><span>Chọn dòng kế tiếp / trước</span><span class="task-kbd">J / K</span></div>
-                                <div class="task-shortcut-row"><span>Toggle task pending đầu</span><span class="task-kbd">Space</span></div>
-                                <div class="task-shortcut-row"><span>Đánh dấu xong account chọn</span><span class="task-kbd">Ctrl + Enter</span></div>
-                            </div>
-                            ` : ''}
-                        </div>
-                    </div>
+                    ${mainContent}
                 </div>
             </div>
         `;
@@ -396,10 +499,30 @@ const TaskPage = {
     },
 
     init() {
+        if (!this._hasFetched && !this._isLoading) {
+            this.fetchData().then(() => {
+                if (typeof router !== 'undefined' && router._currentPage === 'task') {
+                    const root = document.getElementById('page-root');
+                    if (root) root.innerHTML = this.render();
+                    this.init();
+                }
+            });
+        }
+
         const searchEl = document.getElementById('task-search');
         const statusEl = document.getElementById('task-status-filter');
         const priorityEl = document.getElementById('task-priority-filter');
         const tableScroll = document.getElementById('task-table-scroll');
+
+        document.getElementById('task-retry-load')?.addEventListener('click', () => {
+            this.fetchData().then(() => {
+                if (typeof router !== 'undefined' && router._currentPage === 'task') {
+                    const root = document.getElementById('page-root');
+                    if (root) root.innerHTML = this.render();
+                    this.init();
+                }
+            });
+        });
 
         searchEl?.addEventListener('input', (e) => {
             this._search = e.target.value;
@@ -493,6 +616,7 @@ const TaskPage = {
         tableScroll?.addEventListener('scroll', () => this._syncScrollHint());
         window.requestAnimationFrame(() => this._syncScrollHint());
 
+        const prevKeydown = this._boundKeydown;
         this._boundKeydown = (e) => {
             if (router._currentPage !== 'task') return;
             if (e.key === '/') {
@@ -513,6 +637,9 @@ const TaskPage = {
             }
         };
 
+        if (prevKeydown) {
+            document.removeEventListener('keydown', prevKeydown);
+        }
         document.addEventListener('keydown', this._boundKeydown);
     },
 
