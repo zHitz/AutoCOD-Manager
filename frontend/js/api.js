@@ -42,6 +42,11 @@ const API = {
         return this.post(url);
     },
     getQueue() { return this.get('/api/tasks/queue'); },
+    getTasksOverview(date) {
+        const q = date ? `?date=${encodeURIComponent(date)}` : '';
+        return this.get(`/api/tasks/overview${q}`);
+    },
+    getTaskOverview(date) { return this.getTasksOverview(date); },
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
 
     // ── Reports ──

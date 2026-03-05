@@ -8,6 +8,7 @@ import sqlite3
 import json
 import os
 from datetime import datetime
+from datetime import timedelta
 from backend.config import config
 
 
@@ -1072,6 +1073,161 @@ class Database:
                     (limit,),
                 )
             return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_task_overview(self, date: str | None = None) -> list[dict]:
+        """Return TaskPage-oriented account summary rows.
+
+        Keeps /api/tasks/history behavior untouched and provides a separate,
+        pre-shaped dataset for checklist/status dashboards.
+        """
+        if date:
+            try:
+                ref_date = datetime.fromisoformat(date)
+                ref_now = ref_date.replace(hour=23, minute=59, second=59, microsecond=0)
+            except ValueError:
+                ref_now = datetime.utcnow()
+        else:
+            ref_now = datetime.utcnow()
+
+        ref_now_str = ref_now.strftime("%Y-%m-%d %H:%M:%S")
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT
+                       a.id,
+                       a.game_id,
+                       COALESCE(NULLIF(a.lord_name, ''), NULLIF(ls.lord_name, ''), a.game_id) AS account_name,
+                       a.provider,
+                       a.alliance,
+                       a.note,
+                       e.emu_index,
+                       COALESCE(NULLIF(e.name, ''), 'LDPlayer-' || printf('%02d', COALESCE(e.emu_index, 0))) AS emulator_name,
+                       ls.created_at AS last_scan_at,
+                       ls.scan_status AS last_scan_status,
+                       rt.last_task_at,
+                       rt.last_task_status,
+                       COALESCE(rt.failures_24h, 0) AS failures_24h
+                   FROM accounts a
+                   LEFT JOIN emulators e ON a.emulator_id = e.id
+                   LEFT JOIN (
+                       SELECT s1.*
+                       FROM scan_snapshots s1
+                       JOIN (
+                           SELECT game_id, MAX(created_at) AS max_created_at
+                           FROM scan_snapshots
+                           WHERE COALESCE(game_id, '') != ''
+                           GROUP BY game_id
+                       ) sm ON sm.game_id = s1.game_id AND sm.max_created_at = s1.created_at
+                   ) ls ON ls.game_id = a.game_id
+                   LEFT JOIN (
+                       SELECT
+                           t.emulator_id,
+                           MAX(t.started_at) AS last_task_at,
+                           (SELECT t2.status
+                            FROM task_runs t2
+                            WHERE t2.emulator_id = t.emulator_id
+                            ORDER BY t2.started_at DESC
+                            LIMIT 1) AS last_task_status,
+                           SUM(
+                               CASE
+                                   WHEN t.started_at >= datetime(?, '-24 hours')
+                                        AND t.status NOT IN ('completed', 'success')
+                                   THEN 1
+                                   ELSE 0
+                               END
+                           ) AS failures_24h
+                       FROM task_runs t
+                       GROUP BY t.emulator_id
+                   ) rt ON rt.emulator_id = a.emulator_id
+                   ORDER BY a.is_active DESC, e.emu_index ASC, a.game_id ASC""",
+                (ref_now_str,),
+            )
+            rows = [dict(row) for row in await cursor.fetchall()]
+
+        now = ref_now
+        next_reset = (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).strftime("%H:%M")
+        results = []
+
+        for row in rows:
+            scan_at = self._parse_dt(row.get("last_scan_at"))
+            last_task_at = self._parse_dt(row.get("last_task_at"))
+            scan_age_h = self._hours_since(scan_at, now)
+            task_age_h = self._hours_since(last_task_at, now)
+            failures_24h = int(row.get("failures_24h") or 0)
+            last_task_status = (row.get("last_task_status") or "").lower()
+
+            checks = {
+                "login": scan_age_h is not None and scan_age_h <= 18,
+                "collect": scan_age_h is not None and scan_age_h <= 12,
+                "alliance": task_age_h is not None and task_age_h <= 24 and failures_24h == 0,
+                "patrol": task_age_h is not None and task_age_h <= 18,
+                "shop": task_age_h is not None and task_age_h <= 8,
+                "event": scan_age_h is not None and scan_age_h <= 24 and failures_24h <= 1,
+            }
+
+            if scan_age_h is None or scan_age_h > 36 or failures_24h >= 3 or last_task_status in {"failed", "error"}:
+                status = "overdue"
+            elif scan_age_h > 20 or failures_24h >= 1 or checks["login"] is False:
+                status = "at-risk"
+            else:
+                status = "on-track"
+
+            incomplete_count = sum(1 for done in checks.values() if not done)
+            critical_gap = (not checks["login"]) or (not checks["collect"])
+            if status == "overdue" or critical_gap:
+                priority = "high"
+            elif status == "at-risk" or incomplete_count >= 3:
+                priority = "medium"
+            else:
+                priority = "low"
+
+            note = row.get("note") or ""
+            if not note:
+                if failures_24h > 0:
+                    note = f"{failures_24h} lỗi trong 24h gần nhất"
+                elif scan_age_h is None:
+                    note = "Chưa có dữ liệu scan"
+                elif scan_age_h > 24:
+                    note = "Cần scan lại để cập nhật checklist"
+                else:
+                    note = "Ổn định"
+
+            results.append(
+                {
+                    "id": row["id"],
+                    "game_id": row["game_id"],
+                    "accountName": row.get("account_name") or row["game_id"],
+                    "emulator": row.get("emulator_name") or "N/A",
+                    "owner": row.get("alliance") or "N/A",
+                    "region": row.get("provider") or "Global",
+                    "status": status,
+                    "priority": priority,
+                    "checks": checks,
+                    "note": note,
+                    "nextReset": next_reset,
+                    "lastScanAt": row.get("last_scan_at"),
+                    "lastTaskAt": row.get("last_task_at"),
+                    "failureCount24h": failures_24h,
+                }
+            )
+
+        return results
+
+    @staticmethod
+    def _parse_dt(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _hours_since(value: datetime | None, now: datetime) -> float | None:
+        if value is None:
+            return None
+        return max((now - value).total_seconds() / 3600.0, 0)
 
     # ── Account CRUD ──────────────────────────────
 

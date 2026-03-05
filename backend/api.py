@@ -221,6 +221,13 @@ async def get_queue():
     return task_queue.get_queue()
 
 
+
+
+@app.get("/api/tasks/overview")
+async def get_task_overview(date: str = None):
+    """Get TaskPage-ready account overview rows."""
+    return await database.get_task_overview(date=date)
+
 @app.get("/api/tasks/history")
 async def get_history(limit: int = 50):
     """Get task execution history (in-memory + DB fallback)."""

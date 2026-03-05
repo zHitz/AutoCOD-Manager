@@ -7,6 +7,8 @@ const TaskPage = {
     _priorityFilter: 'all',
     _showShortcutHelp: false,
     _boundKeydown: null,
+    _isLoading: false,
+    _loadError: '',
 
     _checklistTemplates: [
         { key: 'login', label: 'Điểm danh', shortLabel: 'Điểm danh', critical: true },
@@ -16,39 +18,6 @@ const TaskPage = {
         { key: 'shop', label: 'Làm mới cửa hàng', shortLabel: 'Shop', critical: false },
         { key: 'event', label: 'Nhận thưởng sự kiện', shortLabel: 'Sự kiện', critical: false },
     ],
-
-    _generateMockData() {
-        const priorities = ['high', 'medium', 'low'];
-        const statuses = ['on-track', 'at-risk', 'overdue'];
-        const regions = ['Global', 'Asia', 'EU'];
-        const data = [];
-
-        for (let i = 1; i <= 100; i += 1) {
-            const checks = {
-                login: Math.random() > 0.25,
-                collect: Math.random() > 0.35,
-                alliance: Math.random() > 0.45,
-                patrol: Math.random() > 0.4,
-                shop: Math.random() > 0.5,
-                event: Math.random() > 0.55,
-            };
-
-            data.push({
-                id: i,
-                accountName: `ACC_${String(i).padStart(3, '0')}`,
-                emulator: `LDPlayer-${String((i % 12) + 1).padStart(2, '0')}`,
-                owner: `Nhóm ${String.fromCharCode(65 + (i % 6))}`,
-                region: regions[i % regions.length],
-                priority: priorities[i % priorities.length],
-                status: statuses[i % statuses.length],
-                checks,
-                note: i % 4 === 0 ? 'Theo dõi event giờ vàng' : 'Ổn định',
-                nextReset: `${String((i % 24)).padStart(2, '0')}:00`,
-            });
-        }
-
-        return data;
-    },
 
     _getProgress(account) {
         const done = Object.values(account.checks).filter(Boolean).length;
@@ -73,7 +42,7 @@ const TaskPage = {
             if (acc.status === 'overdue') overdue += 1;
         });
 
-        const coverage = Math.round((doneTasks / totalTasks) * 100);
+        const coverage = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
         const target = 85;
 
         return {
@@ -115,13 +84,17 @@ const TaskPage = {
     },
 
     render() {
-        if (!this._accounts.length) {
-            this._accounts = this._generateMockData();
-        }
-
         this._applyFilters();
         const stats = this._computeStats();
         const selected = this._filteredAccounts[this._selectedIndex];
+
+        if (this._isLoading) {
+            return '<div class="panel" style="padding:16px;">Đang tải dữ liệu Task overview...</div>';
+        }
+
+        if (this._loadError) {
+            return `<div class="panel" style="padding:16px;color:#b91c1c;">Không tải được dữ liệu: ${this._loadError}</div>`;
+        }
 
         return `
             <style>
@@ -395,7 +368,44 @@ const TaskPage = {
         this._renderBodyOnly();
     },
 
+
+    async fetchData(date = null) {
+        this._isLoading = true;
+        this._loadError = '';
+
+        if (typeof router !== 'undefined' && router._currentPage === 'task') {
+            const root = document.getElementById('page-root');
+            if (root) root.innerHTML = this.render();
+        }
+
+        try {
+            const effectiveDate = date || new Date().toISOString().slice(0, 10);
+            const data = await API.getTasksOverview(effectiveDate);
+            this._accounts = Array.isArray(data) ? data : [];
+        } catch (e) {
+            this._accounts = [];
+            this._loadError = e?.message || 'Unknown error';
+        } finally {
+            this._isLoading = false;
+            if (typeof router !== 'undefined' && router._currentPage === 'task') {
+                const root = document.getElementById('page-root');
+                if (root) root.innerHTML = this.render();
+                this.init();
+            }
+        }
+    },
+
     init() {
+        if (this._boundKeydown) {
+            document.removeEventListener('keydown', this._boundKeydown);
+            this._boundKeydown = null;
+        }
+
+        if (!this._accounts.length && !this._isLoading && !this._loadError) {
+            const today = new Date().toISOString().slice(0, 10);
+            this.fetchData(today);
+        }
+
         const searchEl = document.getElementById('task-search');
         const statusEl = document.getElementById('task-status-filter');
         const priorityEl = document.getElementById('task-priority-filter');
