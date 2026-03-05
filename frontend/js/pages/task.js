@@ -7,47 +7,226 @@ const TaskPage = {
     _priorityFilter: 'all',
     _showShortcutHelp: false,
     _boundKeydown: null,
+    _isLoading: false,
+    _hasLoadedRealData: false,
+    _taskActivitySelectionKey: 'task_selected_activities_v1',
+    _taskActivityRegistryKey: 'task_activity_registry_v1',
 
-    _checklistTemplates: [
-        { key: 'login', label: 'Điểm danh', shortLabel: 'Điểm danh', critical: true },
-        { key: 'collect', label: 'Thu tài nguyên', shortLabel: 'Thu tài nguyên', critical: true },
-        { key: 'alliance', label: 'Donate liên minh', shortLabel: 'Donate LM', critical: false },
-        { key: 'patrol', label: 'Tuần tra / Nhiệm vụ ngày', shortLabel: 'Tuần tra', critical: false },
-        { key: 'shop', label: 'Làm mới cửa hàng', shortLabel: 'Shop', critical: false },
-        { key: 'event', label: 'Nhận thưởng sự kiện', shortLabel: 'Sự kiện', critical: false },
+    _checklistTemplates: [],
+    _defaultChecklistTemplates: [
+        { key: 'login', label: 'Daily login', shortLabel: 'Daily login', critical: true },
+        { key: 'collect', label: 'Collect resources', shortLabel: 'Collect resources', critical: true },
+        { key: 'alliance', label: 'Alliance donation', shortLabel: 'Alliance', critical: false },
+        { key: 'patrol', label: 'Patrol / Daily missions', shortLabel: 'Patrol', critical: false },
+        { key: 'shop', label: 'Refresh shop', shortLabel: 'Shop', critical: false },
+        { key: 'event', label: 'Claim event rewards', shortLabel: 'Event', critical: false },
     ],
 
-    _generateMockData() {
-        const priorities = ['high', 'medium', 'low'];
-        const statuses = ['on-track', 'at-risk', 'overdue'];
-        const regions = ['Global', 'Asia', 'EU'];
-        const data = [];
 
-        for (let i = 1; i <= 100; i += 1) {
-            const checks = {
-                login: Math.random() > 0.25,
-                collect: Math.random() > 0.35,
-                alliance: Math.random() > 0.45,
-                patrol: Math.random() > 0.4,
-                shop: Math.random() > 0.5,
-                event: Math.random() > 0.55,
-            };
+    _getStoredActivityRegistry() {
+        try {
+            const raw = localStorage.getItem(this._taskActivityRegistryKey);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    },
 
-            data.push({
-                id: i,
-                accountName: `ACC_${String(i).padStart(3, '0')}`,
-                emulator: `LDPlayer-${String((i % 12) + 1).padStart(2, '0')}`,
-                owner: `Nhóm ${String.fromCharCode(65 + (i % 6))}`,
-                region: regions[i % regions.length],
-                priority: priorities[i % priorities.length],
-                status: statuses[i % statuses.length],
-                checks,
-                note: i % 4 === 0 ? 'Theo dõi event giờ vàng' : 'Ổn định',
-                nextReset: `${String((i % 24)).padStart(2, '0')}:00`,
-            });
+    _getConfiguredChecklistTemplates() {
+        const defaults = this._defaultChecklistTemplates;
+        let selectedIds = [];
+
+        try {
+            const raw = localStorage.getItem(this._taskActivitySelectionKey);
+            const parsed = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(parsed)) selectedIds = parsed.filter(Boolean);
+        } catch (_) {
+            selectedIds = [];
         }
 
-        return data;
+        if (!selectedIds.length) return defaults;
+
+        const registry = this._getStoredActivityRegistry();
+        const registryMap = new Map(registry.map((item) => [item.id, item.name]));
+        const defaultMap = new Map(defaults.map((item) => [item.key, item]));
+
+        const templates = selectedIds.map((id) => {
+            if (defaultMap.has(id)) return defaultMap.get(id);
+            const displayName = registryMap.get(id) || id.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+            return {
+                key: id,
+                label: displayName,
+                shortLabel: displayName,
+                critical: false,
+            };
+        });
+
+        return templates.length ? templates : defaults;
+    },
+
+    _syncChecklistTemplatesFromSettings() {
+        const templates = this._getConfiguredChecklistTemplates();
+        this._checklistTemplates = templates.length ? templates : this._defaultChecklistTemplates;
+    },
+
+
+    async _loadRealData() {
+        this._syncChecklistTemplatesFromSettings();
+        this._isLoading = true;
+
+        try {
+            const [accounts, history] = await Promise.all([
+                fetch('/api/accounts').then((res) => (res.ok ? res.json() : [])),
+                fetch('/api/tasks/history?limit=500').then((res) => (res.ok ? res.json() : [])).catch(() => []),
+            ]);
+
+            const historyByGameId = this._indexHistoryByGameId(history);
+            this._accounts = (Array.isArray(accounts) ? accounts : []).map((acc, idx) => this._mapAccountToTaskRow(acc, idx, historyByGameId));
+            this._hasLoadedRealData = true;
+        } catch (error) {
+            console.warn('[TaskPage] Failed to load task data from API:', error);
+            this._accounts = [];
+            this._hasLoadedRealData = true;
+        } finally {
+            this._isLoading = false;
+        }
+    },
+
+    _indexHistoryByGameId(historyItems) {
+        const map = new Map();
+        if (!Array.isArray(historyItems)) return map;
+
+        historyItems.forEach((item) => {
+            const candidates = [];
+            if (item?.game_id) candidates.push(item.game_id);
+
+            const metadataRaw = item?.metadata_json || item?.metadata;
+            if (metadataRaw) {
+                try {
+                    const metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) : metadataRaw;
+                    if (metadata?.game_id) candidates.push(metadata.game_id);
+                } catch (_) {}
+            }
+
+            const resultRaw = item?.result_json;
+            if (resultRaw) {
+                try {
+                    const parsed = typeof resultRaw === 'string' ? JSON.parse(resultRaw) : resultRaw;
+                    if (parsed?.game_id) candidates.push(parsed.game_id);
+                    if (parsed?.data?.game_id) candidates.push(parsed.data.game_id);
+                } catch (_) {}
+            }
+
+            candidates.forEach((gameId) => {
+                if (!map.has(gameId)) map.set(gameId, []);
+                map.get(gameId).push(item);
+            });
+        });
+
+        return map;
+    },
+
+    _mapAccountToTaskRow(account, index, historyByGameId) {
+        const gameId = account?.game_id || '';
+        const history = historyByGameId.get(gameId) || [];
+        const latestRun = history[0] || null;
+
+        const totalResource = ['gold_total', 'wood_total', 'ore_total', 'mana_total']
+            .map((k) => Number(account?.[k] || 0))
+            .reduce((sum, val) => sum + val, 0);
+
+        const checks = this._buildChecksFromActivities(account, latestRun, totalResource);
+
+        const done = Object.values(checks).filter(Boolean).length;
+        const status = this._deriveStatus(done, account?.last_scan_at, latestRun?.status);
+        const priority = this._derivePriority(status, done, account?.hall_level);
+
+        return {
+            id: Number(account?.account_id || index + 1),
+            accountName: account?.lord_name || gameId || `Account-${index + 1}`,
+            emulator: account?.emu_name || account?.serial || '--',
+            owner: account?.alliance || 'Unassigned team',
+            region: account?.provider || 'Global',
+            priority,
+            status,
+            checks,
+            note: account?.note || this._buildNoteFromRun(latestRun),
+            nextReset: this._deriveResetTime(account?.provider),
+        };
+    },
+
+
+    _buildChecksFromActivities(account, latestRun, totalResource) {
+        const checks = {};
+        const latestStatus = String(latestRun?.status || '').toUpperCase();
+        const latestType = String(latestRun?.task_type || '').toLowerCase();
+
+        this._checklistTemplates.forEach((item) => {
+            switch (item.key) {
+                case 'login':
+                    checks[item.key] = Boolean(account?.is_active);
+                    break;
+                case 'collect':
+                    checks[item.key] = totalResource > 0;
+                    break;
+                case 'alliance':
+                    checks[item.key] = Boolean(account?.alliance);
+                    break;
+                case 'patrol':
+                    checks[item.key] = Number(account?.power || 0) > 0;
+                    break;
+                case 'shop':
+                    checks[item.key] = Number(account?.market_level || 0) > 0;
+                    break;
+                case 'event':
+                    checks[item.key] = Number(account?.pet_token || 0) > 0;
+                    break;
+                case 'full_scan':
+                    checks[item.key] = Boolean(account?.last_scan_at);
+                    break;
+                default:
+                    checks[item.key] = latestStatus === 'SUCCESS' && latestType === item.key.toLowerCase();
+                    break;
+            }
+        });
+
+        return checks;
+    },
+
+    _deriveStatus(doneCount, lastScanAt, latestRunStatus) {
+        if (String(latestRunStatus || '').toUpperCase() === 'FAILED') return 'overdue';
+        if (!lastScanAt) return doneCount < 4 ? 'overdue' : 'at-risk';
+
+        const ageMs = Date.now() - new Date(lastScanAt).getTime();
+        if (Number.isFinite(ageMs) && ageMs > 24 * 60 * 60 * 1000) return 'overdue';
+        if (doneCount < 4) return 'at-risk';
+        return 'on-track';
+    },
+
+    _derivePriority(status, doneCount, hallLevel) {
+        if (status === 'overdue') return 'high';
+        if (doneCount < 4 || Number(hallLevel || 0) < 20) return 'medium';
+        return 'low';
+    },
+
+    _deriveResetTime(provider) {
+        const regionMap = {
+            Asia: '00:00',
+            EU: '07:00',
+            Global: '05:00',
+        };
+
+        return regionMap[provider] || '05:00';
+    },
+
+    _buildNoteFromRun(run) {
+        if (!run) return 'Waiting for scan sync';
+        if (String(run.status || '').toUpperCase() === 'FAILED') {
+            return run.error || 'Latest run failed';
+        }
+
+        return 'Synced from task history';
     },
 
     _getProgress(account) {
@@ -73,7 +252,7 @@ const TaskPage = {
             if (acc.status === 'overdue') overdue += 1;
         });
 
-        const coverage = Math.round((doneTasks / totalTasks) * 100);
+        const coverage = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
         const target = 85;
 
         return {
@@ -106,18 +285,16 @@ const TaskPage = {
 
     _renderPriorityBadge(priority) {
         const map = {
-            high: 'Cao',
-            medium: 'Trung bình',
-            low: 'Thấp',
+            high: 'High',
+            medium: 'Medium',
+            low: 'Low',
         };
 
         return `<span class="task-pill task-priority-pill ${priority}">${map[priority] || priority}</span>`;
     },
 
     render() {
-        if (!this._accounts.length) {
-            this._accounts = this._generateMockData();
-        }
+        this._syncChecklistTemplatesFromSettings();
 
         this._applyFilters();
         const stats = this._computeStats();
@@ -186,48 +363,48 @@ const TaskPage = {
             <div class="task-page">
                 <div class="task-stats-grid">
                     <div class="task-stat-card">
-                        <div class="task-stat-label">Tổng account</div>
+                        <div class="task-stat-label">Total accounts</div>
                         <div class="task-stat-value">${stats.totalAccounts}</div>
-                        <div class="task-stat-sub">Quản lý checklist cho cụm account quy mô lớn.</div>
+                        <div class="task-stat-sub">Checklist tracking across your account fleet.</div>
                     </div>
                     <div class="task-stat-card">
-                        <div class="task-stat-label">Tiến độ checklist</div>
+                        <div class="task-stat-label">Checklist progress</div>
                         <div class="task-stat-value">${stats.doneTasks}/${stats.totalTasks}</div>
-                        <div class="task-stat-sub">Tổng task đã hoàn thành trong ngày.</div>
+                        <div class="task-stat-sub">Total completed tasks for today.</div>
                     </div>
                     <div class="task-stat-card">
-                        <div class="task-stat-label">Account quá hạn</div>
+                        <div class="task-stat-label">Overdue accounts</div>
                         <div class="task-stat-value" style="color:#b91c1c">${stats.overdue}</div>
-                        <div class="task-stat-sub">Nên xử lý trước mốc reset gần nhất.</div>
-                        <button class="task-inline-link" id="task-cta-overdue">Lọc ngay danh sách quá hạn →</button>
+                        <div class="task-stat-sub">Handle these before the next reset window.</div>
+                        <button class="task-inline-link" id="task-cta-overdue">Filter overdue accounts →</button>
                     </div>
                     <div class="task-stat-card">
-                        <div class="task-stat-label">Độ phủ tự động</div>
+                        <div class="task-stat-label">Automation coverage</div>
                         <div class="task-stat-value">${stats.coverage}%</div>
-                        <div class="task-stat-sub">Mục tiêu: <b>${stats.target}%</b> · thiếu ${stats.gap}% để đạt chuẩn.</div>
-                        <button class="task-inline-link" id="task-cta-low-coverage">Lọc account ưu tiên cao →</button>
+                        <div class="task-stat-sub">Target: <b>${stats.target}%</b> · ${stats.gap}% remaining.</div>
+                        <button class="task-inline-link" id="task-cta-low-coverage">Filter high-priority accounts →</button>
                     </div>
                 </div>
 
                 <div class="task-controls">
-                    <input id="task-search" class="task-control-input" placeholder="Tìm theo Account / Emulator / Nhóm phụ trách..." value="${this._search}" />
+                    <input id="task-search" class="task-control-input" placeholder="Search by Account / Emulator / Owner..." value="${this._search}" />
                     <select id="task-status-filter" class="task-control-select">
-                        <option value="all" ${this._statusFilter === 'all' ? 'selected' : ''}>Tất cả trạng thái</option>
-                        <option value="on-track" ${this._statusFilter === 'on-track' ? 'selected' : ''}>Đúng tiến độ</option>
-                        <option value="at-risk" ${this._statusFilter === 'at-risk' ? 'selected' : ''}>Nguy cơ trễ</option>
-                        <option value="overdue" ${this._statusFilter === 'overdue' ? 'selected' : ''}>Quá hạn</option>
+                        <option value="all" ${this._statusFilter === 'all' ? 'selected' : ''}>All statuses</option>
+                        <option value="on-track" ${this._statusFilter === 'on-track' ? 'selected' : ''}>On track</option>
+                        <option value="at-risk" ${this._statusFilter === 'at-risk' ? 'selected' : ''}>At risk</option>
+                        <option value="overdue" ${this._statusFilter === 'overdue' ? 'selected' : ''}>Overdue</option>
                     </select>
                     <select id="task-priority-filter" class="task-control-select">
-                        <option value="all" ${this._priorityFilter === 'all' ? 'selected' : ''}>Tất cả độ ưu tiên</option>
-                        <option value="high" ${this._priorityFilter === 'high' ? 'selected' : ''}>Cao</option>
-                        <option value="medium" ${this._priorityFilter === 'medium' ? 'selected' : ''}>Trung bình</option>
-                        <option value="low" ${this._priorityFilter === 'low' ? 'selected' : ''}>Thấp</option>
+                        <option value="all" ${this._priorityFilter === 'all' ? 'selected' : ''}>All priorities</option>
+                        <option value="high" ${this._priorityFilter === 'high' ? 'selected' : ''}>High</option>
+                        <option value="medium" ${this._priorityFilter === 'medium' ? 'selected' : ''}>Medium</option>
+                        <option value="low" ${this._priorityFilter === 'low' ? 'selected' : ''}>Low</option>
                     </select>
                     <button class="btn btn-sm btn-default" id="task-mark-selected" ${selected ? '' : 'disabled'}>
-                        Hoàn tất account đang chọn ${selected ? `(${selected.accountName})` : ''}
+                        Complete selected account ${selected ? `(${selected.accountName})` : ''}
                     </button>
                     <button class="btn btn-sm btn-ghost" id="task-shortcuts-toggle">?</button>
-                    <button class="btn btn-sm btn-outline" id="task-reset-view">Xóa bộ lọc</button>
+                    <button class="btn btn-sm btn-outline" id="task-reset-view">Clear filters</button>
                 </div>
 
                 <div class="task-main-grid">
@@ -237,45 +414,45 @@ const TaskPage = {
                                 <thead>
                                     <tr>
                                         <th class="task-sticky-col"><span class="th-content">Account <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Trạng thái <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Ưu tiên <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Status <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Priority <span class="th-sort">↕</span></span></th>
                                         ${this._checklistTemplates.map((item) => `<th title="${item.label}"><span class="th-content">${item.shortLabel}<span class="th-sort">↕</span></span></th>`).join('')}
-                                        <th><span class="th-content">Tiến độ <span class="th-sort">↕</span></span></th>
-                                        <th><span class="th-content">Ghi chú <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Progress <span class="th-sort">↕</span></span></th>
+                                        <th><span class="th-content">Note <span class="th-sort">↕</span></span></th>
                                         <th><span class="th-content">Reset <span class="th-sort">↕</span></span></th>
                                     </tr>
                                 </thead>
                                 <tbody id="task-tbody">${this._renderRows()}</tbody>
                             </table>
                         </div>
-                        <div class="task-scroll-hint" id="task-scroll-hint">← Cuộn ngang để xem thêm cột →</div>
+                        <div class="task-scroll-hint" id="task-scroll-hint">← Scroll horizontally to see more columns →</div>
                     </div>
 
                     <div class="task-side-col">
                         <div class="task-panel">
                             <div class="task-panel-title-row">
-                                <div class="task-panel-title">Cần ưu tiên hôm nay</div>
+                                <div class="task-panel-title">Today’s priorities</div>
                             </div>
                             ${this._renderFocusItems()}
-                            <div class="task-focus-sub" style="margin-top:8px;">Tỷ lệ hiển thị dạng <b>x/y task</b> = số task đã xong / tổng task ngày.</div>
+                            <div class="task-focus-sub" style="margin-top:8px;">Displayed as <b>x/y tasks</b> = completed tasks / total daily tasks.</div>
                         </div>
 
                         <div class="task-panel">
                             <div class="task-panel-title-row">
-                                <div class="task-panel-title">Tiện ích</div>
+                                <div class="task-panel-title">Utilities</div>
                             </div>
-                            <button class="btn btn-sm btn-outline task-util-btn">Gán checklist mẫu theo nhóm</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Sắp xếp theo giờ reset gần nhất</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Xuất báo cáo ngày</button>
-                            <button class="btn btn-sm btn-outline task-util-btn">Đánh dấu thiếu task quan trọng</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Apply checklist template by team</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Sort by nearest reset time</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Export daily report</button>
+                            <button class="btn btn-sm btn-outline task-util-btn">Flag missing critical tasks</button>
 
                             ${this._showShortcutHelp ? `
                             <div class="task-shortcut-pop">
-                                <div class="task-panel-title" style="margin-bottom:8px;">Phím tắt</div>
-                                <div class="task-shortcut-row"><span>Focus ô tìm kiếm</span><span class="task-kbd">/</span></div>
-                                <div class="task-shortcut-row"><span>Chọn dòng kế tiếp / trước</span><span class="task-kbd">J / K</span></div>
-                                <div class="task-shortcut-row"><span>Toggle task pending đầu</span><span class="task-kbd">Space</span></div>
-                                <div class="task-shortcut-row"><span>Đánh dấu xong account chọn</span><span class="task-kbd">Ctrl + Enter</span></div>
+                                <div class="task-panel-title" style="margin-bottom:8px;">Shortcuts</div>
+                                <div class="task-shortcut-row"><span>Focus search box</span><span class="task-kbd">/</span></div>
+                                <div class="task-shortcut-row"><span>Select next / previous row</span><span class="task-kbd">J / K</span></div>
+                                <div class="task-shortcut-row"><span>Toggle first pending task</span><span class="task-kbd">Space</span></div>
+                                <div class="task-shortcut-row"><span>Mark selected account as done</span><span class="task-kbd">Ctrl + Enter</span></div>
                             </div>
                             ` : ''}
                         </div>
@@ -287,16 +464,16 @@ const TaskPage = {
 
     _renderRows() {
         if (!this._filteredAccounts.length) {
-            return '<tr><td colspan="13" style="text-align:center;color:var(--muted-foreground);padding:16px">Không có account phù hợp bộ lọc hiện tại.</td></tr>';
+            return '<tr><td colspan="13" style="text-align:center;color:var(--muted-foreground);padding:16px">No accounts match the current filters.</td></tr>';
         }
 
         return this._filteredAccounts.map((acc, index) => {
             const progress = this._getProgress(acc);
             const statusLabel = acc.status === 'on-track'
-                ? 'Đúng tiến độ'
+                ? 'On track'
                 : acc.status === 'at-risk'
-                    ? 'Nguy cơ trễ'
-                    : 'Quá hạn';
+                    ? 'At risk'
+                    : 'Overdue';
 
             return `
                 <tr class="task-row ${index === this._selectedIndex ? 'selected' : ''}" data-id="${acc.id}">
@@ -313,7 +490,7 @@ const TaskPage = {
                     `).join('')}
                     <td class="task-progress-wrap">
                         <div class="task-progress-bar"><div class="task-progress-fill" style="width:${progress.percent}%"></div></div>
-                        <div class="task-progress-label">${progress.done}/${progress.total} task · ${progress.percent}%</div>
+                        <div class="task-progress-label">${progress.done}/${progress.total} tasks · ${progress.percent}%</div>
                     </td>
                     <td>${acc.note}</td>
                     <td class="text-mono">${acc.nextReset}</td>
@@ -333,9 +510,9 @@ const TaskPage = {
                 <div class="task-focus-item">
                     <div>
                         <div class="font-semibold">${acc.accountName}</div>
-                        <div class="task-focus-sub">${progress.done}/${progress.total} task đã xong</div>
+                        <div class="task-focus-sub">${progress.done}/${progress.total} tasks completed</div>
                     </div>
-                    <button class="task-focus-cta" data-focus-id="${acc.id}">Xem</button>
+                    <button class="task-focus-cta" data-focus-id="${acc.id}">View</button>
                 </div>
             `;
         }).join('');
@@ -349,11 +526,11 @@ const TaskPage = {
         hint.style.display = hasOverflow ? 'inline-flex' : 'none';
         if (!hasOverflow) return;
         if (scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4) {
-            hint.textContent = '← Đã tới cột cuối';
+            hint.textContent = '← Reached last column';
         } else if (scroller.scrollLeft <= 2) {
-            hint.textContent = '← Cuộn ngang để xem thêm cột →';
+            hint.textContent = '← Scroll horizontally to see more columns →';
         } else {
-            hint.textContent = '← Còn cột ở 2 phía →';
+            hint.textContent = '← More columns on both sides →';
         }
     },
 
@@ -367,8 +544,8 @@ const TaskPage = {
         if (markBtn) {
             markBtn.disabled = !selected;
             markBtn.textContent = selected
-                ? `Hoàn tất account đang chọn (${selected.accountName})`
-                : 'Hoàn tất account đang chọn';
+                ? `Complete selected account (${selected.accountName})`
+                : 'Complete selected account';
         }
     },
 
@@ -395,7 +572,13 @@ const TaskPage = {
         this._renderBodyOnly();
     },
 
-    init() {
+    async init() {
+        if (!this._hasLoadedRealData) {
+            await this._loadRealData();
+            router.navigate('task');
+            return;
+        }
+
         const searchEl = document.getElementById('task-search');
         const statusEl = document.getElementById('task-status-filter');
         const priorityEl = document.getElementById('task-priority-filter');
