@@ -7,6 +7,8 @@ const TaskPage = {
     _priorityFilter: 'all',
     _showShortcutHelp: false,
     _boundKeydown: null,
+    _isLoading: false,
+    _hasLoadedRealData: false,
 
     _checklistTemplates: [
         { key: 'login', label: 'Điểm danh', shortLabel: 'Điểm danh', critical: true },
@@ -17,37 +19,130 @@ const TaskPage = {
         { key: 'event', label: 'Nhận thưởng sự kiện', shortLabel: 'Sự kiện', critical: false },
     ],
 
-    _generateMockData() {
-        const priorities = ['high', 'medium', 'low'];
-        const statuses = ['on-track', 'at-risk', 'overdue'];
-        const regions = ['Global', 'Asia', 'EU'];
-        const data = [];
+    async _loadRealData() {
+        this._isLoading = true;
 
-        for (let i = 1; i <= 100; i += 1) {
-            const checks = {
-                login: Math.random() > 0.25,
-                collect: Math.random() > 0.35,
-                alliance: Math.random() > 0.45,
-                patrol: Math.random() > 0.4,
-                shop: Math.random() > 0.5,
-                event: Math.random() > 0.55,
-            };
+        try {
+            const [accounts, history] = await Promise.all([
+                fetch('/api/accounts').then((res) => (res.ok ? res.json() : [])),
+                fetch('/api/tasks/history?limit=500').then((res) => (res.ok ? res.json() : [])).catch(() => []),
+            ]);
 
-            data.push({
-                id: i,
-                accountName: `ACC_${String(i).padStart(3, '0')}`,
-                emulator: `LDPlayer-${String((i % 12) + 1).padStart(2, '0')}`,
-                owner: `Nhóm ${String.fromCharCode(65 + (i % 6))}`,
-                region: regions[i % regions.length],
-                priority: priorities[i % priorities.length],
-                status: statuses[i % statuses.length],
-                checks,
-                note: i % 4 === 0 ? 'Theo dõi event giờ vàng' : 'Ổn định',
-                nextReset: `${String((i % 24)).padStart(2, '0')}:00`,
+            const historyByGameId = this._indexHistoryByGameId(history);
+            this._accounts = (Array.isArray(accounts) ? accounts : []).map((acc, idx) => this._mapAccountToTaskRow(acc, idx, historyByGameId));
+            this._hasLoadedRealData = true;
+        } catch (error) {
+            console.warn('[TaskPage] Failed to load task data from API:', error);
+            this._accounts = [];
+            this._hasLoadedRealData = true;
+        } finally {
+            this._isLoading = false;
+        }
+    },
+
+    _indexHistoryByGameId(historyItems) {
+        const map = new Map();
+        if (!Array.isArray(historyItems)) return map;
+
+        historyItems.forEach((item) => {
+            const candidates = [];
+            if (item?.game_id) candidates.push(item.game_id);
+
+            const metadataRaw = item?.metadata_json || item?.metadata;
+            if (metadataRaw) {
+                try {
+                    const metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) : metadataRaw;
+                    if (metadata?.game_id) candidates.push(metadata.game_id);
+                } catch (_) {}
+            }
+
+            const resultRaw = item?.result_json;
+            if (resultRaw) {
+                try {
+                    const parsed = typeof resultRaw === 'string' ? JSON.parse(resultRaw) : resultRaw;
+                    if (parsed?.game_id) candidates.push(parsed.game_id);
+                    if (parsed?.data?.game_id) candidates.push(parsed.data.game_id);
+                } catch (_) {}
+            }
+
+            candidates.forEach((gameId) => {
+                if (!map.has(gameId)) map.set(gameId, []);
+                map.get(gameId).push(item);
             });
+        });
+
+        return map;
+    },
+
+    _mapAccountToTaskRow(account, index, historyByGameId) {
+        const gameId = account?.game_id || '';
+        const history = historyByGameId.get(gameId) || [];
+        const latestRun = history[0] || null;
+
+        const totalResource = ['gold_total', 'wood_total', 'ore_total', 'mana_total']
+            .map((k) => Number(account?.[k] || 0))
+            .reduce((sum, val) => sum + val, 0);
+
+        const checks = {
+            login: Boolean(account?.is_active),
+            collect: totalResource > 0,
+            alliance: Boolean(account?.alliance),
+            patrol: Number(account?.power || 0) > 0,
+            shop: Number(account?.market_level || 0) > 0,
+            event: Number(account?.pet_token || 0) > 0,
+        };
+
+        const done = Object.values(checks).filter(Boolean).length;
+        const status = this._deriveStatus(done, account?.last_scan_at, latestRun?.status);
+        const priority = this._derivePriority(status, done, account?.hall_level);
+
+        return {
+            id: Number(account?.account_id || index + 1),
+            accountName: account?.lord_name || gameId || `Account-${index + 1}`,
+            emulator: account?.emu_name || account?.serial || '--',
+            owner: account?.alliance || 'Chưa gán nhóm',
+            region: account?.provider || 'Global',
+            priority,
+            status,
+            checks,
+            note: account?.note || this._buildNoteFromRun(latestRun),
+            nextReset: this._deriveResetTime(account?.provider),
+        };
+    },
+
+    _deriveStatus(doneCount, lastScanAt, latestRunStatus) {
+        if (String(latestRunStatus || '').toUpperCase() === 'FAILED') return 'overdue';
+        if (!lastScanAt) return doneCount < 4 ? 'overdue' : 'at-risk';
+
+        const ageMs = Date.now() - new Date(lastScanAt).getTime();
+        if (Number.isFinite(ageMs) && ageMs > 24 * 60 * 60 * 1000) return 'overdue';
+        if (doneCount < 4) return 'at-risk';
+        return 'on-track';
+    },
+
+    _derivePriority(status, doneCount, hallLevel) {
+        if (status === 'overdue') return 'high';
+        if (doneCount < 4 || Number(hallLevel || 0) < 20) return 'medium';
+        return 'low';
+    },
+
+    _deriveResetTime(provider) {
+        const regionMap = {
+            Asia: '00:00',
+            EU: '07:00',
+            Global: '05:00',
+        };
+
+        return regionMap[provider] || '05:00';
+    },
+
+    _buildNoteFromRun(run) {
+        if (!run) return 'Chờ đồng bộ từ dữ liệu scan';
+        if (String(run.status || '').toUpperCase() === 'FAILED') {
+            return run.error || 'Lần chạy gần nhất thất bại';
         }
 
-        return data;
+        return 'Đã đồng bộ từ lịch sử chạy task';
     },
 
     _getProgress(account) {
@@ -73,7 +168,7 @@ const TaskPage = {
             if (acc.status === 'overdue') overdue += 1;
         });
 
-        const coverage = Math.round((doneTasks / totalTasks) * 100);
+        const coverage = totalTasks ? Math.round((doneTasks / totalTasks) * 100) : 0;
         const target = 85;
 
         return {
@@ -115,9 +210,6 @@ const TaskPage = {
     },
 
     render() {
-        if (!this._accounts.length) {
-            this._accounts = this._generateMockData();
-        }
 
         this._applyFilters();
         const stats = this._computeStats();
@@ -395,7 +487,13 @@ const TaskPage = {
         this._renderBodyOnly();
     },
 
-    init() {
+    async init() {
+        if (!this._hasLoadedRealData) {
+            await this._loadRealData();
+            router.navigate('task');
+            return;
+        }
+
         const searchEl = document.getElementById('task-search');
         const statusEl = document.getElementById('task-status-filter');
         const priorityEl = document.getElementById('task-priority-filter');
