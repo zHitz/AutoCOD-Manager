@@ -42,7 +42,9 @@ class GameStateDetector:
         # Special templates — loaded separately, called on specific conditions
         self.special_configs = {
             "loading_server_maintenance.png": "SERVER_MAINTENANCE",
-            "auto_capture_pet.png": "AUTO_CAPTURE_PET"
+            "auto_capture_pet.png": "AUTO_CAPTURE_PET",
+            "accounts/settings.png": "SETTINGS",
+            "accounts/character_management.png": "CHARACTER_MANAGEMENT",
         }
         self.special_templates = {}
         
@@ -61,6 +63,18 @@ class GameStateDetector:
         }
         self.activity_templates = {}
         
+        # Account templates — separate detector for swap_account flow
+        # Includes screen detection (Settings, CharManagement) and account name templates
+        # Returns name + center coordinates when matched (like check_activity)
+        self.account_configs = {
+            # Screen state templates
+
+            # Account name templates — add per-account entries here
+            # Crop account name text from Character Management screen
+            # Save to templates/accounts/
+            # "accounts/account_main.png": "ACCOUNT_MAIN",
+            # "accounts/account_farm1.png": "ACCOUNT_FARM1",
+        }        
         self._load_templates()
 
     def _load_templates(self):
@@ -106,6 +120,16 @@ class GameStateDetector:
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is not None:
                 self.activity_templates[name] = img
+
+        # Load account templates separately
+        for filename, name in self.account_configs.items():
+            path = os.path.join(self.templates_dir, filename)
+            if not os.path.exists(path):
+                print(f"[WARNING] Account template missing: {path}")
+                continue
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is not None:
+                self.account_templates[name] = img
 
     def screencap_memory(self, serial: str) -> np.ndarray:
         """Captures screen directly to RAM, no disk IO. Faster and cleaner for Multi-Emulator."""

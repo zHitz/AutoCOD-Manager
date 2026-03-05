@@ -1,0 +1,85 @@
+import { Result } from '../../../shared/result/Result.js';
+import { ActivitySelectionPolicy } from '../../../domain/workflow/policies/ActivitySelectionPolicy.js';
+import { CooldownPolicy } from '../../../domain/workflow/policies/CooldownPolicy.js';
+import { BotPayloadBuilder } from '../../../domain/workflow/policies/BotPayloadBuilder.js';
+
+export class RunBotActivitiesService {
+    constructor({ botRepo, configRepo, groupRepo, accountRepo }) {
+        this.botRepo = botRepo;
+        this.configRepo = configRepo;
+        this.groupRepo = groupRepo;
+        this.accountRepo = accountRepo;
+    }
+
+    async execute(groupId, systemActivities, startAccountId = null) {
+        try {
+            // 1. Load group config
+            const configResult = await this.configRepo.loadConfig(groupId);
+            if (!configResult.ok) return Result.fail(configResult.error);
+            const groupConfig = configResult.data;
+
+            // 2. Load group details to check if it has accounts (infrastructure)
+            const groupResult = await this.groupRepo.getById(groupId);
+            if (!groupResult.ok) return Result.fail(new Error('Group not found'));
+
+            const groupData = groupResult.data;
+            let accountsRaw = groupData.account_ids || '[]';
+            let accountsArr = [];
+            try { accountsArr = JSON.parse(accountsRaw) } catch (e) { }
+
+            if (accountsArr.length === 0) {
+                return Result.fail(new Error('This group has no accounts assigned.'));
+            }
+
+            // 3. Domain Logic: Pick Enabled
+            const enabledActivities = ActivitySelectionPolicy.pickEnabled(systemActivities, groupConfig);
+            if (enabledActivities.length === 0) {
+                return Result.fail(new Error('NO_ACTIVITIES')); // We'll map this error code in UI
+            }
+
+            // 4. Domain Logic: Check Cooldowns and Filter
+            const readyActivities = [];
+            const skippedLogs = [];
+
+            for (const act of enabledActivities) {
+                const mergedCfg = ActivitySelectionPolicy.getMergedConfig(act, groupConfig);
+
+                if (CooldownPolicy.isOnCooldown(mergedCfg)) {
+                    const remaining = CooldownPolicy.formatRemaining(mergedCfg);
+                    skippedLogs.push(`⏳ Skipping '${act.name}' — on cooldown (${remaining})`);
+                } else {
+                    readyActivities.push(act);
+                }
+            }
+
+            if (readyActivities.length === 0) {
+                return Result.fail(new Error('ALL_ON_COOLDOWN'));
+            }
+
+            // 5. Domain Logic: Build Payload
+            const payload = BotPayloadBuilder.build(
+                groupId,
+                readyActivities,
+                groupConfig,
+                ActivitySelectionPolicy.getMergedConfig,
+                startAccountId
+            );
+
+            // 6. Execute via repo
+            const startResult = await this.botRepo.start(payload);
+
+            if (!startResult.ok) {
+                return Result.fail(startResult.error);
+            }
+
+            return Result.ok({
+                response: startResult.data,
+                skippedLogs: skippedLogs,
+                readyActivities: readyActivities
+            });
+
+        } catch (error) {
+            return Result.fail(error);
+        }
+    }
+}

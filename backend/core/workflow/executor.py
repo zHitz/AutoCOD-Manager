@@ -88,7 +88,7 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
             elif fn_id == "act_click_xy":
                 x = int(config.get("x", 0))
                 y = int(config.get("y", 0))
-                adb_helper.tap(serial, x, y)
+                await asyncio.to_thread(adb_helper.tap, serial, x, y)
                 await asyncio.sleep(0.5)
                 
             elif fn_id == "act_swipe":
@@ -97,39 +97,40 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                 x2 = int(config.get("endX", 0))
                 y2 = int(config.get("endY", 0))
                 duration = int(config.get("durationMs", 500))
-                adb_helper.swipe(serial, x1, y1, x2, y2, duration)
+                await asyncio.to_thread(adb_helper.swipe, serial, x1, y1, x2, y2, duration)
                 await asyncio.sleep(0.5)
                 
             elif fn_id == "act_input_text":
                 text = str(config.get("text", ""))
-                adb_helper.input_text(serial, text)
+                await asyncio.to_thread(adb_helper.input_text, serial, text)
                 await asyncio.sleep(1)
                 
             # App/System Controls
             elif fn_id == "sys_start_app":
                 pkg = config.get("package", "com.farlightgames.samo.gp")
-                was_running = core_actions.ensure_app_running(serial, pkg)
+                was_running = await asyncio.to_thread(core_actions.ensure_app_running, serial, pkg)
                 if not was_running:
                     await asyncio.sleep(10) # Give it time to boot up
             
             elif fn_id == "sys_close_app":
                 pkg = config.get("package", "com.farlightgames.samo.gp")
-                adb_helper.kill_app(serial, pkg)
+                await asyncio.to_thread(adb_helper.kill_app, serial, pkg)
                 await asyncio.sleep(2)
                 
             elif fn_id in ("sys_back_btn", "adb_press_back"):
-                adb_helper.press_back(serial)
+                await asyncio.to_thread(adb_helper.press_back, serial)
                 await asyncio.sleep(1.5)
 
             # ── Startup / Boot ──
             elif fn_id == "startup_to_lobby":
                 timeout = int(config.get("timeout", 120))
-                ok = core_actions.startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp", load_timeout=timeout)
+                ok = await asyncio.to_thread(core_actions.startup_to_lobby, serial, detector, package_name="com.farlightgames.samo.gp", load_timeout=timeout)
 
             # ── Full Scan ──
             elif fn_id == "scan_full":
                 from backend.core import full_scan as full_scan_module
-                result = full_scan_module.start_full_scan(
+                result = await asyncio.to_thread(
+                    full_scan_module.start_full_scan,
                     emulator_index, emulator_name,
                     ws_callback=ws_callback
                 )
@@ -143,12 +144,12 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
             elif fn_id == "adb_tap":
                 x = int(config.get("x", 0))
                 y = int(config.get("y", 0))
-                adb_helper.tap(serial, x, y)
+                await asyncio.to_thread(adb_helper.tap, serial, x, y)
                 await asyncio.sleep(0.5)
 
             # ── Check Game State (registry id: check_state) ──
             elif fn_id == "check_state":
-                current_state = detector.check_state(serial)
+                current_state = await asyncio.to_thread(detector.check_state, serial)
                 await log(f"  Detected State: {current_state}", "info")
 
             # ── Run Macro (registry id: run_macro) ──
@@ -163,7 +164,7 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                     if os.path.exists(filepath):
                         for loop_i in range(loop_count):
                             await log(f"  Macro '{macro_file}' loop {loop_i + 1}/{loop_count}", "info")
-                            macro_replay.start_replay(emulator_index, filepath, macro_file, ws_callback=ws_callback)
+                            await asyncio.to_thread(macro_replay.start_replay, emulator_index, filepath, macro_file, ws_callback=ws_callback)
                     else:
                         await log(f"  Macro file not found: {macro_file}", "err")
                         ok = False
@@ -173,21 +174,21 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
 
             # Game Navigation Macros
             elif fn_id == "nav_to_lobby":
-                ok = core_actions.back_to_lobby(serial, detector)
+                ok = await asyncio.to_thread(core_actions.back_to_lobby, serial, detector)
                 
             elif fn_id == "nav_to_profile":
-                ok = core_actions.go_to_profile(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_profile, serial, detector)
                 
             elif fn_id == "nav_to_items":
-                ok = core_actions.go_to_resources(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_resources, serial, detector)
                 
             # Advanced / State Dependent
             elif fn_id == "adv_detect_state":
-                current_state = detector.check_state(serial)
+                current_state = await asyncio.to_thread(detector.check_state, serial)
                 await log(f"  Detected State: {current_state}", "info")
                 
             elif fn_id == "adv_copy_id":
-                player_id = core_actions.extract_player_id(serial, detector)
+                player_id = await asyncio.to_thread(core_actions.extract_player_id, serial, detector)
                 if player_id:
                     await log(f"  Successfully copied Player ID: {player_id}", "ok")
                 else:
@@ -195,19 +196,39 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                     ok = False
                     
             elif fn_id == "nav_to_pet_token":
-                ok = core_actions.go_to_pet_token(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_pet_token, serial, detector)
 
             elif fn_id == "nav_to_capture_pet":
-                ok = core_actions.go_to_capture_pet(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_capture_pet, serial, detector)
 
             elif fn_id == "nav_to_market":
-                ok = core_actions.go_to_market(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_market, serial, detector)
 
             elif fn_id == "nav_to_resources":
-                ok = core_actions.go_to_resources(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_resources, serial, detector)
 
             elif fn_id == "nav_to_hall":
-                ok = core_actions.go_to_hall(serial, detector)
+                ok = await asyncio.to_thread(core_actions.go_to_hall, serial, detector)
+
+            elif fn_id == "nav_to_rss_center_farm":
+                ok = await asyncio.to_thread(core_actions.go_to_rss_center_farm, serial, detector)
+
+            elif fn_id == "nav_to_farming":
+                resource_type = config.get("resource_type", "wood")
+                ok = await asyncio.to_thread(core_actions.go_to_farming, serial, detector, resource_type=resource_type)
+
+            elif fn_id == "flow_delay":
+                delay_sec = config.get("seconds", 10)
+                await log(f"  Waiting {delay_sec}s...", "info")
+                import asyncio as _aio
+                await _aio.sleep(delay_sec)
+                ok = True
+
+            elif fn_id == "sys_close_app":
+                package = config.get("package", "com.farlightgames.samo.gp")
+                await log(f"  Closing app: {package}", "info")
+                await asyncio.to_thread(adb_helper.shell, serial, f"am force-stop {package}")
+                ok = True
 
             else:
                 await log(f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.", "warn")

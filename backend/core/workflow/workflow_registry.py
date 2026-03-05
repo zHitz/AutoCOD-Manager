@@ -271,3 +271,99 @@ def get_function_by_id(func_id: str):
         if fn["id"] == func_id:
             return fn
     return None
+
+
+ACTIVITY_REGISTRY = [
+    {
+        "id": "gather_rss_center",
+        "name": "Gather Resource Center",
+        "icon": "🏛️",
+        "description": "Farm resources at the Resource Center",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_rss_center_farm", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+    },
+    {
+        "id": "gather_resource",
+        "name": "Gather Resource",
+        "icon": "⛏️",
+        "description": "Gather resources on the world map",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_farming", "config": {"resource_type": "wood"}},
+        ],
+        "config_fields": [
+            {"key": "resource_type", "label": "Farm Resource Type", "type": "select", "options": ["gold", "wood", "stone", "mana"], "default": "wood"},
+        ],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+    },
+    {
+        "id": "full_scan",
+        "name": "Full Scan",
+        "icon": "🔬",
+        "description": "Boot to lobby and run full data scan",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "scan_full", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+    },
+    {
+        "id": "catch_pet",
+        "name": "Catch Pet",
+        "icon": "🐾",
+        "description": "Capture pet on the world map",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_capture_pet", "config": {}},
+            {"function_id": "capture_pet", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+    },
+]
+
+
+def get_activity_registry():
+    """Return the full bot activity registry."""
+    return ACTIVITY_REGISTRY
+
+
+def get_activity_by_id(activity_id: str):
+    """Find a bot activity by its ID."""
+    for act in ACTIVITY_REGISTRY:
+        if act["id"] == activity_id:
+            return act
+    return None
+
+
+def build_steps_for_activity(activity_id: str, user_config: dict = None):
+    """Build executor steps with user config merged into defaults."""
+    act = get_activity_by_id(activity_id)
+    if not act:
+        return None
+    
+    cfg = user_config or {}
+    steps = []
+    
+    for step_def in act.get("steps", []):
+        # Deep copy to avoid mutating the registry
+        step = {
+            "function_id": step_def["function_id"],
+            "config": step_def.get("config", {}).copy()
+        }
+        
+        # We simply merge all user_config into the step config where keys overlap.
+        for key, val in cfg.items():
+            if key in act.get("defaults", {}):
+                # Ignore global defaults like 'cooldown_enabled' inside step configs
+                continue
+            step["config"][key] = val
+            
+        steps.append(step)
+        
+    return steps

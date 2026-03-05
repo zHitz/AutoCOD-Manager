@@ -831,26 +831,29 @@ async def run_workflow_recipe(body: dict):
     return {"status": "accepted", "msg": f"Workflow started on {name}"}
 
 
-# Activity<->executor step mapping
-_ACTIVITY_TO_STEPS = {
-    "Capture Pet":              [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_capture_pet", "config": {}}],
-    "Pet Token":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_pet_token", "config": {}}],
-    "Market":                   [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_market", "config": {}}],
-    "Resources":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_resources", "config": {}}],
-    "City Hall":                [{"function_id": "nav_to_lobby"}, {"function_id": "nav_to_hall", "config": {}}],
-    "Boot to Lobby":            [{"function_id": "startup_to_lobby", "config": {"timeout": 120}}],
-    "Back to Lobby":            [{"function_id": "nav_to_lobby", "config": {}}],
-    "Detect State":             [{"function_id": "adv_detect_state", "config": {}}],
-    "Full Scan":                [{"function_id": "startup_to_lobby", "config": {}}, {"function_id": "scan_full", "config": {}}],
-    "Extract Player ID":        [{"function_id": "startup_to_lobby", "config": {}}, {"function_id": "nav_to_profile"}, {"function_id": "adv_copy_id", "config": {}}],
-}
+from backend.core.workflow import workflow_registry
+
+# Activity<->executor step mapping is now handled by workflow_registry
+def _build_activity_steps(activity_name: str, activity_config: dict = None):
+    # Backward compatibility: match name to id
+    act = next((a for a in workflow_registry.get_activity_registry() if a["name"] == activity_name or a["id"] == activity_name), None)
+    if not act:
+        return None
+    return workflow_registry.build_steps_for_activity(act["id"], activity_config)
+
+
+@app.get("/api/workflow/activity-registry")
+async def get_activity_registry():
+    """Returns the single source of truth for bot activities and their configurations."""
+    return {"status": "success", "data": workflow_registry.get_activity_registry()}
 
 
 @app.post("/api/bot/run")
+
 async def run_bot_activities(body: dict):
     """
     Run bot activities for a group.
-    Body: { group_id: int, activities: [str], emulator_indices: [int] }
+    Body: { group_id: int, activities: [{name, config}], emulator_indices: [int] }
     Streams logs to WS as workflow_log events → Activity Log in frontend.
     """
     from backend.core.workflow.executor import execute_recipe
@@ -866,10 +869,12 @@ async def run_bot_activities(body: dict):
     if not activities:
         return {"status": "error", "error": "No activities provided"}
 
-    # Build step list
+    # Build step list from activities (each is {name, config})
     steps = []
     for act in activities:
-        act_steps = _ACTIVITY_TO_STEPS.get(act)
+        act_name = act.get("name", act) if isinstance(act, dict) else act
+        act_cfg = act.get("config", {}) if isinstance(act, dict) else {}
+        act_steps = _build_activity_steps(act_name, act_cfg)
         if act_steps:
             steps.extend(act_steps)
         else:
@@ -877,6 +882,13 @@ async def run_bot_activities(body: dict):
 
     if not steps:
         return {"status": "error", "error": "No valid activities mapped to steps"}
+
+    # Close after X minutes — append a delayed close step at the end
+    close_after_min = body.get("close_after_min")
+    if close_after_min and int(close_after_min) > 0:
+        # Add a delay equal to close_after_min, then close the app
+        steps.append({"function_id": "flow_delay", "config": {"seconds": int(close_after_min) * 60}})
+        steps.append({"function_id": "sys_close_app", "config": {"package": "com.farlightgames.samo.gp"}})
 
     # Resolve emulator indices from group's account_ids
     if not emulator_indices and group_id:
@@ -928,6 +940,99 @@ async def run_bot_activities(body: dict):
     return {"status": "accepted", "emulators": launched, "steps": len(steps)}
 
 
+@app.post("/api/bot/run-sequential")
+async def run_bot_sequential(body: dict):
+    """
+    Run bot activities sequentially for all accounts in a group.
+    Body: { group_id: int, activities: [{name, config}], close_after_min: int }
+    """
+    from backend.core.workflow.bot_orchestrator import start_sequential_orchestrator
+    import json as json_mod
+    import aiosqlite
+
+    group_id = body.get("group_id")
+    activities = body.get("activities", [])
+    misc_config = body.get("misc", {})
+
+    if not group_id or not activities:
+        return {"status": "error", "error": "Missing group_id or activities"}
+
+    accounts = []
+    try:
+        async with aiosqlite.connect(config.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Get group's account_ids JSON array
+            cursor = await db.execute("SELECT account_ids FROM account_groups WHERE id = ?", (int(group_id),))
+            row = await cursor.fetchone()
+            if row:
+                account_ids = json_mod.loads(row["account_ids"] or "[]")
+                if account_ids:
+                    placeholders = ",".join("?" for _ in account_ids)
+                    # Join accounts -> emulators to get emu_index and lord_name
+                    cursor2 = await db.execute(
+                        f"""SELECT a.id, a.game_id, a.lord_name, e.emu_index 
+                            FROM accounts a
+                            LEFT JOIN emulators e ON a.emulator_id = e.id
+                            WHERE a.id IN ({placeholders})""",
+                        account_ids
+                    )
+                    accounts = [dict(r) for r in await cursor2.fetchall()]
+    except Exception as exc:
+        return {"status": "error", "error": f"Failed to fetch group accounts: {exc}"}
+
+    if not accounts:
+        return {"status": "error", "error": "No accounts found in this group."}
+
+    # Start the orchestrator in the background
+    start_account_id = body.get("start_account_id")
+    if start_account_id:
+        try:
+            start_account_id = int(start_account_id)
+        except ValueError:
+            start_account_id = None
+            
+    orch = start_sequential_orchestrator(
+        group_id=int(group_id),
+        accounts=accounts,
+        activities=activities,
+        ws_callback=ws_manager.broadcast_sync,
+        misc_config=misc_config,
+        start_account_id=start_account_id
+    )
+
+    # Check if it was already running (duplicate start prevention)
+    if orch.is_running and orch.cycle >= 1 and any(s != "pending" for s in orch.account_statuses.values()):
+        return {"status": "already_running", "group_id": group_id}
+
+    return {"status": "started", "group_id": group_id, "accounts_queued": len(accounts)}
+
+
+@app.post("/api/bot/stop")
+async def stop_bot(body: dict):
+    """Signals the orchestrator to stop running after current account finishes."""
+    from backend.core.workflow.bot_orchestrator import stop_sequential_orchestrator
+    group_id = body.get("group_id")
+    if group_id:
+        stopped = stop_sequential_orchestrator(int(group_id))
+        return {"status": "stopping" if stopped else "not_running"}
+    return {"status": "error", "error": "Missing group_id"}
+
+
+@app.get("/api/bot/status")
+async def get_bot_status(group_id: int = None):
+    if group_id is not None:
+        from backend.core.workflow.bot_orchestrator import get_orchestrator_status
+        status_data = get_orchestrator_status(int(group_id))
+        if status_data:
+            return {"status": "ok", "data": status_data}
+        return {"status": "not_running"}
+    else:
+        # Return all group statuses for overview
+        from backend.core.workflow.bot_orchestrator import get_all_orchestrator_statuses
+        all_statuses = get_all_orchestrator_statuses()
+        return {"status": "ok", "groups": all_statuses}
+
 
 @app.delete("/api/workflow/recipes/{recipe_id}")
 async def delete_workflow_recipe(recipe_id: str):
@@ -938,6 +1043,119 @@ async def delete_workflow_recipe(recipe_id: str):
     if len(_saved_recipes) < before:
         return {"status": "deleted"}
     return {"status": "error", "error": "Recipe not found"}
+
+
+# ──────────────────────────────────────────────
+# Activity Config Persistence (per group JSON)
+# ──────────────────────────────────────────────
+
+_ACTIVITY_CONFIG_DIR = Path(__file__).resolve().parent.parent / "data" / "activity_configs"
+
+def _migrate_config_v1_to_v2(group_id: int, v1_config: dict) -> dict:
+    """Convert old fragmented config format to the new unified v2 schema."""
+    from backend.core.workflow import workflow_registry
+    import time
+    from datetime import datetime
+    
+    # Initialize base v2 structure
+    v2_config = {
+        "version": 2,
+        "group_id": group_id,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "activities": {},
+        "misc": v1_config.get("misc", {"cooldown_min": 0, "limit_min": 0})
+    }
+    
+    # Pre-populate all known activities with defaults
+    registry = workflow_registry.get_activity_registry()
+    for act in registry:
+        act_id = act["id"]
+        v2_config["activities"][act_id] = {
+            "enabled": False,
+            "config": {},
+            "cooldown_enabled": act.get("defaults", {}).get("cooldown_enabled", False),
+            "cooldown_minutes": act.get("defaults", {}).get("cooldown_minutes", 60),
+            "last_run": None
+        }
+    
+    # Migrate enabled state
+    for act in v1_config.get("activities", []):
+        act_id = act.get("id")
+        act_name = act.get("name")
+        # Try to match by ID first, then name
+        target_id = act_id
+        if not target_id or target_id not in v2_config["activities"]:
+            for r in registry:
+                if r["name"] == act_name:
+                    target_id = r["id"]
+                    break
+        
+        if target_id in v2_config["activities"]:
+            v2_config["activities"][target_id]["enabled"] = act.get("enabled", False)
+            
+    # Migrate per-activity config payload
+    per_act_cfgs = v1_config.get("perActivityConfigs", {})
+    for name_key, cfg_payload in per_act_cfgs.items():
+        # Name key was often used in v1 (e.g. "Gather Resource")
+        target_id = None
+        for r in registry:
+            if r["name"] == name_key or r["id"] == name_key:
+                target_id = r["id"]
+                break
+                
+        if target_id and target_id in v2_config["activities"]:
+            v2_config["activities"][target_id]["config"] = cfg_payload
+            
+    return v2_config
+
+
+@app.get("/api/workflow/activity-config/{group_id}")
+async def get_activity_config(group_id: int):
+    """Load saved activity config for a group. Auto-migrates v1 to v2 schema."""
+    import json
+    config_file = _ACTIVITY_CONFIG_DIR / f"{group_id}.json"
+    
+    if not config_file.exists():
+        # Return empty v2 structure
+        empty_v2 = _migrate_config_v1_to_v2(group_id, {})
+        return {"status": "ok", "config": empty_v2}
+        
+    try:
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+        
+        # Check if needs migration
+        if data.get("version") != 2:
+            data = _migrate_config_v1_to_v2(group_id, data)
+            # Save migrated version back
+            _ACTIVITY_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            config_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            
+        return {"status": "ok", "config": data}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/workflow/activity-config/{group_id}")
+async def save_activity_config(group_id: int, body: dict):
+    """Save activity config for a group as JSON file (v2 schema expected)."""
+    import json
+    from datetime import datetime
+    
+    _ACTIVITY_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config_file = _ACTIVITY_CONFIG_DIR / f"{group_id}.json"
+    
+    try:
+        # Enforce v2 schema wrapper
+        if body.get("version") != 2:
+            body = _migrate_config_v1_to_v2(group_id, body)
+            
+        body["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        body["group_id"] = group_id
+        
+        config_file.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"status": "ok", "group_id": group_id}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 # ──────────────────────────────────────────────
@@ -1046,6 +1264,54 @@ async def delete_group(group_id: int):
     if ok:
         return {"status": "deleted"}
     return {"error": "Group not found"}
+
+
+# ──────────────────────────────────────────────
+# Execution Logging Endpoints
+# ──────────────────────────────────────────────
+
+@app.get("/api/execution/runs")
+async def get_execution_runs():
+    import aiosqlite
+    import json
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT * FROM task_runs ORDER BY start_at DESC LIMIT 100")
+        rows = await cursor.fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("metadata_json"):
+                d["metadata"] = json.loads(d["metadata_json"])
+            result.append(d)
+        return {"status": "success", "data": result}
+        
+@app.get("/api/execution/runs/{run_id}")
+async def get_execution_run_detail(run_id: str):
+    import aiosqlite
+    import json
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        # Get run summary
+        cursor = await db.execute("SELECT * FROM task_runs WHERE run_id = ?", (run_id,))
+        run_row = await cursor.fetchone()
+        if not run_row:
+            return {"status": "error", "message": "Run not found"}
+            
+        run_data = dict(run_row)
+        if run_data.get("metadata_json"):
+            run_data["metadata"] = json.loads(run_data["metadata_json"])
+            
+        # Get steps
+        cursor = await db.execute("SELECT * FROM task_run_steps WHERE run_id = ? ORDER BY step_index ASC", (run_id,))
+        steps = [dict(r) for r in await cursor.fetchall()]
+        
+        for s in steps:
+            if s.get("input_json"): s["input"] = json.loads(s["input_json"])
+            if s.get("output_json"): s["output"] = json.loads(s["output_json"])
+            
+        run_data["steps"] = steps
+        return {"status": "success", "data": run_data}
 
 
 # ──────────────────────────────────────────────

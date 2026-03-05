@@ -10,15 +10,15 @@ const WorkflowPage = {
     <div class="wf-page">
       <!-- MAIN TABS to switch between Builder and Activities -->
       <div class="wf-main-tabs">
-        <button class="wf-main-tab active" data-view="builder" onclick="WF3.switchMainTab('builder')">Recipe Builder</button>
-        <button class="wf-main-tab" data-view="activity" onclick="WF3.switchMainTab('activity')">Activity (Bot)</button>
+        <button class="wf-main-tab active" data-view="activity" onclick="WF3.switchMainTab('activity')">Activity (Bot)</button>
+        <button class="wf-main-tab" data-view="builder" onclick="WF3.switchMainTab('builder')">Recipe Builder</button>
         <button class="wf-main-tab" data-view="group" onclick="WF3.switchMainTab('group')">Account Groups</button>
       </div>
 
       <!-- ============================================== 
            SECTION A: RECIPE BUILDER (Existing V3)
            ============================================== -->
-      <div id="wf-section-builder" class="wf-section-container active">
+      <div id="wf-section-builder" class="wf-section-container" style="display:none">
           <!-- LAYER 1: Recipe List -->
           <div id="wf-list-view" class="wf-list-view">
             <div class="wf-list-topbar">
@@ -137,24 +137,26 @@ const WorkflowPage = {
       <!-- ============================================== 
            SECTION B: ACTIVITY (Bot) — PREMIUM REDESIGN
            ============================================== -->
-      <div id="wf-section-activity" class="wf-section-container" style="display:none">
+      <div id="wf-section-activity" class="wf-section-container active" style="display:flex;flex-direction:column">
 
-        <!-- TARGET GROUPS — Checkbox List -->
-        <div class="acv-groups-bar">
-          <div class="acv-groups-bar-label">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            TARGET GROUPS
-          </div>
-          <div id="wf-activity-group-list" class="acv-groups-list">
-            <div class="acv-chip-skeleton">Loading...</div>
-          </div>
-        </div>
-
-        <!-- MAIN TWO-COLUMN LAYOUT -->
+        <!-- 3-COLUMN LAYOUT: Groups Sidebar | Activities | Log/Config -->
         <div class="acv-layout">
 
-          <!-- LEFT: Activities + Misc -->
-          <div class="acv-left">
+          <!-- COL 1: Target Groups Sidebar -->
+          <div class="acv-groups-sidebar">
+            <div class="acv-groups-sidebar-header">
+              <div class="acv-groups-sidebar-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Target Groups
+              </div>
+            </div>
+            <div id="wf-activity-group-list" class="acv-groups-sidebar-list">
+              <div class="acv-chip-skeleton">Loading...</div>
+            </div>
+          </div>
+
+          <!-- COL 2: Activities + Misc -->
+          <div class="acv-center">
             <div class="acv-panel">
               <!-- Panel header with tabs -->
               <div class="acv-panel-header">
@@ -174,62 +176,20 @@ const WorkflowPage = {
               <!-- Activities list -->
               <div id="wf-act-tab-tasks" class="acv-panel-body">
                 <div id="wf-act-dynamic-list" class="acv-activities-list">
-                  <div class="acv-empty-hint">Select a group above to configure its activities.</div>
+                  <div class="acv-empty-hint">Select a group to configure its activities.</div>
                 </div>
               </div>
 
               <!-- Misc tab -->
               <div id="wf-act-tab-misc" class="acv-panel-body" style="display:none">
-                <div class="acv-misc-list">
-                  <div class="acv-misc-item">
-                    <label class="acv-check-label">
-                      <input type="checkbox" checked>
-                      <span class="acv-check-box"></span>
-                      <span>Re-login if logged in from another device</span>
-                    </label>
-                    <div class="acv-misc-sub">after <input type="number" class="acv-input-num" value="1"> minute(s)</div>
-                  </div>
-                  <div class="acv-misc-item">
-                    <label class="acv-check-label">
-                      <input type="checkbox">
-                      <span class="acv-check-box"></span>
-                      <span>Ultra mode: Stop graphics (GPU), reduce CPU</span>
-                    </label>
-                    <div class="acv-misc-hint">Applies to all instances</div>
-                  </div>
-                  <div class="acv-misc-item">
-                    <label class="acv-check-label">
-                      <input type="checkbox" checked>
-                      <span class="acv-check-box"></span>
-                      <span>Close after <input type="number" class="acv-input-num" value="28"> ~ <input type="number" class="acv-input-num" value="28"> min</span>
-                    </label>
-                    <div class="acv-misc-sub">
-                      <label class="acv-check-label" style="gap:6px">
-                        <input type="checkbox"><span class="acv-check-box"></span>
-                        <span>Re-open after <input type="number" class="acv-input-num" value="60"> ~ <input type="number" class="acv-input-num" value="90"> min</span>
-                      </label>
-                    </div>
-                    <div class="acv-misc-sub">
-                      <label class="acv-check-label" style="gap:6px">
-                        <input type="checkbox" checked><span class="acv-check-box"></span>
-                        <span>Open next emulator on bot's list</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div class="acv-misc-item">
-                    <label class="acv-check-label">
-                      <input type="checkbox" checked>
-                      <span class="acv-check-box"></span>
-                      <span>Pause when manual interactions detected</span>
-                    </label>
-                    <div class="acv-misc-sub">stop for <input type="number" class="acv-input-num" value="15"> second(s)</div>
-                  </div>
+                <div class="acv-misc-list" id="wf-act-dynamic-misc-list">
+                  <div class="acv-empty-hint">Select a group to configure its Misc settings.</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- RIGHT: Log + Config -->
+          <!-- COL 3: Log + Config -->
           <div class="acv-right">
             <div class="acv-panel">
               <!-- Right panel tabs: Activity Log | Config -->
@@ -243,19 +203,36 @@ const WorkflowPage = {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M3.51 9a10 10 0 0 0 0 6M20.49 9a10 10 0 0 0 0 6M4.93 19.07a10 10 0 0 0 14.14 0"/></svg>
                     Config
                   </button>
+                  <button class="acv-tab" id="acv-rtab-btn-status" onclick="WF3.switchRightTab('status')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    Live Status
+                  </button>
                 </div>
-                <!-- Start Bot action button -->
-                <button onclick="WF3.runBotActivities()" style="
-                    display:inline-flex; align-items:center; gap:5px;
-                    padding:5px 12px; font-size:12px; font-weight:700;
-                    background: #22c55e; color:white; border:none;
-                    border-radius:var(--radius-md); cursor:pointer;
-                    transition: all var(--duration-fast);
-                    box-shadow:0 1px 4px rgba(34,197,94,.3);
-                " onmouseover="this.style.background='#16a34a'" onmouseout="this.style.background='#22c55e'">
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  Start Bot
-                </button>
+                <!-- Action buttons -->
+                <div style="display:flex; gap:8px;">
+                  <button onclick="WF3.stopBotActivities()" style="
+                      display:inline-flex; align-items:center; gap:5px;
+                      padding:5px 12px; font-size:12px; font-weight:700;
+                      background: #ef4444; color:white; border:none;
+                      border-radius:var(--radius-md); cursor:pointer;
+                      transition: all var(--duration-fast);
+                      box-shadow:0 1px 4px rgba(239, 68, 68, 0.3);
+                  " onmouseover="this.style.background='#dc2626'" onmouseout="this.style.background='#ef4444'">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                    Stop Bot
+                  </button>
+                  <button onclick="WF3.runBotActivities()" style="
+                      display:inline-flex; align-items:center; gap:5px;
+                      padding:5px 12px; font-size:12px; font-weight:700;
+                      background: #22c55e; color:white; border:none;
+                      border-radius:var(--radius-md); cursor:pointer;
+                      transition: all var(--duration-fast);
+                      box-shadow:0 1px 4px rgba(34,197,94,.3);
+                  " onmouseover="this.style.background='#16a34a'" onmouseout="this.style.background='#22c55e'">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Start Bot
+                  </button>
+                </div>
               </div>
 
               <!-- Activity Log pane -->
@@ -270,6 +247,30 @@ const WorkflowPage = {
               <div id="acv-rtab-config" class="acv-panel-body" style="display:none">
                 <div id="acv-config-panel" class="acv-config-panel">
                   <div class="acv-empty-hint">Select an activity from the left to view its config.</div>
+                </div>
+              </div>
+
+              <!-- Live Status pane -->
+              <div id="acv-rtab-status" class="acv-panel-body" style="display:none; padding: 16px; overflow-y: auto;">
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                      <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">Session Time</div>
+                      <div id="wf-live-session-time" style="font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums;">00:00:00</div>
+                    </div>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--emerald-500)" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </div>
+                  
+                  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px;">
+                    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">Current Status</div>
+                    <div id="wf-live-status-text" style="font-size: 18px; font-weight: 600; color: var(--text);">Idle</div>
+                    <div id="wf-live-activity-name" style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Waiting for bot to start...</div>
+                  </div>
+                  
+                  <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px;">
+                    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">Cooldown Countdown</div>
+                    <div id="wf-live-cooldown" style="font-size: 16px; font-weight: 500; color: var(--text);">--:--</div>
+                  </div>
                 </div>
               </div>
 
@@ -440,12 +441,80 @@ const WF3 = {
     insertIndex: -1,
     activeView: 'list', // 'list' or 'editor'
 
+    // ── NEW: Dynamic Registry & Config Cache ──
+    _systemActivities: [],   // Loaded from /api/workflow/activity-registry
+    _groupConfigs: {},       // Cache for loaded group configs (v2 schema)
+
+    /**
+     * Dynamically loads ES Module architecture (Strangler pattern)
+     * Paths are relative to frontend/js/pages/workflow.js -> ../
+     */
+    async _initDI() {
+        if (this.di) return;
+
+        try {
+            const { HttpClient } = await import('../shared/http/HttpClient.js');
+
+            const { WorkflowRepository } = await import('../infrastructure/workflow/repositories/WorkflowRepository.js');
+            const { EmulatorRepository } = await import('../infrastructure/workflow/repositories/EmulatorRepository.js');
+            const { GroupRepository } = await import('../infrastructure/workflow/repositories/GroupRepository.js');
+            const { AccountRepository } = await import('../infrastructure/workflow/repositories/AccountRepository.js');
+            const { ActivityConfigRepository } = await import('../infrastructure/workflow/repositories/ActivityConfigRepository.js');
+            const { BotRepository } = await import('../infrastructure/workflow/repositories/BotRepository.js');
+            const { ExecutionRepository } = await import('../infrastructure/workflow/repositories/ExecutionRepository.js');
+
+            const { LoadWorkflowScreenService } = await import('../application/workflow/services/LoadWorkflowScreenService.js');
+            const { SaveRecipeService } = await import('../application/workflow/services/SaveRecipeService.js');
+            const { RunWorkflowService } = await import('../application/workflow/services/RunWorkflowService.js');
+            const { RunBotActivitiesService } = await import('../application/workflow/services/RunBotActivitiesService.js');
+            const { StopBotService } = await import('../application/workflow/services/StopBotService.js');
+            const { SaveActivityConfigService } = await import('../application/workflow/services/SaveActivityConfigService.js');
+
+            const http = new HttpClient();
+            const configRepo = new ActivityConfigRepository(http);
+            const botRepo = new BotRepository(http);
+            const groupRepo = new GroupRepository(http);
+            const workflowRepo = new WorkflowRepository(http);
+            const emuRepo = new EmulatorRepository(http);
+            const accountRepo = new AccountRepository(http);
+            const executionRepo = new ExecutionRepository(http);
+
+            this.di = {
+                workflowRepo, emuRepo, groupRepo, accountRepo, configRepo, botRepo, executionRepo,
+
+                loadScreen: new LoadWorkflowScreenService({ workflowRepo, emuRepo, groupRepo, accountRepo, configRepo }),
+                saveRecipe: new SaveRecipeService({ workflowRepo }),
+                runWorkflow: new RunWorkflowService({ executionRepo }),
+                runBot: new RunBotActivitiesService({ botRepo, configRepo, groupRepo, accountRepo }),
+                stopBot: new StopBotService({ botRepo }),
+                saveConfig: new SaveActivityConfigService({ configRepo })
+            };
+            console.log("✅ Workflow DI Container Initialized");
+        } catch (error) {
+            console.error("❌ Failed to initialize DI container:", error);
+        }
+    },
+
     async init() {
+        await this._initDI();
+
         this.steps = [];
-        this.isRunning = false;
+        // Removed resetting isRunning to false here, we'll restore it from API
         this.currentRecipeId = null;
         this.activeView = 'list';
-        this.activeMainTab = 'builder';
+        this.activeMainTab = 'activity';
+
+        // ── BUG 2 FIX: Load central registry first ──
+        await this.loadRegistry();
+
+        // ── BUG 1 & 3 FIX: Restore saved selection and init log memory ──
+        const savedGroupId = localStorage.getItem('wf_selected_group_id');
+        if (savedGroupId) {
+            this.activitySelectedGroupId = parseInt(savedGroupId);
+        }
+        if (!this._botLogs) {
+            this._botLogs = []; // Initialize in-memory logs 
+        }
 
         await Promise.all([
             this.fetchFunctions(),
@@ -456,10 +525,31 @@ const WF3 = {
 
         this.setupWebSocket();
         this.renderListView();
+        // Activity is the default tab, load groups data immediately
+        await this.loadGroupsData();
+
+        // Restore logs to DOM
+        this._replayLogs();
+
+        // Check orchestrator status if we have a selected group
+        if (this.activitySelectedGroupId) {
+            try {
+                if (!this.di) await this._initDI();
+                const res = await this.di.botRepo.getStatus(this.activitySelectedGroupId);
+                if (res.ok && res.data && res.data.is_running) {
+                    this.isRunning = true;
+                    this.renderAccountQueue(res.data);
+                    // Badge DOM exists now (renderActivitiesForGroup was called in loadGroupsData)
+                    this._updateActivityStatuses(res.data);
+                } else {
+                    this.isRunning = false;
+                }
+            } catch (e) { console.error("Error fetching bot status", e); }
+        }
     },
 
-    // setupWebSocket is handled globally in app.js (wsClient.on('workflow_log', ...))
-    setupWebSocket() { },
+    // setupWebSocket is handled by the real implementation further down in this object.
+    // The real setupWebSocket() at ~L1947 registers all wsClient.on() listeners.
 
     cleanup() {
         this.steps = [];
@@ -518,12 +608,19 @@ const WF3 = {
     switchRightTab(tab) {
         const logPane = document.getElementById('acv-rtab-log');
         const cfgPane = document.getElementById('acv-rtab-config');
+        const stsPane = document.getElementById('acv-rtab-status');
+
         const btnLog = document.getElementById('acv-rtab-btn-log');
         const btnCfg = document.getElementById('acv-rtab-btn-config');
+        const btnSts = document.getElementById('acv-rtab-btn-status');
+
         if (logPane) logPane.style.display = (tab === 'log') ? '' : 'none';
         if (cfgPane) cfgPane.style.display = (tab === 'config') ? '' : 'none';
+        if (stsPane) stsPane.style.display = (tab === 'status') ? '' : 'none';
+
         if (btnLog) btnLog.classList.toggle('active', tab === 'log');
         if (btnCfg) btnCfg.classList.toggle('active', tab === 'config');
+        if (btnSts) btnSts.classList.toggle('active', tab === 'status');
     },
 
     // ── VIEW SWITCHING ──
@@ -554,51 +651,44 @@ const WF3 = {
 
     // ── DATA FETCHING ──
     async fetchFunctions() {
-        try {
-            const res = await fetch('/api/workflow/functions');
-            this.functions = await res.json();
-        } catch (e) {
-            console.error('Failed to fetch functions:', e);
-            this.functions = [];
-        }
+        if (!this.di) await this._initDI();
+        const res = await this.di.workflowRepo.getFunctions();
+        this.functions = res.ok ? res.data : [];
+        if (!res.ok) console.error('Failed to fetch functions:', res.error);
     },
 
     async fetchTemplates() {
-        try {
-            const res = await fetch('/api/workflow/templates');
-            this.templates = await res.json();
-        } catch (e) {
-            console.error('Failed to fetch templates:', e);
-            this.templates = [];
-        }
+        if (!this.di) await this._initDI();
+        const res = await this.di.workflowRepo.getTemplates();
+        this.templates = res.ok ? res.data : [];
+        if (!res.ok) console.error('Failed to fetch templates:', res.error);
     },
 
     async fetchRecipes() {
-        try {
-            const res = await fetch('/api/workflow/recipes');
-            this.recipes = await res.json();
-        } catch (e) {
-            console.error('Failed to fetch recipes:', e);
-            this.recipes = [];
-        }
+        if (!this.di) await this._initDI();
+        const res = await this.di.workflowRepo.getRecipes();
+        this.recipes = res.ok ? res.data : [];
+        if (!res.ok) console.error('Failed to fetch recipes:', res.error);
     },
 
     async fetchEmulators() {
-        try {
-            const res = await fetch('/api/emulators/all');
-            const data = await res.json();
-            const select = document.getElementById('wf-emu-select');
-            if (select) {
-                const online = data.filter(e => e.running === true);
-                if (online.length === 0) {
-                    select.innerHTML = '<option value="">(No devices online)</option>';
-                } else {
-                    select.innerHTML = '<option value="">Select Emulator...</option>' +
-                        online.map(e => `<option value="${e.index}">${e.name} (Idx ${e.index})</option>`).join('');
-                }
+        if (!this.di) await this._initDI();
+        const res = await this.di.emuRepo.getAll();
+
+        if (!res.ok) {
+            console.error('Failed to fetch emulators:', res.error);
+            return;
+        }
+
+        const select = document.getElementById('wf-emu-select');
+        if (select) {
+            const online = res.data.filter(e => e.running === true || e.is_running === true);
+            if (online.length === 0) {
+                select.innerHTML = '<option value="">(No devices online)</option>';
+            } else {
+                select.innerHTML = '<option value="">Select Emulator...</option>' +
+                    online.map(e => `<option value="${e.index}">${e.name} (Idx ${e.index})</option>`).join('');
             }
-        } catch (e) {
-            console.error('Failed to fetch emulators:', e);
         }
     },
 
@@ -611,30 +701,53 @@ const WF3 = {
     activitySelectedGroupId: null,
 
     async loadGroupsData() {
-        try {
-            this.groupsData = await API.getGroups();
-            this.renderGroupList();
-            this.updateActivityGroupList();
+        if (!this.di) await this._initDI();
+        const res = await this.di.groupRepo.getAll();
 
-            if (this.accountsData.length === 0) {
+        if (res.ok) {
+            this.groupsData = res.data;
+            this.renderGroupList();
+            await this.updateActivityGroupList();
+
+            if (!this.accountsData || this.accountsData.length === 0) {
                 await this.loadAccountsData();
             }
-        } catch (e) {
-            console.error('Failed to load groups:', e);
+        } else {
+            console.error('Failed to load groups:', res.error);
+        }
+    },
+
+    async loadRegistry() {
+        if (!this.di) await this._initDI();
+        const res = await this.di.configRepo.getRegistry();
+
+        if (res.ok) {
+            this._systemActivities = res.data;
+        } else {
+            console.error('Failed to load activity registry:', res.error);
+            // Fallback for offline UI testing
+            this._systemActivities = [
+                { id: 'gather_rss_center', name: 'Gather Resource Center', defaults: {} },
+                { id: 'gather_resource', name: 'Gather Resource', defaults: {}, config_fields: [{ key: 'resource_type', default: 'wood' }] },
+                { id: 'full_scan', name: 'Full Scan', defaults: {} },
+                { id: 'catch_pet', name: 'Catch Pet', defaults: {} }
+            ];
         }
     },
 
     async loadAccountsData() {
-        try {
-            const res = await fetch('/api/accounts');
-            this.accountsData = await res.json();
-        } catch (e) {
-            console.error('Failed to load accounts:', e);
+        if (!this.di) await this._initDI();
+        const res = await this.di.accountRepo.getAll();
+
+        if (res.ok) {
+            this.accountsData = res.data;
+        } else {
+            console.error('Failed to load accounts:', res.error);
             this.accountsData = [];
         }
     },
 
-    updateActivityGroupList() {
+    async updateActivityGroupList() {
         const listDiv = document.getElementById('wf-activity-group-list');
         if (!listDiv) return;
 
@@ -649,145 +762,585 @@ const WF3 = {
             const accs = JSON.parse(g.account_ids || '[]');
             const isSelected = this.activitySelectedGroupId === g.id;
             return `
-                <label class="acv-group-item ${isSelected ? 'active' : ''}">
-                    <input type="checkbox" class="acv-group-cb" value="${g.id}" ${isSelected ? 'checked' : ''}
-                        onchange="WF3.toggleActivityGroup(${g.id}, this.checked)">
-                    <span class="acv-check-box"></span>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                <div class="acv-group-item ${isSelected ? 'active' : ''}" onclick="WF3.toggleActivityGroup(${g.id}, true)">
+                    <span class="acv-group-status-dot" id="grp-status-${g.id}" data-status="idle" title="Idle">⚪</span>
                     <span class="acv-group-item-name">${g.name}</span>
                     <span class="acv-chip-count">${accs.length}</span>
-                </label>
+                </div>
             `;
         }).join('');
 
-        // Auto-select first group if none selected
-        if (!this.activitySelectedGroupId && this.groupsData.length > 0) {
-            this.toggleActivityGroup(this.groupsData[0].id, true);
+        // Fetch and render group statuses
+        this._pollGroupStatuses();
+
+        // Force trigger toggle to load backend config + render properties (Fix: even if loaded from localStorage)
+        if (this.groupsData.length > 0) {
+            // Verify the cached ID actually exists, fallback to first index if deleted
+            let targetId = this.activitySelectedGroupId;
+            if (!this.groupsData.find(g => g.id === targetId)) {
+                targetId = this.groupsData[0].id;
+            }
+            await this.toggleActivityGroup(targetId, true);
         }
     },
 
-    toggleActivityGroup(groupId, checked) {
+    async toggleActivityGroup(groupId, checked) {
         if (checked) {
             this.activitySelectedGroupId = groupId;
-            // Uncheck other checkboxes (single-select for now, activities render per one group)
-            document.querySelectorAll('.acv-group-cb').forEach(cb => {
-                if (parseInt(cb.value) !== groupId) cb.checked = false;
-            });
+            localStorage.setItem('wf_selected_group_id', groupId); // BUG 3 FIX: Persist selection
+
+            // Deselect all, then activate clicked one
             document.querySelectorAll('.acv-group-item').forEach(el => el.classList.remove('active'));
-            const activeCb = document.querySelector(`.acv-group-cb[value="${groupId}"]`);
-            if (activeCb) activeCb.closest('.acv-group-item').classList.add('active');
+            document.querySelectorAll('.acv-group-item').forEach(el => {
+                if (el.getAttribute('onclick')?.includes(`(${groupId},`)) {
+                    el.classList.add('active');
+                }
+            });
+            // Load saved config from backend (syncs to localStorage)
+            await this._loadConfigFromBackend(groupId);
+            // Reset config panel to avoid stale groupId bindings
+            const cfgPanel = document.getElementById('acv-config-panel');
+            if (cfgPanel) cfgPanel.innerHTML = '<div class="acv-empty-hint">Select an activity to view its config.</div>';
         } else {
             this.activitySelectedGroupId = null;
+            localStorage.removeItem('wf_selected_group_id');
+            document.querySelectorAll('.acv-group-item').forEach(el => el.classList.remove('active'));
         }
         this.renderActivitiesForGroup(this.activitySelectedGroupId);
+        this.renderMiscForGroup(this.activitySelectedGroupId);
+
+        // Fetch status for this group in case it's running
+        if (this.activitySelectedGroupId) {
+            try {
+                if (!this.di) await this._initDI();
+                const res = await this.di.botRepo.getStatus(this.activitySelectedGroupId);
+                if (res.ok && res.data && res.data.is_running) {
+                    this.isRunning = true;
+                    this.renderAccountQueue(res.data);
+                } else {
+                    this.isRunning = false;
+                }
+            } catch (e) { }
+        }
     },
 
-    getActivityConfig(groupId) {
-        try {
-            const raw = localStorage.getItem(`wf_activities_${groupId}`);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                // Migrate old string format to object format if needed
-                const validParsed = parsed.map(item => typeof item === 'string'
-                    ? { id: item, name: item, enabled: false, desc: '' }
-                    : item
-                );
-                // Still need to make sure fresh backend functions exist in the mapping, but this is a simple local storage return
-            }
-        } catch (e) { }
+    // ── Unified Config Handling (v2 Schema) ──
 
-        // Return default config (all unchecked) from matching backend functions.
-        return this.functions.map(fn => (
-            { id: fn.id, name: fn.label, enabled: false, desc: fn.description || '' }
-        ));
+    getActivityConfig(groupId) {
+        if (!groupId) return [];
+        // Extract basic enabled flag state for dynamic list render from v2 schema
+        const conf = this._groupConfigs[groupId] || { activities: {} };
+
+        return this._systemActivities.map(sys => {
+            const actConf = conf.activities[sys.id] || {};
+            return {
+                id: sys.id,
+                name: sys.name,
+                description: sys.description,
+                enabled: !!actConf.enabled
+            };
+        });
     },
 
     saveActivityConfig(groupId) {
         if (!groupId) return;
         const items = document.querySelectorAll('#wf-act-dynamic-list .wf-act-group-cb');
-        const config = Array.from(items).map(cb => ({ name: cb.dataset.name, enabled: cb.checked }));
-        localStorage.setItem(`wf_activities_${groupId}`, JSON.stringify(config));
-        WfToast.show('s', 'Saved', 'Activities config saved for this group.');
+
+        // Update local memory cache first
+        if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: { cooldown_min: 30, limit_min: 45 } };
+
+        items.forEach(cb => {
+            const id = cb.dataset.id;
+            if (!this._groupConfigs[groupId].activities[id]) {
+                this._groupConfigs[groupId].activities[id] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+            }
+            this._groupConfigs[groupId].activities[id].enabled = cb.checked;
+        });
+
+        // Save to backend (async, non-blocking)
+        this._saveConfigToBackend(groupId);
+    },
+
+    getMiscConfig(groupId) {
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false };
+        if (!groupId) return defaultMisc;
+        const conf = this._groupConfigs[groupId];
+        if (conf && conf.misc) {
+            return { ...defaultMisc, ...conf.misc };
+        }
+        return defaultMisc;
+    },
+
+    saveMiscConfig(groupId) {
+        if (!groupId) return;
+        const cdEl = document.getElementById('misc-cooldown-min');
+        const limitEl = document.getElementById('misc-limit-min');
+        const chooseStartEl = document.getElementById('misc-choose-start-account');
+
+        if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
+
+        this._groupConfigs[groupId].misc = {
+            cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
+            limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
+            choose_start_account: chooseStartEl ? chooseStartEl.checked : false
+        };
+
+        this._saveConfigToBackend(groupId);
+    },
+
+    async _saveConfigToBackend(groupId) {
+        if (!this.di) await this._initDI();
+        if (!this._groupConfigs[groupId]) return;
+
+        const payload = this._groupConfigs[groupId];
+        const result = await this.di.saveConfig.execute(groupId, payload);
+
+        if (!result.ok) {
+            console.warn('Failed to save config to backend:', result.error);
+        }
+    },
+
+    async _loadConfigFromBackend(groupId) {
+        if (!this.di) await this._initDI();
+
+        const result = await this.di.configRepo.loadConfig(groupId);
+        if (result.ok) {
+            this._groupConfigs[groupId] = result.data;
+        } else {
+            console.warn('Failed to load config from backend:', result.error);
+        }
+
+        // Fallback default
+        if (!this._groupConfigs[groupId]) {
+            this._groupConfigs[groupId] = { version: 2, activities: {}, misc: { cooldown_min: 30, limit_min: 45 } };
+        }
+        return this._groupConfigs[groupId];
+    },
+
+    // ── Cooldown helpers ──
+    _getLastRun(activityId, groupId) {
+        const conf = this._groupConfigs[groupId];
+        if (conf && conf.activities && conf.activities[activityId]) {
+            const lastRun = conf.activities[activityId].last_run;
+            return lastRun ? new Date(lastRun).getTime() : 0;
+        }
+        return 0;
+    },
+    _setLastRun(activityId, groupId) {
+        if (!this._groupConfigs[groupId]) return;
+        if (!this._groupConfigs[groupId].activities[activityId]) {
+            this._groupConfigs[groupId].activities[activityId] = {};
+        }
+        this._groupConfigs[groupId].activities[activityId].last_run = new Date().toISOString();
+        this._saveConfigToBackend(groupId); // Save immediately
+    },
+    _isOnCooldown(activityId, groupId) {
+        const cfg = this.getPerActivityConfig(activityId, groupId);
+        if (!cfg.cooldown_enabled) return false;
+        const cdMinutes = cfg.cooldown_minutes || 0;
+        if (cdMinutes <= 0) return false;
+        const lastRun = this._getLastRun(activityId, groupId);
+        if (!lastRun) return false;
+        const elapsedMs = Date.now() - lastRun;
+        return elapsedMs < cdMinutes * 60 * 1000;
+    },
+    _formatCooldownRemaining(activityId, groupId) {
+        const cfg = this.getPerActivityConfig(activityId, groupId);
+        const cdMinutes = cfg.cooldown_minutes || 0;
+        const lastRun = this._getLastRun(activityId, groupId);
+        if (!lastRun || cdMinutes <= 0) return '';
+        const remainMs = (cdMinutes * 60 * 1000) - (Date.now() - lastRun);
+        if (remainMs <= 0) return '';
+        const h = Math.floor(remainMs / 3600000);
+        const m = Math.floor((remainMs % 3600000) / 60000);
+        return h > 0 ? `${h}h ${m}m remaining` : `${m}m remaining`;
+    },
+
+    // ── Session timer ──
+    _botSessionStart: null,
+    _sessionTimerInterval: null,
+    _startSessionTimer() {
+        this._botSessionStart = Date.now();
+        localStorage.setItem('wf_session_start', this._botSessionStart.toString());
+        this._updateSessionTimerDisplay();
+        if (this._sessionTimerInterval) clearInterval(this._sessionTimerInterval);
+        this._sessionTimerInterval = setInterval(() => this._updateSessionTimerDisplay(), 10000);
+    },
+    _updateSessionTimerDisplay() {
+        const el = document.getElementById('misc-session-timer');
+        const liveSessionEl = document.getElementById('wf-live-session-time');
+        const liveCooldownEl = document.getElementById('wf-live-cooldown');
+
+        // ── Session Time ──
+        if (this._botSessionStart) {
+            const elapsed = Date.now() - this._botSessionStart;
+            const h = Math.floor(elapsed / 3600000);
+            const m = Math.floor((elapsed % 3600000) / 60000);
+            const s = Math.floor((elapsed % 60000) / 1000);
+
+            const mStr = m.toString().padStart(2, '0');
+            const sStr = s.toString().padStart(2, '0');
+            const hrStr = h > 0 ? h.toString().padStart(2, '0') + ':' : '00:';
+
+            if (liveSessionEl) liveSessionEl.textContent = `${hrStr}${mStr}:${sStr}`;
+            if (el) el.textContent = `⏱ Session: ${m}m ${s}s elapsed`;
+        } else {
+            if (liveSessionEl) liveSessionEl.textContent = '00:00:00';
+            if (el) el.textContent = '';
+        }
+
+        // ── Cooldown Display ──
+        if (liveCooldownEl && this.activitySelectedGroupId) {
+            const config = this.getActivityConfig(this.activitySelectedGroupId);
+            let cdTexts = [];
+            config.forEach(act => {
+                if (act.enabled) {
+                    const cdFormat = this._formatCooldownRemaining(act.id, this.activitySelectedGroupId);
+                    if (cdFormat) cdTexts.push(`<div><span style="color:var(--text-muted)">${act.name}:</span> ${cdFormat}</div>`);
+                }
+            });
+            if (cdTexts.length > 0) {
+                liveCooldownEl.innerHTML = cdTexts.join('');
+            } else {
+                liveCooldownEl.textContent = '--:--';
+            }
+        }
     },
 
     // Run enabled activities for selected group via bot API
     async runBotActivities() {
+        if (!this.di) await this._initDI();
+
         const groupId = this.activitySelectedGroupId;
         if (!groupId) {
             WfToast.show('w', 'No Group', 'Select a target group first.');
             return;
         }
-        const config = this.getActivityConfig(groupId);
-        const enabled = config.filter(a => a.enabled).map(a => a.name);
-        if (enabled.length === 0) {
-            WfToast.show('w', 'No Activities', 'Enable at least one activity first.');
+
+        const misc = this.getMiscConfig(groupId);
+        if (misc.choose_start_account) {
+            await this.showAccountSelectionModal(groupId);
+            return; // Execution will continue after user selection
+        }
+
+        this._executeRunBotActivities(groupId, null);
+    },
+
+    async showAccountSelectionModal(groupId) {
+        if (!this.di) await this._initDI();
+
+        const groupResult = await this.di.groupRepo.getById(groupId);
+        if (!groupResult.ok) return;
+        const group = groupResult.data;
+
+        let accountIds = [];
+        try { accountIds = JSON.parse(group.account_ids || '[]'); } catch (e) { }
+
+        // Fetch all accounts dynamically since workflow.js might not have loaded them
+        let allAccounts = [];
+        const accountsResult = await this.di.accountRepo.getAll();
+        if (accountsResult.ok) {
+            allAccounts = accountsResult.data;
+        }
+
+        const accountsInGroup = accountIds
+            .map(id => allAccounts.find(a => a.account_id == id))
+            .filter(a => a != null);
+
+        // Sort matching orchestrator queue (emu_index ascending)
+        accountsInGroup.sort((a, b) => (a.emu_index || 999) - (b.emu_index || 999));
+
+        let modal = document.getElementById('wf-account-start-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'wf-account-start-modal';
+            modal.className = 'wf-fn-overlay';
+            document.body.appendChild(modal);
+        }
+
+        let accountHtml = accountsInGroup.map(a => `
+            <div class="wf-sidebar-fn" style="border: 1px solid var(--border); margin-bottom: 8px; border-radius: 6px; padding: 12px; cursor: pointer; transition: all 0.2s;" 
+                 onmouseover="this.style.borderColor='var(--indigo-500)'; this.style.backgroundColor='var(--accent)'"
+                 onmouseout="this.style.borderColor='var(--border)'; this.style.backgroundColor='transparent'"
+                 onclick="WF3._executeRunBotActivities(${groupId}, ${a.account_id}); document.getElementById('wf-account-start-modal').classList.remove('visible');">
+                <div class="wf-sidebar-fn-icon" style="font-size: 18px;">👤</div>
+                <div style="flex:1;">
+                    <div class="wf-sidebar-fn-name" style="font-size: 14px; margin-bottom: 4px;">${a.lord_name || 'Unknown'} <span style="color:var(--muted-foreground); font-size:11px;">(ID: ${a.account_id})</span></div>
+                    <div class="wf-sidebar-fn-desc" style="font-size: 12px;">🖥 Emu index: ${a.emu_index != null ? a.emu_index : '--'} | 🕒 Last Run: N/A</div>
+                </div>
+                <button style="padding: 6px 14px; font-size: 12px; font-weight: 600; border: 1px solid var(--indigo-500); background: transparent; color: var(--indigo-500); border-radius: 4px; flex-shrink:0; cursor:pointer;" 
+                        onmouseover="this.style.background='rgba(99,102,241,0.1)'" onmouseout="this.style.background='transparent'">
+                    Run First
+                </button>
+            </div>
+        `).join('');
+
+        modal.innerHTML = `
+            <div class="wf-fn-picker" style="width: 520px; padding: 24px;">
+                <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <h3 style="margin:0; font-size: 16px; font-weight: 700;">Select Starting Account</h3>
+                    <button onclick="document.getElementById('wf-account-start-modal').classList.remove('visible')" 
+                            style="background:none; border:none; cursor:pointer; font-size:16px; color:var(--muted-foreground); padding: 4px; border-radius: 4px;">✕</button>
+                </div>
+                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 20px; line-height: 1.5;">
+                    The queue is ordered by Emulator to minimize switching. Choosing an account starts the loop from that position in the queue.
+                </div>
+                <div style="max-height: 50vh; overflow-y: auto; padding-right: 6px;">
+                    ${accountHtml || '<div style="text-align:center; padding: 30px; color:var(--muted-foreground); border: 1px dashed var(--border); border-radius: 8px;">No accounts found in this group.</div>'}
+                </div>
+            </div>
+        `;
+
+        modal.classList.add('visible');
+    },
+
+    async _executeRunBotActivities(groupId, startAccountId) {
+        // Switch to Log tab to show output
+        this.switchRightTab('log');
+        this._startSessionTimer();
+        this.addBotLog('info', `Starting activities for group '${groupId}'...`);
+
+        // Execute via Application Service
+        const result = await this.di.runBot.execute(groupId, this._systemActivities, startAccountId);
+
+        if (!result.ok) {
+            const err = result.error.message;
+            if (err === 'NO_ACTIVITIES') {
+                WfToast.show('w', 'No Activities', 'Enable at least one activity first.');
+            } else if (err === 'ALL_ON_COOLDOWN') {
+                WfToast.show('w', 'All on Cooldown', 'All enabled activities are still on cooldown.');
+                this.addBotLog('warn', '⏳ No activities ready. All on cooldown.');
+            } else if (err === 'ALREADY_RUNNING') {
+                this.addBotLog('warn', '⚠ Bot is already running for this group.');
+                WfToast.show('w', 'Already Running', 'Bot is already running for this group.');
+            } else {
+                this.addBotLog('err', `✕ Error: ${err}`);
+                WfToast.show('e', 'Error', err);
+            }
             return;
         }
 
-        // Switch to Log tab to show output
-        this.switchRightTab('log');
+        // Handle success response
+        const { response, skippedLogs, readyActivities } = result.data;
 
-        // Find group data and resolving emulators
-        const group = this.groupsData.find(g => g.id === groupId);
-        let emulatorIndices = [];
-        if (group && group.account_ids) {
-            try {
-                const accIds = JSON.parse(group.account_ids);
-                // this.accountsData has all accounts, loaded by WorkflowApp init
-                const accs = this.accountsData.filter(a => accIds.includes(a.account_id));
-                // Extract emulator indices (filter out nulls)
-                emulatorIndices = accs.map(a => a.emu_index).filter(idx => idx != null);
-                // Remove duplicates
-                emulatorIndices = [...new Set(emulatorIndices)];
-            } catch (e) {
-                console.error("Failed to parse accounts for group", e);
+        // Print skipped logs
+        skippedLogs.forEach(log => this.addBotLog('warn', log));
+
+        if (response.status === 'started') {
+            this.addBotLog('ok', `✓ Sequential Bot started for Group ${groupId} (${response.accounts_queued} accounts)`);
+            WfToast.show('s', 'Bot Started', `Queued ${response.accounts_queued} accounts`);
+            // Record last_run for all activities that were sent
+            for (const act of readyActivities) {
+                this._setLastRun(act.id, groupId);
             }
         }
+    },
 
-        this.addBotLog('info', `Starting ${enabled.length} activities for group '${group ? group.name : groupId}'...`);
+    // Optional: Stop the bot
+    async stopBotActivities() {
+        if (!this.di) await this._initDI();
 
+        const groupId = this.activitySelectedGroupId;
+        if (!groupId) return;
+
+        const result = await this.di.stopBot.execute(groupId);
+        if (result.ok) {
+            this.addBotLog('warn', `🛑 Stop requested. Bot will halt after current account finishes.`);
+            WfToast.show('i', 'Stopping', 'Bot will stop soon.');
+        } else {
+            console.error("Failed to stop bot", result.error);
+        }
+    },
+
+    // Render the account queue sent by WS `bot_queue_update`
+    renderAccountQueue(queueData) {
+        // Find or create queue container in the right panel
+        let container = document.getElementById('wf-account-queue-container');
+        if (!container) {
+            const logPane = document.getElementById('acv-rtab-log');
+            if (!logPane) return;
+
+            container = document.createElement('div');
+            container.id = 'wf-account-queue-container';
+            container.className = 'acv-queue-container';
+            logPane.insertBefore(container, logPane.firstChild);
+        }
+
+        if (!queueData.is_running && !queueData.stop_requested) {
+            container.innerHTML = `<div class="acv-queue-header">Bot Stopped</div>`;
+            return;
+        }
+
+        let html = `<div class="acv-queue-header">
+            Sequential Execution Queue (Cycle ${queueData.cycle})
+            ${queueData.stop_requested ? '<span style="color:red; font-size:12px;">(Stopping...)</span>' : ''}
+        </div>
+        <div class="acv-queue-list">`;
+
+        queueData.accounts.forEach((acc, i) => {
+            const isCurrent = parseInt(queueData.current_idx) === i;
+            // status can be pending, running, done, error
+            let statusIcon = '⏳';
+            let statusClass = 'pending';
+            if (acc.status === 'running') { statusIcon = '🔄'; statusClass = 'running'; }
+            if (acc.status === 'done') { statusIcon = '✅'; statusClass = 'done'; }
+            if (acc.status === 'error') { statusIcon = '❌'; statusClass = 'error'; }
+
+            html += `
+                <div class="acv-queue-item ${isCurrent ? 'active' : ''} status-${statusClass}">
+                    <span class="acv-q-icon">${statusIcon}</span>
+                    <span class="acv-q-name">${acc.lord_name} (Emu ${acc.emu_index})</span>
+                </div>
+            `;
+        });
+
+        html += `</div>`;
+        container.innerHTML = html;
+
+        // BUG 2 FIX: Update individual activity statuses
+        this._updateActivityStatuses(queueData);
+    },
+
+    // ── Per-Activity Status Updates ──
+    _latestActivityStatuses: null,
+
+    _updateActivityStatuses(queueData) {
+        if (!queueData) return;
+
+        // BUG 1 FIX: Server now sends per-activity breakdown in activity_statuses
+        const statuses = queueData.activity_statuses || {};
+        this._latestActivityStatuses = statuses;
+
+        // We only update badges for the currently selected group's list
+        const config = this.getActivityConfig(this.activitySelectedGroupId);
+        const enabledIds = config.filter(c => c.enabled).map(c => c.id);
+
+        enabledIds.forEach(id => {
+            const badge = document.getElementById(`acv-status-${id}`);
+            if (badge) {
+                // If bot is fully stopped, default back to N/A, else fallback to pending
+                let statusVal = 'na';
+                if (queueData.is_running || queueData.stop_requested) {
+                    statusVal = statuses[id] || 'pending';
+                }
+
+                let text = 'N/A';
+                if (statusVal === 'pending') text = 'Queued';
+                if (statusVal === 'running') text = 'Running';
+                if (statusVal === 'done') text = 'Done';
+                if (statusVal === 'error') text = 'Error';
+                if (statusVal === 'skipped') text = 'Skipped';
+
+                // Allow "stopping" override if it was running
+                if (queueData.stop_requested && statusVal === 'running') {
+                    text = 'Stopping';
+                }
+
+                badge.textContent = text;
+                badge.setAttribute('data-status', statusVal);
+                badge.className = 'acv-activity-status';
+                badge.classList.add(`status-${statusVal}`);
+            }
+        });
+
+        // ── BUG 3 FIX: Update Live Status pane metrics ──
+        const liveStatusEl = document.getElementById('wf-live-status-text');
+        const liveActivityEl = document.getElementById('wf-live-activity-name');
+
+        if (liveStatusEl && liveActivityEl) {
+            if (!queueData.is_running && !queueData.stop_requested) {
+                liveStatusEl.textContent = 'Idle';
+                liveStatusEl.style.color = 'var(--text)';
+                liveActivityEl.textContent = 'Waiting for bot to start...';
+            } else if (queueData.stop_requested) {
+                liveStatusEl.textContent = 'Stopping';
+                liveStatusEl.style.color = 'var(--red-500)';
+                liveActivityEl.textContent = 'Finishing current step...';
+            } else {
+                liveStatusEl.textContent = 'Running Emulator';
+                liveStatusEl.style.color = 'var(--emerald-500)';
+                const currAct = queueData.current_activity;
+                if (currAct && currAct.name) {
+                    liveActivityEl.textContent = `${currAct.name} (${currAct.status || 'running'})`;
+                } else {
+                    liveActivityEl.textContent = 'Executing workflow...';
+                }
+            }
+        }
+    },
+
+    // Polls /api/bot/status (no group_id) to get all group statuses
+    async _pollGroupStatuses() {
         try {
-            const payload = {
-                group_id: groupId,
-                activities: enabled
-            };
-            if (emulatorIndices.length > 0) {
-                payload.emulator_indices = emulatorIndices;
-                this.addBotLog('info', `Found ${emulatorIndices.length} emulators: ${emulatorIndices.join(', ')}`);
-            } else {
-                this.addBotLog('warn', `Warning: Frontend couldn't find emulator indices. Requesting backend to resolve.`);
+            if (!this.di) await this._initDI();
+            const res = await this.di.botRepo.getStatus();
+            if (res.ok && res.data) {
+                for (const [gid, info] of Object.entries(res.data)) {
+                    this._updateGroupStatusBadge(parseInt(gid), info);
+                }
             }
+        } catch (e) { console.warn('Failed to poll group statuses:', e); }
+    },
 
-            const res = await fetch('/api/bot/run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            if (data.status === 'accepted') {
-                const names = (data.emulators || []).map(e => e.name).join(', ');
-                this.addBotLog('ok', `✓ Bot started on: ${names || 'emulators'}`);
-                WfToast.show('s', 'Bot Started', `Running on ${data.emulators?.length || '?'} emulators`);
-            } else {
-                this.addBotLog('err', `✕ Error: ${data.error || 'Unknown error'}`);
-                WfToast.show('e', 'Error', data.error || 'Failed to start bot');
-            }
-        } catch (e) {
-            this.addBotLog('err', `✕ Network error: ${e.message}`);
-            WfToast.show('e', 'Network Error', e.message);
+    // Updates a single group's status dot in the Target Group list
+    _updateGroupStatusBadge(groupId, statusInfo) {
+        const dot = document.getElementById(`grp-status-${groupId}`);
+        if (!dot) return;
+
+        if (statusInfo.is_running && statusInfo.all_on_cooldown) {
+            dot.textContent = '🟡';
+            dot.setAttribute('data-status', 'cooldown');
+            dot.title = 'Cooldown';
+        } else if (statusInfo.is_running) {
+            dot.textContent = '🟢';
+            dot.setAttribute('data-status', 'running');
+            dot.title = 'Running';
+        } else {
+            dot.textContent = '⚪';
+            dot.setAttribute('data-status', 'idle');
+            dot.title = 'Idle';
         }
     },
 
     // Add a log line to Activity Log console
     addBotLog(type, message) {
-        const console = document.getElementById('wf-activity-console');
-        if (!console) return;
         const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        // Persist to memory
+        if (!this._botLogs) this._botLogs = [];
+        this._botLogs.push({ ts, type, message });
+
+        // Keep memory bounded to last 500 logs
+        if (this._botLogs.length > 500) this._botLogs.shift();
+
+        const consoleEl = document.getElementById('wf-activity-console');
+        if (!consoleEl) return;
+
         const line = document.createElement('div');
         line.className = `acv-log-line acv-log-${type}`;
         line.innerHTML = `<span class="acv-log-ts">[${ts}]</span> ${message}`;
-        console.appendChild(line);
-        console.scrollTop = console.scrollHeight;
+        consoleEl.appendChild(line);
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+    },
+
+    // Restores logs to DOM after UI reset
+    _replayLogs() {
+        const consoleEl = document.getElementById('wf-activity-console');
+        if (!consoleEl || !this._botLogs) return;
+
+        // Clear container completely to avoid duplicates if called multiple times
+        consoleEl.innerHTML = '';
+
+        const frag = document.createDocumentFragment();
+        this._botLogs.forEach(log => {
+            const line = document.createElement('div');
+            line.className = `acv-log-line acv-log-${log.type}`;
+            line.innerHTML = `<span class="acv-log-ts">[${log.ts}]</span> ${log.message}`;
+            frag.appendChild(line);
+        });
+
+        consoleEl.appendChild(frag);
+        consoleEl.scrollTop = consoleEl.scrollHeight;
     },
 
     renderActivitiesForGroup(groupId) {
@@ -803,89 +1356,193 @@ const WF3 = {
         }
 
         if (!groupId) {
-            container.innerHTML = '<div class="acv-empty-hint">Select a group above to configure its activities.</div>';
+            container.innerHTML = '<div class="acv-empty-hint">Select a group to configure its activities.</div>';
             return;
         }
 
         const config = this.getActivityConfig(groupId);
-        container.innerHTML = config.map((item, idx) => `
+        container.innerHTML = config.map((item, idx) => {
+            // Restore status from memory cache if active, else NA
+            let statusVal = 'na';
+            let statusText = 'N/A';
+
+            if (this.isRunning && this._latestActivityStatuses && item.enabled) {
+                statusVal = this._latestActivityStatuses[item.id] || 'pending';
+                if (statusVal === 'pending') statusText = 'Queued';
+                if (statusVal === 'running') statusText = 'Running';
+                if (statusVal === 'done') statusText = 'Done';
+                if (statusVal === 'error') statusText = 'Error';
+                if (statusVal === 'skipped') statusText = 'Skipped';
+            }
+
+            return `
             <div class="acv-activity-row ${item.enabled ? 'enabled' : ''}" id="acv-row-${idx}">
-                <label class="acv-check-label" style="flex:1; cursor:pointer;">
-                    <input type="checkbox" class="wf-act-group-cb" data-name="${item.name}" data-idx="${idx}" ${item.enabled ? 'checked' : ''}
+                <label class="acv-check-label" style="cursor:pointer;" onclick="event.stopPropagation()">
+                    <input type="checkbox" class="wf-act-group-cb" data-name="${item.name.replace(/'/g, "\\'")}" data-id="${item.id}" data-idx="${idx}" ${item.enabled ? 'checked' : ''}
                         onchange="WF3.saveActivityConfig(${groupId}); this.closest('.acv-activity-row').classList.toggle('enabled', this.checked)">
                     <span class="acv-check-box"></span>
-                    <span class="acv-activity-name">${item.name}</span>
                 </label>
-                <button class="acv-cfg-btn" title="Configure" onclick="WF3.showActivityConfig('${item.name}', ${groupId})">
+                <div class="acv-activity-info" style="flex:1; cursor:pointer; padding:4px 0;" onclick="WF3.selectActivity('${item.id}', ${groupId}, this)">
+                    <span class="acv-activity-name">${item.name}</span>
+                    <span class="acv-activity-desc" style="display:block; font-size:11px; color:var(--muted-foreground); margin-top:2px;">${item.description || ''}</span>
+                </div>
+                <span class="acv-activity-status status-${statusVal}" id="acv-status-${item.id}" data-status="${statusVal}">${statusText}</span>
+                <button class="acv-cfg-btn" title="Configure" onclick="WF3.showActivityConfig('${item.id}', ${groupId})">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M3.51 9a10 10 0 0 0 0 6M20.49 9a10 10 0 0 0 0 6M4.93 19.07a10 10 0 0 0 14.14 0"/></svg>
                 </button>
             </div>
-        `).join('');
+            `;
+        }).join('');
     },
 
-    // Per-activity config definitions
-    _activityConfigDefs: {
-        'Technology Research': [{ key: 'max_slots', label: 'Max Research Slots', type: 'number', default: 2, min: 1, max: 4 }],
-        'Train Troops': [{ key: 'troop_type', label: 'Troop Type', type: 'select', options: ['Infantry', 'Cavalry', 'Ranged', 'Siege'], default: 'Infantry' }, { key: 'max_queues', label: 'Max Queues', type: 'number', default: 2, min: 1, max: 5 }],
-        'Alliance Donation': [{ key: 'donate_gold', label: 'Donate Gold', type: 'checkbox', default: true }],
-        'Gather Resources': [{ key: 'resource_type', label: 'Priority Resource', type: 'select', options: ['Food', 'Wood', 'Stone', 'Gold', 'Any'], default: 'Any' }, { key: 'troop_count', label: 'Marches', type: 'number', default: 3, min: 1, max: 6 }],
-        'Attack Darkling Patrols': [{ key: 'patrol_level', label: 'Max Level', type: 'number', default: 5, min: 1, max: 10 }, { key: 'marches', label: 'Marches', type: 'number', default: 2, min: 1, max: 4 }],
-        'Join Rally': [{ key: 'min_power', label: 'Min Alliance Power', type: 'number', default: 0, min: 0 }],
-        'City Upgrade': [{ key: 'auto_resource', label: 'Auto use resources', type: 'checkbox', default: true }],
-        'Goblin Market': [{ key: 'buy_speed_ups', label: 'Buy Speed Ups', type: 'checkbox', default: false }, { key: 'buy_resources', label: 'Buy Resources', type: 'checkbox', default: true }],
-        'Claim quest rewards': [{ key: 'claim_daily', label: 'Claim Daily Quests', type: 'checkbox', default: true }, { key: 'claim_main', label: 'Claim Main Quests', type: 'checkbox', default: true }],
-        'Explore Fog': [{ key: 'max_marches', label: 'Max Marches', type: 'number', default: 2, min: 1, max: 5 }],
+    renderMiscForGroup(groupId) {
+        const container = document.getElementById('wf-act-dynamic-misc-list');
+        if (!container) return;
+
+        if (!groupId) {
+            container.innerHTML = '<div class="acv-empty-hint">Select a group to configure its Misc settings.</div>';
+            return;
+        }
+
+        const misc = this.getMiscConfig(groupId);
+
+        container.innerHTML = `
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                    <span>⏳</span> Account Cooldown
+                </div>
+                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
+                    Wait before re-running an account that recently finished (prevents rapid re-logins).
+                </div>
+                <div>
+                    <input type="number" class="acv-input-num" id="misc-cooldown-min" value="${misc.cooldown_min}" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
+                </div>
+            </div>
+            
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                    <span>⏱</span> Time Limit
+                </div>
+                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
+                    Force swap to next account after this much time total, whether activities are finished or not.
+                </div>
+                <div>
+                    <input type="number" class="acv-input-num" id="misc-limit-min" value="${misc.limit_min}" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
+                </div>
+            </div>
+            
+            <div class="acv-misc-item">
+                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                    <input type="checkbox" id="misc-choose-start-account" onchange="WF3.saveMiscConfig(${groupId})" ${misc.choose_start_account ? 'checked' : ''} style="margin-top: 3px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                            <span>🎯</span> Choose Account to Run First
+                        </div>
+                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
+                            When starting the bot, prompt to select which account should be executed first.
+                        </div>
+                    </div>
+                </label>
+            </div>
+        `;
     },
 
-    getPerActivityConfig(activityName, groupId) {
-        try {
-            const raw = localStorage.getItem(`wf_acfg_${groupId}_${activityName}`);
-            if (raw) return JSON.parse(raw);
-        } catch (e) { }
-        const defs = this._activityConfigDefs[activityName] || [];
-        const defaults = {};
-        defs.forEach(d => defaults[d.key] = d.default);
-        return defaults;
+    // Update status badge for a specific activity
+    updateActivityStatus(activityId, status) {
+        const el = document.getElementById(`acv-status-${activityId}`);
+        if (!el) return;
+        el.dataset.status = status;
+        const labels = { running: 'Running', done: 'Done', error: 'Error', na: 'N/A' };
+        el.textContent = labels[status] || 'N/A';
     },
 
-    savePerActivityConfig(activityName, groupId) {
+    getPerActivityConfig(activityId, groupId) {
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        if (!sys) return {};
+
+        const conf = this._groupConfigs[groupId] || { activities: {} };
+        const actConf = conf.activities[activityId] || {};
+
+        // Start with system defaults from registry
+        const defaults = { ...sys.defaults };
+        if (sys.config_fields) {
+            sys.config_fields.forEach(f => {
+                if (f.default !== undefined) defaults[f.key] = f.default;
+            });
+        }
+
+        // Merge with saved config payload
+        const userPayload = actConf.config || {};
+
+        return {
+            ...defaults,
+            ...userPayload,
+            cooldown_enabled: actConf.cooldown_enabled ?? defaults.cooldown_enabled,
+            cooldown_minutes: actConf.cooldown_minutes ?? defaults.cooldown_minutes,
+            last_run: actConf.last_run || null
+        };
+    },
+
+    savePerActivityConfig(activityId, groupId) {
         const panel = document.getElementById('acv-config-panel');
         if (!panel) return;
-        const vals = {};
+
+        if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
+        if (!this._groupConfigs[groupId].activities[activityId]) {
+            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+        }
+
+        const actConf = this._groupConfigs[groupId].activities[activityId];
+        actConf.config = actConf.config || {};
+
         panel.querySelectorAll('[data-cfgkey]').forEach(el => {
-            vals[el.dataset.cfgkey] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
+            const key = el.dataset.cfgkey;
+            const val = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
+
+            // Map top-level cooldown fields to their proper places
+            if (key === 'cooldown_enabled' || key === 'cooldown_minutes') {
+                actConf[key] = val;
+            } else {
+                actConf.config[key] = val;
+            }
         });
-        localStorage.setItem(`wf_acfg_${groupId}_${activityName}`, JSON.stringify(vals));
-        WfToast.show('s', 'Config Saved', `${activityName}`);
+
+        this._saveConfigToBackend(groupId);
+        WfToast.show('s', 'Saved', 'Configuration saved.');
     },
 
-    showActivityConfig(activityName, groupId) {
+    // Click on activity name → highlight row + open config
+    selectActivity(activityId, groupId, el) {
+        // Remove 'selected' from all rows, add to clicked one
+        document.querySelectorAll('.acv-activity-row').forEach(r => r.classList.remove('selected'));
+        const row = el.closest('.acv-activity-row');
+        if (row) row.classList.add('selected');
+        // Open config panel for this activity
+        this.showActivityConfig(activityId, groupId);
+    },
+
+    showActivityConfig(activityId, groupId) {
         // Switch to config tab
         this.switchRightTab('config');
 
         const panel = document.getElementById('acv-config-panel');
         if (!panel) return;
 
-        const defs = this._activityConfigDefs[activityName] || [];
-        const saved = this.getPerActivityConfig(activityName, groupId);
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        if (!sys) return;
 
-        if (defs.length === 0) {
-            panel.innerHTML = `
-                <div class="acv-cfg-header">
-                    <div class="acv-cfg-title">${activityName}</div>
-                    <div class="acv-cfg-sub">No configurable options for this activity.</div>
-                </div>
-            `;
-            return;
-        }
+        const activityName = sys.name;
+        const defs = sys.config_fields || [];
+        const saved = this.getPerActivityConfig(activityId, groupId);
 
+        // Build activity-specific fields
         const fieldsHtml = defs.map(d => {
             const val = saved[d.key] !== undefined ? saved[d.key] : d.default;
             if (d.type === 'checkbox') {
                 return `
                 <div class="acv-cfg-field">
                     <label class="acv-check-label" style="gap:10px;">
-                        <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityName.replace(/'/g, "\\'")}',${groupId})">
+                        <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
                         <span class="acv-check-box"></span>
                         <span>${d.label}</span>
                     </label>
@@ -896,15 +1553,45 @@ const WF3 = {
                 return `
                 <div class="acv-cfg-field">
                     <label class="acv-cfg-label">${d.label}</label>
-                    <select class="acv-cfg-select" data-cfgkey="${d.key}" onchange="WF3.savePerActivityConfig('${activityName.replace(/'/g, "\\'")}',${groupId})">${opts}</select>
+                    <select class="acv-cfg-select" data-cfgkey="${d.key}" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">${opts}</select>
                 </div>`;
             }
             return `
             <div class="acv-cfg-field">
                 <label class="acv-cfg-label">${d.label}</label>
-                <input type="number" class="acv-cfg-input" data-cfgkey="${d.key}" value="${val}" ${d.min !== undefined ? 'min="' + d.min + '"' : ''} ${d.max !== undefined ? 'max="' + d.max + '"' : ''} onchange="WF3.savePerActivityConfig('${activityName.replace(/'/g, "\\'")}',${groupId})">
+                <input type="number" class="acv-cfg-input" data-cfgkey="${d.key}" value="${val}" ${d.min !== undefined ? 'min="' + d.min + '"' : ''} ${d.max !== undefined ? 'max="' + d.max + '"' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
             </div>`;
         }).join('');
+
+        // Cooldown section (always shown)
+        const cdEnabled = saved.cooldown_enabled || false;
+        const cdMinutes = saved.cooldown_minutes !== undefined ? saved.cooldown_minutes : 60;
+        const lastRun = this._getLastRun(activityId, groupId);
+        const lastRunStr = lastRun ? new Date(lastRun).toLocaleString() : 'Never';
+        const cooldownStatus = this._isOnCooldown(activityId, groupId)
+            ? `<span style="color:var(--amber-500)">⏳ ${this._formatCooldownRemaining(activityId, groupId)}</span>`
+            : (lastRun ? '<span style="color:var(--emerald-500)">✓ Ready</span>' : '');
+
+        const cooldownHtml = `
+            <div class="acv-cfg-divider"></div>
+            <div class="acv-cfg-section-title">Cooldown</div>
+            <div class="acv-cfg-field">
+                <label class="acv-check-label" style="gap:10px;">
+                    <input type="checkbox" data-cfgkey="cooldown_enabled" ${cdEnabled ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                    <span class="acv-check-box"></span>
+                    <span>After script completing put it on cooldown</span>
+                </label>
+            </div>
+            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:10px;">
+                <label class="acv-cfg-label" style="margin:0; white-space:nowrap;">Put on cooldown for</label>
+                <input type="number" class="acv-cfg-input" data-cfgkey="cooldown_minutes" value="${cdMinutes}" min="1" max="9999" style="width:80px;" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                <span style="font-size:12px; color:var(--muted-foreground);">Minutes</span>
+            </div>
+            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground);">
+                <span>Last run: ${lastRunStr}</span>
+                ${cooldownStatus}
+            </div>
+        `;
 
         panel.innerHTML = `
             <div class="acv-cfg-header">
@@ -917,7 +1604,10 @@ const WF3 = {
                 <div class="acv-cfg-title">${activityName}</div>
                 <div class="acv-cfg-sub">Configuration for this group's activity</div>
             </div>
-            <div class="acv-cfg-fields">${fieldsHtml}</div>
+            <div class="acv-cfg-fields">
+                ${fieldsHtml}
+                ${cooldownHtml}
+            </div>
         `;
     },
 
@@ -1027,13 +1717,16 @@ const WF3 = {
     exitGroupEditMode() {
         const viewMode = document.getElementById('wf-group-view-mode');
         const editMode = document.getElementById('wf-group-edit-mode');
+        const wasInEdit = editMode && editMode.style.display !== 'none';
+
         if (viewMode) viewMode.style.display = 'flex';
         if (editMode) editMode.style.display = 'none';
 
-        // Update _currentGroupAccountIds from checkboxes if edit mode was active
-        const cbs = document.querySelectorAll('.wf-group-account-cb:checked');
-        if (cbs.length > 0 || document.querySelectorAll('.wf-group-account-cb').length > 0) {
-            this._currentGroupAccountIds = Array.from(cbs).map(cb => parseInt(cb.value));
+        if (wasInEdit) {
+            const cbs = document.querySelectorAll('.wf-group-account-cb:checked');
+            if (cbs.length > 0 || document.querySelectorAll('.wf-group-account-cb').length > 0) {
+                this._currentGroupAccountIds = Array.from(cbs).map(cb => parseInt(cb.value));
+            }
         }
         this.renderGroupMembersView(this._currentGroupAccountIds);
     },
@@ -1096,20 +1789,29 @@ const WF3 = {
             return;
         }
 
-        const selectedIds = Array.from(document.querySelectorAll('.wf-group-account-cb:checked'))
-            .map(cb => parseInt(cb.value));
+        let selectedIds = [];
+        const editMode = document.getElementById('wf-group-edit-mode');
+        if (editMode && editMode.style.display !== 'none') {
+            selectedIds = Array.from(document.querySelectorAll('.wf-group-account-cb:checked'))
+                .map(cb => parseInt(cb.value));
+            this._currentGroupAccountIds = selectedIds;
+        } else {
+            selectedIds = this._currentGroupAccountIds || [];
+        }
 
         try {
+            if (!this.di) await this._initDI();
+
             if (this.currentGroupId) {
                 // Update
-                const res = await API.updateGroup(this.currentGroupId, { name, account_ids: selectedIds });
-                if (res.error) throw new Error(res.error);
+                const res = await this.di.groupRepo.update(this.currentGroupId, { name, account_ids: selectedIds });
+                if (!res.ok) throw new Error(res.error.message || res.error);
                 WfToast.show('s', 'Saved', 'Group updated successfully.');
             } else {
                 // Create
-                const res = await API.createGroup({ name, account_ids: selectedIds });
-                if (res.error) throw new Error(res.error);
-                this.currentGroupId = res.id;
+                const res = await this.di.groupRepo.create({ name, account_ids: selectedIds });
+                if (!res.ok) throw new Error(res.error.message || res.error);
+                this.currentGroupId = res.data.id;
                 WfToast.show('s', 'Created', 'Group created successfully.');
             }
             // Refresh
@@ -1126,8 +1828,10 @@ const WF3 = {
         if (!confirm('Are you sure you want to delete this group?')) return;
 
         try {
-            const res = await API.deleteGroup(this.currentGroupId);
-            if (res.error) throw new Error(res.error);
+            if (!this.di) await this._initDI();
+
+            const res = await this.di.groupRepo.delete(this.currentGroupId);
+            if (!res.ok) throw new Error(res.error.message || res.error);
 
             WfToast.show('s', 'Deleted', 'Group removed.');
             this.currentGroupId = null;
@@ -1567,6 +2271,32 @@ const WF3 = {
                     if (statusEl) { statusEl.textContent = 'ERROR'; statusEl.className = 'wf-status status-error'; }
                     WfToast.show('e', 'Error', 'Workflow execution failed.');
                 }
+            }
+        });
+
+        // ── NEW: Sequential Bot Queue ──
+        wsClient.on('bot_queue_update', (data) => {
+            console.log('[WF3 WS] bot_queue_update received:', data.group_id, 'selected:', WF3?.activitySelectedGroupId);
+            if (!WF3) return;
+
+            // Always update group status dot (regardless of selected group)
+            const groupId = data.group_id;
+            const allPending = data.accounts ? data.accounts.every(a => a.status === 'pending') : false;
+            WF3._updateGroupStatusBadge(groupId, {
+                is_running: data.is_running,
+                all_on_cooldown: data.is_running && allPending,
+            });
+
+            // Use loose equality to handle int/string mismatch
+            // eslint-disable-next-line eqeqeq
+            if (groupId != WF3.activitySelectedGroupId) return;
+
+            // Update activity badges DIRECTLY (works even if queue panel isn't visible)
+            WF3._updateActivityStatuses(data);
+
+            // Also render the account queue UI if the log panel exists
+            if (typeof WF3.renderAccountQueue === 'function') {
+                WF3.renderAccountQueue(data);
             }
         });
     },

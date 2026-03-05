@@ -8,7 +8,9 @@ const AccountsPage = {
     _selectedAccountId: null,
     _activeDetailTab: 'overview',
     _viewMode: 'table',
-    _isLoading: true,
+    _pageState: 'loading',  // 'loading' | 'ready' | 'error' | 'empty'
+    _errorMessage: '',
+    _actionLoading: {},     // { [actionKey]: true }
     _comparisonCache: {},
 
     formatResource(valAbs) {
@@ -72,6 +74,16 @@ const AccountsPage = {
                 /* Status dots */
                 .status-dot-on  { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); box-shadow: 0 0 5px var(--emerald-500); display: inline-block; flex-shrink: 0; }
                 .status-dot-off { width: 7px; height: 7px; border-radius: 50%; background: var(--border); display: inline-block; flex-shrink: 0; }
+
+                /* Skeleton loading animation */
+                @keyframes pulse-bg {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: .5; }
+                }
+                .skel-box { background: var(--muted); border-radius: 4px; animation: pulse-bg 1.5s ease-in-out infinite; }
+                .skel-text { height: 16px; margin: 4px 0; }
+                .skel-badge { width: 50px; height: 18px; border-radius: 12px; }
+                .skel-avatar { width: 32px; height: 32px; border-radius: 6px; }
 
                 /* Table header group row */
                 .th-group { background: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted-foreground); padding: 8px 16px; border-bottom: 1px solid var(--border); text-align: center; }
@@ -140,94 +152,197 @@ const AccountsPage = {
                     background: var(--card); z-index: 1001;
                     box-shadow: -8px 0 40px rgba(0,0,0,0.12);
                     transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
-                    display: flex; flex-direction: column;
+                    overflow-y: auto; overflow-x: hidden;
                 }
                 .slide-panel.active { transform: translateX(0); }
 
-                /* Panel header */
+                /* Safe Delete Modal */
+                #custom-delete-modal { display: none; position: fixed; inset: 0; z-index: 2000; align-items: center; justify-content: center; }
+                #custom-delete-modal.active { display: flex; }
+                .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); animation: fadeIn 0.2s ease; }
+                .modal-content { position: relative; background: var(--card); width: 440px; max-width: 90vw; border-radius: 12px; box-shadow: 0 20px 40px rgba(0,0,0,0.2); padding: 24px; animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); border: 1px solid var(--border); }
+                .modal-icon { width: 48px; height: 48px; border-radius: 50%; background: rgba(var(--red-500-rgb, 239,68,68),0.1); color: var(--red-500); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+                .modal-title { font-size: 18px; font-weight: 800; color: var(--foreground); margin: 0 0 8px; }
+
+                /* ── Form Modal Styles (Add/Edit) ── */
+                .form-section { margin-bottom: 28px; }
+                .section-label {
+                    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+                    color: var(--primary); text-transform: uppercase;
+                    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+                }
+                .section-label::after {
+                    content: ''; flex: 1; height: 1px;
+                    background: linear-gradient(90deg, rgba(var(--primary-rgb, 99, 102, 241), 0.25), transparent);
+                }
+                .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+                .form-grid.full { grid-template-columns: 1fr; }
+                .field { display: flex; flex-direction: column; gap: 7px; }
+                .field label {
+                    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+                    color: var(--muted-foreground); text-transform: uppercase;
+                    display: flex; align-items: center; gap: 5px;
+                }
+                .field .required {
+                    display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+                    background: var(--primary); margin-bottom: 1px;
+                }
+                .field input, .field select, .field textarea {
+                    background: var(--muted); border: 1px solid var(--border);
+                    border-radius: 10px; padding: 11px 14px;
+                    font-family: inherit; font-size: 13px; font-weight: 400;
+                    color: var(--foreground);
+                    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+                    outline: none; appearance: none; -webkit-appearance: none; width: 100%;
+                }
+                .field input::placeholder, .field textarea::placeholder { color: var(--muted-foreground); opacity: 0.6; }
+                .field input:focus, .field select:focus, .field textarea:focus {
+                    border-color: rgba(var(--primary-rgb, 99, 102, 241), 0.5);
+                    box-shadow: 0 0 0 3px rgba(var(--primary-rgb, 99, 102, 241), 0.1);
+                    background: var(--card);
+                }
+                .field select {
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%2364748b' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+                    background-repeat: no-repeat; background-position: right 14px center;
+                    padding-right: 36px; cursor: pointer;
+                }
+                .field select option { background: var(--card); color: var(--foreground); }
+                .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
+                .field .hint { font-size: 11px; color: var(--muted-foreground); margin-top: -2px; }
+                .modal-footer {
+                    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+                    padding: 18px 28px 24px; border-top: 1px solid var(--border); margin-top: 10px;
+                }
+                @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
+
+                .modal-desc { font-size: 14px; color: var(--muted-foreground); margin: 0 0 20px; line-height: 1.5; }
+                .modal-target { padding: 12px; background: var(--muted); border-radius: 6px; border: 1px solid var(--border); margin-bottom: 20px; }
+                .modal-target-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted-foreground); letter-spacing: 0.5px; margin-bottom: 4px; }
+                .modal-target-value { font-size: 14px; font-weight: 600; color: var(--foreground); }
+                @keyframes slideUp { from { opacity: 0; transform: translateY(20px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+                @keyframes fadeDown { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+
+                /* Panel wrapper */
+                .panel-content-wrap { padding: 32px 24px 80px; }
+
+                /* ── Header ── */
                 .panel-header {
-                    padding: 20px 28px; border-bottom: 1px solid var(--border);
-                    display: flex; justify-content: space-between; align-items: flex-start;
-                    background: var(--card); flex-shrink: 0;
+                    display: flex; align-items: center; justify-content: space-between;
+                    padding: 20px 28px; background: var(--card); border: 1px solid var(--border);
+                    border-radius: 16px; margin-bottom: 20px; animation: fadeDown 0.4s ease both;
                 }
-                .panel-body { flex: 1; overflow-y: auto; }
+                .header-left { display: flex; align-items: center; gap: 18px; }
+                .panel-avatar {
+                    width: 56px; height: 56px; border-radius: 14px;
+                    background: linear-gradient(135deg, var(--primary), var(--indigo-500, #6366f1));
+                    color: #fff; display: flex; align-items: center; justify-content: center;
+                    font-size: 26px; font-weight: 700; flex-shrink: 0;
+                    box-shadow: 0 0 24px rgba(var(--primary-rgb, 99, 102, 241), 0.35);
+                }
+                .title-block h2 { font-size: 22px; font-weight: 700; letter-spacing: 0.03em; color: var(--foreground); margin: 0; }
+                .title-block .meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+                .meta span { display: flex; align-items: center; gap: 4px; }
+                
+                .header-actions { display: flex; gap: 10px; }
+                .btn-ghost { background: var(--muted); color: var(--muted-foreground); border: 1px solid var(--border); }
+                .btn-ghost:hover { color: var(--foreground); border-color: rgba(255,255,255,0.12); }
+                .overflow-menu.active { display: block !important; }
 
-                /* Key stats strip below header */
-                .panel-stats-strip {
-                    display: flex; gap: 0; border-bottom: 1px solid var(--border);
-                    background: var(--muted); flex-shrink: 0;
+                /* ── Stat Cards ── */
+                .stats-row {
+                    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+                    margin-bottom: 20px; animation: fadeDown 0.4s 0.1s ease both;
                 }
-                .panel-stat-item {
-                    flex: 1; padding: 12px 20px; border-right: 1px solid var(--border);
-                    display: flex; flex-direction: column; gap: 3px;
+                .stat-card {
+                    background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px;
+                    position: relative; overflow: hidden; transition: border-color 0.2s, transform 0.2s;
                 }
-                .panel-stat-item:last-child { border-right: none; }
-                .panel-stat-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted-foreground); }
-                .panel-stat-value { font-size: 18px; font-weight: 800; color: var(--foreground); line-height: 1; }
-                .panel-stat-sub { font-size: 11px; color: var(--muted-foreground); margin-top: 1px; }
+                .stat-card:hover { border-color: rgba(var(--primary-rgb, 99,102,241), 0.25); transform: translateY(-2px); }
+                .stat-card::before {
+                    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+                    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+                    opacity: 0; transition: opacity 0.3s;
+                }
+                .stat-card:hover::before { opacity: 1; }
+                .stat-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted-foreground); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+                .stat-value { font-size: 32px; font-weight: 700; color: var(--foreground); line-height: 1; }
+                .stat-value.accent { color: var(--primary); }
+                .stat-sub { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+                
+                .progress-bar { width: 100%; height: 4px; background: var(--muted); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+                @keyframes growBar { from { width: 0 !important; } }
+                .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), var(--yellow-400)); transition: width 1s ease; animation: growBar 1s 0.5s ease both; transform-origin: left; }
+                .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); animation: pulse 2s infinite; display: inline-block; }
+                @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); } 50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } }
 
-                /* Panel tabs */
+                /* ── Tabs ── */
                 .panel-tabs {
-                    display: flex; gap: 0; border-bottom: 1px solid var(--border);
-                    background: var(--card); flex-shrink: 0; padding: 0 28px;
+                    display: flex; gap: 4px; border-bottom: 1px solid var(--border);
+                    margin-bottom: 20px; animation: fadeDown 0.4s 0.15s ease both;
                 }
                 .panel-tab {
-                    padding: 13px 0; margin-right: 28px; color: var(--muted-foreground); cursor: pointer;
-                    border-bottom: 2px solid transparent; font-weight: 600; font-size: 13px;
-                    transition: all 0.18s; margin-bottom: -1px; user-select: none;
+                    padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); cursor: pointer;
+                    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; user-select: none;
                 }
-                .panel-tab:hover { color: var(--foreground); }
+                .panel-tab:hover:not(.active) { color: var(--foreground); }
                 .panel-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 
-                /* Tab content wrapper */
-                .panel-tab-body { padding: 24px 28px; }
+                /* ── Info Sections ── */
+                .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; animation: fadeDown 0.4s 0.2s ease both; }
+                .info-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+                .section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--primary); text-transform: uppercase; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+                .section-title::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(var(--primary-rgb, 99, 102, 241), 0.3), transparent); }
+                
+                .info-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+                .info-row:last-child { border-bottom: none; padding-bottom: 0; }
+                .info-row:first-of-type { padding-top: 0; }
+                .info-key { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
+                .info-val { font-size: 13px; font-weight: 600; color: var(--foreground); display: flex; align-items: center; gap: 6px; }
 
-                /* ── OVERVIEW TAB STYLES ── */
-                .ov-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted-foreground); margin-bottom: 10px; }
-                .ov-row {
-                    display: flex; justify-content: space-between; align-items: center;
-                    padding: 9px 12px; border-radius: 6px; transition: background 0.12s;
-                }
-                .ov-row:hover { background: var(--muted); }
-                .ov-row + .ov-row { border-top: 1px solid var(--border-light, #f0f0f0); }
-                .ov-label { color: var(--muted-foreground); font-size: 13px; display: flex; align-items: center; gap: 5px; }
-                .ov-value { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
-                .ov-value.matched { color: var(--emerald-500); }
-                .level-mini-bar { width: 48px; height: 3px; background: var(--muted); border-radius: 99px; overflow: hidden; display: inline-block; }
-                .level-mini-fill { height: 100%; background: var(--primary); border-radius: 99px; }
-                .info-card { background: var(--muted); border-radius: 8px; padding: 14px 16px; }
+                .provider-tag { background: rgba(59,130,246,0.1); color: var(--blue-500); border: 1px solid rgba(59,130,246,0.2); padding: 2px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+                .alliance-tag { background: rgba(var(--primary-rgb, 99,102,241), 0.12); color: var(--primary); border: 1px solid rgba(var(--primary-rgb, 99,102,241), 0.25); padding: 3px 12px; border-radius: 6px; font-size: 14px; font-weight: 700; letter-spacing: 0.05em; }
+                
+                .level-meter { display: flex; align-items: center; gap: 10px; }
+                .level-num { font-size: 16px; font-weight: 700; color: var(--yellow-500); min-width: 20px; }
+                .meter { width: 80px; height: 5px; background: var(--muted); border-radius: 4px; overflow: hidden; }
+                .meter-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--yellow-500), #fde047); }
+                .level-max { font-size: 11px; color: var(--muted-foreground); }
 
-                .method-dot-google   { width: 8px; height: 8px; border-radius: 50%; background: #EA4335; display: inline-block; }
-                .method-dot-facebook { width: 8px; height: 8px; border-radius: 50%; background: #1877F2; display: inline-block; }
-                .method-dot-apple    { width: 8px; height: 8px; border-radius: 50%; background: #555; display: inline-block; }
+                .status-dot-on  { width: 6px; height: 6px; border-radius: 50%; background: var(--emerald-500); box-shadow: 0 0 5px var(--emerald-500); display: inline-block; }
+                .status-dot-off { width: 6px; height: 6px; border-radius: 50%; background: var(--border); display: inline-block; }
 
-                .ov-quick-actions { display: flex; gap: 8px; padding: 16px 0 4px; border-top: 1px solid var(--border); margin-top: 4px; }
-                .ov-qa-btn { flex: 1; padding: 9px 12px; font-size: 12px; font-weight: 600; background: var(--muted); border: 1px solid var(--border); border-radius: 6px; color: var(--muted-foreground); cursor: pointer; transition: all 0.15s; font-family: inherit; display: flex; align-items: center; justify-content: center; gap: 5px; }
-                .ov-qa-btn:hover { background: var(--surface-300, var(--muted)); color: var(--foreground); border-color: var(--border); }
+                /* Common badging system */
+                .slide-badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; display: inline-flex; align-items: center; gap: 5px; letter-spacing: 0.05em; }
+                .slide-badge--online  { background: rgba(16,185,129,0.12); color: var(--emerald-500); border: 1px solid rgba(16,185,129,0.25); }
+                .slide-badge--offline { background: var(--muted); color: var(--muted-foreground); border: 1px solid var(--border); }
+                .slide-badge--matched { background: rgba(59,130,246,0.12); color: var(--blue-500); border: 1px solid rgba(59,130,246,0.25); }
+                .slide-badge--unsynced { background: rgba(107,114,128,0.08); color: var(--muted-foreground); border: 1px solid var(--border); }
+
+
 
                 /* ── RESOURCES TAB STYLES ── */
-                .res-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+                .res-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 16px; }
                 .res-card {
-                    background: var(--card); border: 1px solid var(--border);
-                    border-radius: 10px; padding: 16px; transition: border-color 0.15s;
-                    box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+                    background: var(--card); border: 1px solid rgba(0,0,0,0.06);
+                    border-radius: 12px; padding: 16px; transition: all 0.2s ease;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
                 }
-                .res-card:hover { border-color: var(--border); }
-                .res-card.critical { border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.03); }
+                .res-card:hover { border-color: var(--border); box-shadow: 0 4px 16px rgba(0,0,0,0.08); transform: translateY(-1px); }
+                .res-card.critical { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06); box-shadow: 0 0 12px rgba(239,68,68,0.08); }
                 .res-header { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-                .res-icon { font-size: 13px; }
-                .res-label { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
+                .res-icon { font-size: 14px; }
+                .res-label { font-size: 12px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; }
                 .res-label.gold { color: var(--yellow-600, #d97706); }
                 .res-label.wood { color: var(--orange-700, #c2410c); }
                 .res-label.ore  { color: var(--indigo-500, #6366f1); }
-                .res-value { font-size: 20px; font-weight: 800; margin-bottom: 10px; color: var(--foreground); font-variant-numeric: tabular-nums; }
+                .res-value { font-size: 20px; font-weight: 700; margin-bottom: 12px; color: var(--foreground); font-variant-numeric: tabular-nums; }
                 .res-value.critical { color: var(--red-500); }
-                .res-bar  { height: 4px; background: var(--muted); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
+                .res-bar  { height: 6px; background: var(--muted); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
                 .res-fill { height: 100%; border-radius: 99px; }
-                .res-fill.gold    { background: var(--yellow-400, #fbbf24); }
-                .res-fill.wood    { background: var(--orange-500, #f97316); }
-                .res-fill.ore     { background: var(--indigo-400, #818cf8); }
-                .res-fill.critical-fill { background: var(--red-400, #f87171); }
+                .res-fill.gold    { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+                .res-fill.wood    { background: linear-gradient(90deg, #ea580c, #f97316); }
+                .res-fill.ore     { background: linear-gradient(90deg, #6366f1, #818cf8); }
+                .res-fill.critical-fill { background: linear-gradient(90deg, #dc2626, #f87171); }
                 .res-footer { display: flex; justify-content: space-between; font-size: 11px; }
                 .res-cap { color: var(--muted-foreground); }
                 .res-cap.warn { color: var(--red-500); font-weight: 600; }
@@ -236,30 +351,31 @@ const AccountsPage = {
                 .delta-loading { color: var(--muted-foreground); font-size: 11px; opacity: 0.5; }
 
                 .pet-card {
-                    background: linear-gradient(90deg, #fdf4ff 0%, #faf5ff 100%);
-                    border: 1px solid #e9d5ff; border-radius: 10px;
-                    padding: 14px 18px; display: flex; justify-content: space-between;
-                    align-items: center; margin-bottom: 14px;
+                    background: var(--card);
+                    border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+                    padding: 16px; display: flex; justify-content: space-between;
+                    align-items: center; margin-bottom: 16px;
                 }
                 .pet-left { display: flex; align-items: center; gap: 14px; }
-                .pet-icon { width: 38px; height: 38px; background: #fff; border-radius: 8px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(168,85,247,0.18); }
-                .pet-label-txt { font-size: 10px; font-weight: 700; color: #7c3aed; letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 3px; }
-                .pet-value { font-size: 20px; font-weight: 800; color: var(--foreground); line-height: 1; }
-                .pet-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-                .pet-badge { background: #fff; border: 1px solid #e9d5ff; color: #7c3aed; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
-                .pet-delta { font-size: 11px; font-weight: 700; }
+                .pet-icon { width: 38px; height: 38px; background: var(--muted); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+                .pet-label-txt { font-size: 12px; font-weight: 700; color: var(--muted-foreground); letter-spacing: 0.6px; text-transform: uppercase; margin-bottom: 4px; }
+                .pet-value { font-size: 16px; font-weight: 700; color: var(--foreground); line-height: 1; }
+                .pet-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+                .pet-badge { background: transparent; border: 1px solid var(--border); color: var(--muted-foreground); padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+                .pet-delta { font-size: 12px; font-weight: 700; }
 
                 .ai-insight {
-                    background: var(--blue-50, #eff6ff); border: 1px solid #bfdbfe;
-                    border-radius: 10px; padding: 14px 16px;
+                    background: transparent; border: 1px solid var(--border);
+                    border-radius: 10px; padding: 16px;
                     display: flex; gap: 12px; align-items: flex-start;
                 }
                 .ai-icon { color: var(--primary); margin-top: 2px; flex-shrink: 0; }
-                .ai-title { font-size: 12px; font-weight: 700; color: var(--blue-700, #1d4ed8); margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
-                .ai-body  { font-size: 13px; color: var(--blue-800, #1e3a8a); line-height: 1.55; }
+                .ai-title { font-size: 12px; font-weight: 700; color: var(--primary); margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
+                .ai-body  { font-size: 14px; color: var(--foreground); line-height: 1.55; }
 
                 /* ── ACTIVITY LOG TAB STYLES ── */
-                .act-section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted-foreground); margin-bottom: 10px; }
+                .act-section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted-foreground); margin-bottom: 12px; }
                 .act-textarea {
                     width: 100%; min-height: 80px; padding: 11px 13px;
                     background: var(--card); border: 1px solid var(--border);
@@ -309,7 +425,7 @@ const AccountsPage = {
                     <div class="page-header-info">
                         <h2 style="margin:0 0 4px;">Game Accounts</h2>
                         <div style="display:flex; align-items:center; gap: 14px; flex-wrap: wrap;">
-                            <p style="margin:0; color: var(--muted-foreground); font-size:13px;">${this._isLoading ? 'Loading...' : this._accountsData.length + ' accounts connected'}</p>
+                            <p style="margin:0; color: var(--muted-foreground); font-size:13px;">${this._pageState === 'loading' ? 'Loading...' : this._accountsData.length + ' accounts connected'}</p>
                             <!-- View Toggle -->
                             <div style="display:flex; background: var(--card); border-radius: 6px; padding: 2px; border: 1px solid var(--border);">
                                 <button class="btn btn-sm" style="padding: 4px 12px; border:none; border-radius: 4px; font-size:12px; display:flex; align-items:center; gap:5px; ${this._viewMode === 'table' ? 'background:var(--primary); color:white; font-weight:600;' : 'background:transparent; color:var(--muted-foreground);'}" onclick="AccountsPage.toggleViewMode('table')">
@@ -322,11 +438,11 @@ const AccountsPage = {
                         </div>
                     </div>
                     <div class="page-actions" style="display:flex; gap: 8px;">
-                        <button class="btn btn-outline btn-sm" style="display:flex;align-items:center;gap:6px;">
+                        <button class="btn btn-outline btn-sm" style="display:flex;align-items:center;gap:6px; opacity:0.6; cursor:not-allowed;" title="Coming soon">
                             <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             Export CSV
                         </button>
-                        <button class="btn btn-outline btn-sm" style="display:flex;align-items:center;gap:6px;" onclick="AccountsPage.fetchData()">
+                        <button class="btn btn-outline btn-sm" style="display:flex;align-items:center;gap:6px;" id="actions-sync-all-btn" onclick="AccountsPage.fetchData()">
                             <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                             Sync All
                         </button>
@@ -346,27 +462,12 @@ const AccountsPage = {
                     <table class="accounts-table">
                         <thead style="position: sticky; top: 0; z-index: 10;">
                             <tr>
-                                <th class="th-group freeze-col-1 stt-col" colspan="1" style="background:var(--muted);z-index:11;text-align:left;padding-left:14px;"></th>
-                                <th class="th-group freeze-col-2" colspan="1" style="background:var(--muted);z-index:11;"></th>
-                                <th class="th-group freeze-col-3" colspan="1" style="background:var(--muted);z-index:11;text-align:left;">Identity</th>
-                                <th class="th-group" colspan="6" style="border-left:1px solid var(--border)">Account Details</th>
-                                <th class="th-group" colspan="4" style="border-left:1px solid var(--border)">Progress & Social</th>
-                                <th class="th-group" colspan="5" style="border-left:1px solid var(--border)">Resources</th>
-                                <th class="th-group" colspan="1"></th>
-                            </tr>
-                            <tr>
                                 <th class="th-col freeze-col-1 stt-col" style="padding-left:14px;z-index:11;">#</th>
                                 <th class="th-col freeze-col-2" style="min-width:110px;z-index:11;">Emulator</th>
                                 <th class="th-col freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);">Name</th>
                                 <th class="th-col" style="border-left:1px solid var(--border);font-size:11px;">Game ID</th>
                                 <th class="th-col accent" style="text-align:right;">Power</th>
-                                <th class="th-col">Login</th>
-                                <th class="th-col">Email</th>
-                                <th class="th-col" style="text-align:center;">Status</th>
-                                <th class="th-col" style="text-align:center;">Sync</th>
-                                <th class="th-col" style="text-align:right;border-left:1px solid var(--border);">Hall</th>
-                                <th class="th-col" style="text-align:right;">Market</th>
-                                <th class="th-col">Alliance</th>
+                                <th class="th-col" style="text-align:center;">Runtime Status</th>
                                 <th class="th-col" style="text-align:center;">Provider</th>
                                 <th class="th-col" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);">Gold</th>
                                 <th class="th-col" style="text-align:right;color:var(--emerald-600,#059669);">Wood</th>
@@ -391,22 +492,65 @@ const AccountsPage = {
                 <div id="accounts-slide-overlay" class="slide-panel-overlay" onclick="AccountsPage.closeDetail()"></div>
                 <!-- Slide Panel -->
                 <div id="accounts-slide-panel" class="slide-panel"></div>
+                
+                <!-- Safe Delete Modal Container -->
+                <div id="delete-modal-container"></div>
             </div>
         `;
     },
 
     _renderTableBody() {
-        if (this._isLoading) {
-            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</td></tr>`;
+        if (this._pageState === 'loading') {
+            return Array(6).fill(0).map((_, i) => `
+                <tr class="account-row" style="animation: pulse-bg 1.5s ease-in-out infinite;">
+                    <td class="freeze-col-1 stt-col" style="padding:11px 0 11px 14px;"><div class="skel-box skel-text" style="width:20px;"></div></td>
+                    <td class="freeze-col-2" style="padding:11px 14px;"><div class="skel-box skel-text" style="width:70px;"></div></td>
+                    <td class="freeze-col-3" style="padding:11px 14px; border-right:2px solid var(--border);"><div class="skel-box skel-text" style="width:100px;"></div></td>
+                    <td style="padding:11px 14px; border-left:1px solid var(--border);"><div class="skel-box skel-text" style="width:80px;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:60px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px; text-align:center;"><div class="skel-box skel-badge" style="margin: 0 auto;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:50px; margin: 0 auto;"></div></td>
+                    <td style="padding:11px 14px; border-left:1px solid var(--border);"><div class="skel-box skel-text" style="width:50px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:50px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:50px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:50px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px;"><div class="skel-box skel-text" style="width:50px; margin-left:auto;"></div></td>
+                    <td style="padding:11px 14px;"></td>
+                </tr>
+            `).join('');
         }
-        if (this._accountsData.length === 0) {
-            return `<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</td></tr>`;
+
+        if (this._pageState === 'error') {
+            return `
+            <tr>
+                <td colspan="13" style="padding: 30px;">
+                    <div style="background:rgba(239,68,68,0.05); border:1px solid rgba(239,68,68,0.2); border-radius:8px; padding:20px; text-align:center; color:var(--red-500);">
+                        <svg style="width:24px;height:24px;margin:0 auto 10px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <h3 style="margin:0 0 6px; font-size:16px;">Could not load accounts</h3>
+                        <p style="margin:0 0 16px; font-size:13px; opacity:0.8;">${this._errorMessage}</p>
+                        <button class="btn btn-outline" onclick="AccountsPage.fetchData()">Try Again</button>
+                    </div>
+                </td>
+            </tr>`;
         }
+
+        if (this._pageState === 'empty') {
+            return `
+            <tr>
+                <td colspan="13" style="padding: 40px;">
+                    <div style="text-align:center; max-width:400px; margin: 0 auto; color:var(--muted-foreground);">
+                        <svg style="width:40px;height:40px;margin:0 auto 14px;color:var(--border);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+                        <h3 style="margin:0 0 8px; font-size:18px; color:var(--foreground);">No accounts yet</h3>
+                        <p style="margin:0 0 20px; font-size:14px; line-height:1.5;">Add your first game account to start tracking resources, managing status, and syncing data.</p>
+                        <button class="btn btn-primary" onclick="AccountsPage.openAddForm()">+ Add Account</button>
+                    </div>
+                </td>
+            </tr>`;
+        }
+
         return this._accountsData.map((row) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
             const dotClass = statusStr === 'online' ? 'status-dot-on' : 'status-dot-off';
-            const loginMethod = row.login_method || '—';
-            const loginColor = loginMethod === 'Google' ? '#EA4335' : loginMethod === 'Facebook' ? '#1877F2' : '#555';
             const isSelected = this._selectedAccountId === row.account_id;
 
             // Format metrics
@@ -415,13 +559,20 @@ const AccountsPage = {
             const woodFormatted = AccountsPage.formatResource(row.wood);
             const oreFormatted = AccountsPage.formatResource(row.ore);
             const manaFormatted = AccountsPage.formatResource(row.mana);
-            const accMatching = row.lord_name ? 'Yes' : 'No';
             const ingameName = row.lord_name || '—';
             const displayEmail = row.email || '—';
             const displayAlliance = row.alliance || '—';
             const gameId = row.game_id || '—';
             const isLegacy = gameId.startsWith('LEGACY-');
 
+            // Delta setup
+            const mkInlineDelta = (key) => {
+                const cached = this._comparisonCache[gameId];
+                if (!cached || !cached.delta || !cached.delta[key]) return '';
+                const v = cached.delta[key];
+                const isUp = v > 0;
+                return `<span title="${isUp ? '+' : ''}${v.toLocaleString()}" style="font-size:10px; margin-left:4px; font-family:sans-serif; color: ${isUp ? 'var(--emerald-500)' : 'var(--red-500)'}">${isUp ? '▲' : '▼'}</span>`;
+            };
             // Active status badge
             let statusBadge;
             if (row.is_active === 1 && statusStr === 'online') {
@@ -446,34 +597,22 @@ const AccountsPage = {
                 <td class="freeze-col-3" style="padding:11px 14px;font-size:13px;font-weight:700;color:var(--primary);border-right:2px solid var(--border);">${ingameName}</td>
                 <td style="padding:11px 14px;font-size:12px;font-family:monospace;color:var(--muted-foreground);border-left:1px solid var(--border);">${isLegacy ? '<span style="color:var(--yellow-500)" title="Legacy account - needs Game ID">⚠️</span>' : gameId}</td>
                 <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;">${powFormatted}</td>
-                <td style="padding:11px 14px;font-size:13px;">
-                    <span style="border:1px solid ${loginColor}22;background:${loginColor}10;color:${loginColor};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">${loginMethod}</span>
-                </td>
-                <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);max-width:160px;overflow:hidden;text-overflow:ellipsis;">${displayEmail}</td>
                 <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
-                <td style="padding:11px 14px;text-align:center;">
-                    ${accMatching === 'Yes'
-                    ? '<span class="badge-status-yes">✓ Linked</span>'
-                    : '<span class="badge-status-no">✗ None</span>'}
-                </td>
-                <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;border-left:1px solid var(--border);">${row.hall_level || 0}</td>
-                <td style="padding:11px 14px;text-align:right;font-weight:700;font-size:13px;">${row.market_level || 0}</td>
-                <td style="padding:11px 14px;font-size:12px;color:var(--muted-foreground);">${displayAlliance}</td>
                 <td style="padding:11px 14px;text-align:center;font-size:12px;">${row.provider || '—'}</td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
-                    <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>
+                    <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>${mkInlineDelta('gold')}
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--emerald-600,#059669);font-size:13px;">${woodFormatted}</span>
+                    <span class="resource-val" style="color:var(--emerald-600,#059669);font-size:13px;">${woodFormatted}</span>${mkInlineDelta('wood')}
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>
+                    <span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>${mkInlineDelta('ore')}
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>
+                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>${mkInlineDelta('pet_token')}
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>
+                    <span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>${mkInlineDelta('mana')}
                 </td>
                 <td style="padding:11px 14px;">
                     <div class="hover-actions-arrow">
@@ -486,11 +625,28 @@ const AccountsPage = {
     },
 
     _renderGridBody() {
-        if (this._isLoading) {
-            return `<div style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading accounts...</div>`;
+        if (this._pageState === 'loading') {
+            return Array(4).fill(0).map((_, i) => `
+                <div class="account-card" style="animation: pulse-bg 1.5s ease-in-out infinite;">
+                    <div class="card-dot" style="background:var(--border)"></div>
+                    <div class="account-info">
+                        <div class="skel-box skel-text" style="width:120px;height:18px;"></div>
+                        <div class="skel-box skel-text" style="width:140px;height:12px;"></div>
+                    </div>
+                    <div class="account-power" style="margin-left:auto;">
+                        <div class="power-label">
+                            <div class="skel-box skel-text" style="width:60px;"></div>
+                        </div>
+                        <div class="power-bar"><div class="skel-box" style="width:100%;height:100%;"></div></div>
+                    </div>
+                </div>
+            `).join('');
         }
-        if (this._accountsData.length === 0) {
-            return `<div style="text-align:center;padding:40px;color:var(--muted-foreground);">No accounts found.</div>`;
+        if (this._pageState === 'error') {
+            return `<div style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--red-500); background:rgba(239,68,68,0.05); border-radius:8px;">${this._errorMessage}</div>`;
+        }
+        if (this._pageState === 'empty') {
+            return `<div style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--muted-foreground);">No accounts found. Use 'Add Account' to get started.</div>`;
         }
         return this._accountsData.map((row, index) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
@@ -572,104 +728,194 @@ const AccountsPage = {
         const isEdit = mode === 'edit';
 
         return `
-            <div class="panel-header" style="flex-direction: column; gap:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-                    <h2 style="margin:0;font-size:20px;font-weight:800;">${title}</h2>
-                    <button onclick="AccountsPage.closeDetail()" style="width:32px;height:32px;border-radius:8px;background:var(--muted);border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);" title="Close">
-                        <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <div class="panel-content-wrap" style="max-width: 780px; margin: 0 auto; padding: 20px;">
+                <!-- Header -->
+                <div class="panel-header" style="align-items: center; border-radius: 20px;">
+                    <div style="display:flex; align-items:center; gap: 14px;">
+                        <div class="modal-icon" style="margin-bottom:0;">
+                            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                              <circle cx="9" cy="7" r="4"/>
+                              <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+                            </svg>
+                        </div>
+                        <div class="title-block">
+                            <h2 style="font-family:'Outfit', sans-serif;">${title}</h2>
+                            <p style="font-size: 12px; color: var(--muted-foreground); margin-top: 2px;">
+                                ${isEdit ? 'Update system records for this instance' : 'Register a new bot account to the system'}
+                            </p>
+                        </div>
+                    </div>
+                    <button class="btn btn-ghost" onclick="AccountsPage.closeDetail()" style="padding: 9px; border-radius: 10px;" title="Close">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
                     </button>
                 </div>
-            </div>
 
-            <div class="panel-body" style="padding: 24px 28px;">
-                <form id="accounts-add-edit-form" onsubmit="event.preventDefault(); AccountsPage.saveAccount('${mode}');">
-                    
-                    <div style="display:flex; gap:16px; margin-bottom:20px;">
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Game ID <span style="color:var(--red-500)">*</span></label>
-                            <input type="text" id="form-game-id" value="${acc.game_id || ''}" required ${isEdit ? 'readonly' : ''} placeholder="e.g. 12345678" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground); font-family:monospace;" />
-                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">Game ID cannot be changed.</p>' : '<p style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">The unique in-game player ID (copy from game profile).</p>'}
-                        </div>
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Emulator Index</label>
-                            <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined && acc.emu_index !== null ? acc.emu_index : ''}" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" placeholder="Optional" />
-                        </div>
-                    </div>
+                <!-- Body -->
+                <div style="background: var(--card); border: 1px solid var(--border); border-radius: 20px; position:relative; overflow:hidden;">
+                    <!-- Top accent line -->
+                    <div style="position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent 0%, var(--primary) 40%, var(--yellow-500) 60%, transparent 100%);"></div>
 
-                    <div style="display:flex; gap:16px; margin-bottom:20px;">
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">In-game Lord Name</label>
-                            <input type="text" id="form-lord-name" value="${acc.lord_name || ''}" ${isEdit ? 'disabled' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
+                    <form id="accounts-add-edit-form" onsubmit="event.preventDefault(); AccountsPage.saveAccount('${mode}');" style="padding: 28px 30px 0;">
+                        <!-- Section: Identity -->
+                        <div class="form-section">
+                            <div class="section-label">Identity</div>
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label><span class="required"></span> Game ID</label>
+                                    <input type="text" id="form-game-id" value="${acc.game_id || ''}" ${isEdit ? 'readonly' : ''} placeholder="e.g. 12345678"/>
+                                    <div id="err-game-id" style="font-size:11px; color:var(--red-500); margin-top:4px; display:none;"></div>
+                                    <span id="hint-game-id" class="hint">${isEdit ? 'Game ID cannot be changed.' : 'The unique in-game numeric player ID.'}</span>
+                                </div>
+                                <div class="field">
+                                    <label>Emulator Index</label>
+                                    <input type="number" id="form-emu-index" value="${acc.emu_index !== undefined && acc.emu_index !== null ? acc.emu_index : ''}" placeholder="Optional"/>
+                                </div>
+                                <div class="field">
+                                    <label>In-game Lord Name</label>
+                                    <input type="text" id="form-lord-name" value="${acc.lord_name || ''}" ${isEdit ? 'disabled' : ''} placeholder=""/>
+                                </div>
+                                <div class="field">
+                                    <label>Power (M)</label>
+                                    <input type="number" step="0.1" id="form-power" value="${isEdit ? (acc.power ? (acc.power / 1000000).toFixed(1) : '') : ''}" ${isEdit ? 'disabled' : ''} placeholder="e.g. 14.9"/>
+                                </div>
+                            </div>
+                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:6px;">Identity metrics synchronize automatically via Full Scan.</p>' : ''}
                         </div>
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Power (M)</label>
-                            <input type="number" step="0.1" id="form-power" value="${isEdit ? (acc.power ? (acc.power / 1000000).toFixed(1) : '') : ''}" ${isEdit ? 'disabled' : ''} style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
-                        </div>
-                    </div>
-                    ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:-14px; margin-bottom:20px;">Identity metrics synchronize automatically via Full Scan.</p>' : ''}
 
-                    <div style="display:flex; gap:16px; margin-bottom:20px;">
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Login Method</label>
-                            <select id="form-login-method" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);">
-                                <option value="" ${!acc.login_method ? 'selected' : ''}>-- Select --</option>
-                                <option value="Google" ${acc.login_method === 'Google' ? 'selected' : ''}>Google</option>
-                                <option value="Facebook" ${acc.login_method === 'Facebook' ? 'selected' : ''}>Facebook</option>
-                                <option value="Apple" ${acc.login_method === 'Apple' ? 'selected' : ''}>Apple</option>
-                            </select>
+                        <!-- Section: Login -->
+                        <div class="form-section">
+                            <div class="section-label">Login &amp; Access</div>
+                            <div class="form-grid">
+                                <div class="field">
+                                    <label>Login Method</label>
+                                    <select id="form-login-method" onchange="AccountsPage._checkEmailRequired()">
+                                        <option value="" ${!acc.login_method ? 'selected' : ''} disabled>-- Select --</option>
+                                        <option value="Google" ${acc.login_method === 'Google' ? 'selected' : ''}>Google</option>
+                                        <option value="Facebook" ${acc.login_method === 'Facebook' ? 'selected' : ''}>Facebook</option>
+                                        <option value="Apple" ${acc.login_method === 'Apple' ? 'selected' : ''}>Apple</option>
+                                        <option value="Guest" ${acc.login_method === 'Guest' ? 'selected' : ''}>Guest</option>
+                                    </select>
+                                    <div id="err-login-method" style="font-size:11px; color:var(--red-500); margin-top:4px; display:none;"></div>
+                                </div>
+                                <div class="field">
+                                    <label>
+                                        Login Email 
+                                        <span id="email-asterisk" class="required" style="display:${(acc.login_method === 'Google' || acc.login_method === 'Facebook') ? 'inline-block' : 'none'}; margin-left:4px;"></span>
+                                    </label>
+                                    <input type="email" id="form-email" value="${acc.email || ''}" placeholder="account@gmail.com"/>
+                                    <div id="err-email" style="font-size:11px; color:var(--red-500); margin-top:4px; display:none;"></div>
+                                </div>
+                                <div class="field">
+                                    <label>Provider</label>
+                                    <select id="form-provider">
+                                        <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global</option>
+                                        <option value="Funtap" ${acc.provider === 'Funtap' ? 'selected' : ''}>Funtap</option>
+                                        <option value="VNG" ${acc.provider === 'VNG' ? 'selected' : ''}>VNG</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>Alliance Tag</label>
+                                    <input type="text" id="form-alliance" value="${acc.alliance || ''}" placeholder="e.g. [RFFO]"/>
+                                </div>
+                            </div>
                         </div>
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Login Email</label>
-                            <input type="email" id="form-email" value="${acc.email || ''}" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
+
+                        <!-- Section: Notes -->
+                        <div class="form-section" style="margin-bottom:0;">
+                            <div class="section-label">Internal Notes</div>
+                            <div class="form-grid full">
+                                <div class="field">
+                                    <textarea id="form-note" placeholder="Optional notes about this account...">${acc.note || ''}</textarea>
+                                </div>
+                            </div>
                         </div>
-                    </div>
 
-                    <div style="display:flex; gap:16px; margin-bottom:20px;">
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Provider</label>
-                            <select id="form-provider" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);">
-                                <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global</option>
-                                <option value="Funtap" ${acc.provider === 'Funtap' ? 'selected' : ''}>Funtap</option>
-                            </select>
+                        <!-- Footer -->
+                        <div class="modal-footer">
+                            <span id="form-save-feedback" style="font-size:13px; font-weight:600; color:var(--emerald-500); opacity:0; transition:opacity 0.3s; margin-right:auto;">Saved</span>
+                            
+                            <div id="form-save-spinner" style="display:none; align-items:center; gap:6px; font-size:13px; color:var(--muted-foreground); margin-right:auto;">
+                                <span class="status-dot-on" style="background:var(--primary); box-shadow:none; animation: pulse-bg 1s infinite;"></span> Saving...
+                            </div>
+
+                            <button type="button" class="btn btn-ghost" id="form-btn-cancel" onclick="AccountsPage.closeDetail()" style="padding: 10px 22px; border-radius: 10px; font-size: 13px; font-weight: 600;">Cancel</button>
+                            
+                            <button type="submit" class="btn btn-primary" id="form-btn-submit" style="padding: 10px 22px; border-radius: 10px; font-size: 13px; font-weight: 600; border: none; display: flex; align-items: center; gap: 7px; background: var(--primary); color: #fff; box-shadow: 0 4px 16px rgba(var(--primary-rgb, 99, 102, 241), 0.35); transition: all 0.2s;">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                                    <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                                </svg>
+                                Save Account
+                            </button>
                         </div>
-                        <div style="flex:1;">
-                            <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Alliance Tag</label>
-                            <input type="text" id="form-alliance" value="${acc.alliance || ''}" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);" />
-                        </div>
-                    </div>
-
-                    <div style="margin-bottom:24px;">
-                        <label style="display:block; font-size:12px; font-weight:700; color:var(--muted-foreground); margin-bottom:6px;">Internal Notes</label>
-                        <textarea id="form-note" style="width:100%; min-height:80px; padding:9px 12px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground);">${acc.note || ''}</textarea>
-                    </div>
-
-                    <div style="display:flex; justify-content:flex-end; gap:12px;">
-                        <span id="form-save-feedback" style="align-self:center; font-size:12px; font-weight:600; color:var(--emerald-500); opacity:0; transition:opacity 0.3s;">Saved</span>
-                        <button type="button" class="btn btn-outline" onclick="AccountsPage.closeDetail()">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Account</button>
-                    </div>
-
-                </form>
+                    </form>
+                </div>
             </div>
         `;
     },
 
+    _checkEmailRequired() {
+        const method = document.getElementById('form-login-method').value;
+        const reqSpan = document.getElementById('email-asterisk');
+        if (reqSpan) {
+            reqSpan.style.display = (method === 'Google' || method === 'Facebook') ? 'inline' : 'none';
+        }
+    },
+
     async saveAccount(mode) {
-        const gameId = document.getElementById('form-game-id').value.trim();
+        // Reset errors
+        ['game-id', 'login-method', 'email'].forEach(k => {
+            const errEl = document.getElementById(`err-${k}`);
+            if (errEl) errEl.style.display = 'none';
+        });
+
+        const gameIdStr = document.getElementById('form-game-id').value.trim();
         const emuIndex = document.getElementById('form-emu-index').value;
         const loginMethod = document.getElementById('form-login-method').value;
-        const email = document.getElementById('form-email').value;
+        const email = document.getElementById('form-email').value.trim();
         const provider = document.getElementById('form-provider').value;
-        const alliance = document.getElementById('form-alliance').value;
+        const alliance = document.getElementById('form-alliance').value.trim();
         const note = document.getElementById('form-note').value;
 
-        if (!gameId) {
-            if (window.app && app.showUtilsToast) app.showUtilsToast('Game ID is required');
-            return;
+        let hasError = false;
+
+        // Validations
+        if (!gameIdStr) {
+            this._showInlineError('game-id', 'Game ID is required');
+            hasError = true;
+        } else if (!/^\d+$/.test(gameIdStr) && !gameIdStr.startsWith('LEGACY-')) {
+            this._showInlineError('game-id', 'Game ID must contain only numbers');
+            hasError = true;
+        } else if (mode === 'add' && this._accountsData.some(a => a.game_id === gameIdStr)) {
+            this._showInlineError('game-id', 'This Game ID already exists in your roster.');
+            hasError = true;
         }
 
+        if (loginMethod === 'Google' || loginMethod === 'Facebook') {
+            if (!email) {
+                this._showInlineError('email', `${loginMethod} login requires an email address.`);
+                hasError = true;
+            } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                this._showInlineError('email', 'Invalid email format.');
+                hasError = true;
+            }
+        }
+
+        if (hasError) return;
+
+        // Loading State
+        const submitBtn = document.getElementById('form-btn-submit');
+        const cancelBtn = document.getElementById('form-btn-cancel');
+        const spinner = document.getElementById('form-save-spinner');
+        submitBtn.disabled = true;
+        cancelBtn.disabled = true;
+        spinner.style.display = 'flex';
+
         let payload = {
-            game_id: gameId,
+            game_id: gameIdStr,
             emu_index: emuIndex || null,
             login_method: loginMethod,
             email: email,
@@ -702,14 +948,19 @@ const AccountsPage = {
                 }
             } catch (err) {
                 if (window.app && app.showUtilsToast) app.showUtilsToast('Network error saving account');
+            } finally {
+                submitBtn.disabled = false; cancelBtn.disabled = false; spinner.style.display = 'none';
             }
         } else if (mode === 'edit') {
             try {
-                const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, {
+                const res = await fetch(`/api/accounts/${encodeURIComponent(gameIdStr)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
+
+                if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+
                 const data = await res.json();
                 if (data.status === 'ok') {
                     document.getElementById('form-save-feedback').style.opacity = '1';
@@ -725,7 +976,21 @@ const AccountsPage = {
                 }
             } catch (err) {
                 if (window.app && app.showUtilsToast) app.showUtilsToast('Network error saving account');
+            } finally {
+                submitBtn.disabled = false; cancelBtn.disabled = false; spinner.style.display = 'none';
             }
+        }
+    },
+
+    _showInlineError(id, msg) {
+        const el = document.getElementById(`err-${id}`);
+        if (el) {
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+        const hintEl = document.getElementById(`hint-${id}`);
+        if (hintEl) {
+            hintEl.style.display = 'none';
         }
     },
 
@@ -805,93 +1070,86 @@ const AccountsPage = {
         }
 
         return `
-            <!-- Panel Header -->
-            <div class="panel-header">
-                <div style="display:flex; align-items:center; gap: 14px;">
-                    <!-- Close button -->
-                    <button onclick="AccountsPage.closeDetail()" style="width:32px;height:32px;border-radius:8px;background:var(--muted);border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);flex-shrink:0;" title="Close">
-                        <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                    <!-- Avatar -->
-                    <div style="width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--primary),var(--indigo-500,#6366f1));color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;box-shadow:0 4px 12px rgba(59,130,246,0.25);flex-shrink:0;">
-                        ${avatarInitial}
-                    </div>
-                    <div>
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <h2 style="margin:0;font-size:20px;font-weight:800;">${ingameName}</h2>
-                            <span style="font-size:11px;font-weight:700;background:${isOnline ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'};color:${statusColor};border:1px solid ${isOnline ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'};padding:2px 8px;border-radius:20px;display:flex;align-items:center;gap:4px;">
-                                <span style="width:6px;height:6px;border-radius:50%;background:${statusColor};${isOnline ? 'box-shadow:0 0 5px var(--emerald-500);' : ''}display:inline-block;"></span>
-                                ${statusLabel}
-                            </span>
+            <div class="panel-content-wrap">
+                <!-- Panel Header -->
+                <div class="panel-header">
+                    <div class="header-left">
+                        <div class="panel-avatar">
+                            ${avatarInitial}
                         </div>
-                        <div style="font-size:12px;color:var(--muted-foreground);margin-top:3px;display:flex;gap:8px;align-items:center;">
-                            <span style="font-family:monospace;${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span>
-                            <span style="color:var(--border);">|</span>
-                            <span>${emuDisplay}</span>
-                            <span style="color:var(--border);">|</span>
-                            <span>Last synced: ${timeAgo}</span>
+                        <div class="title-block">
+                            <h2>${ingameName}</h2>
+                            <div class="meta">
+                                <span>
+                                    <span class="slide-badge slide-badge--${isOnline ? 'online' : 'offline'}">
+                                        <span class="${isOnline ? 'status-dot-on' : 'status-dot-off'}"></span>
+                                        ${statusLabel}
+                                    </span>
+                                </span>
+                                <span>
+                                    ${accMatching === 'Yes'
+                ? '<span class="slide-badge slide-badge--matched">✓ Matched</span>'
+                : '<span class="slide-badge slide-badge--unsynced">✗ Unsynced</span>'}
+                                </span>
+                                <span><span style="font-family:monospace;${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span></span>
+                                <span>${emuDisplay}</span>
+                            </div>
                         </div>
                     </div>
+                    <div class="header-actions" style="position:relative;">
+                        <button class="btn btn-ghost" onclick="AccountsPage.promptDeleteAccount('${acc.game_id}', '${ingameName.replace(/'/g, "\\'")}')" style="padding: 9px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; color: var(--red-500);" title="Delete Account">
+                            <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                        </button>
+                        <button class="btn btn-primary" onclick="AccountsPage.openEditForm('${acc.account_id}')" style="padding: 9px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; display: flex; align-items: center; gap: 6px; background: var(--primary); color: #fff; box-shadow: 0 4px 16px rgba(var(--primary-rgb, 99, 102, 241), 0.3); transition: all 0.2s;">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Edit
+                        </button>
+                        <button class="btn btn-ghost" onclick="AccountsPage.closeDetail()" style="padding: 9px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;" title="Close">
+                            <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-ghost btn-sm" style="color:var(--red-500);" onclick="AccountsPage.deleteAccount('${acc.game_id}')">
-                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        Delete
-                    </button>
-                    <button class="btn btn-outline btn-sm" onclick="AccountsPage.openEditForm('${acc.account_id}')">
-                        <svg style="width:13px;height:13px;margin-right:4px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                        Edit
-                    </button>
-                    <button class="btn btn-primary btn-sm">
-                        <svg style="width:13px;height:13px;margin-right:4px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                        Force Sync
-                    </button>
-                </div>
-            </div>
 
-            <!-- Key Stats Strip -->
-            <div class="panel-stats-strip">
-                <div class="panel-stat-item">
-                    <span class="panel-stat-label">⚡ Power</span>
-                    <span class="panel-stat-value">${powFormatted}</span>
-                    <span class="panel-stat-sub" style="color:var(--primary)">Top metric</span>
-                </div>
-                <div class="panel-stat-item">
-                    <span class="panel-stat-label">🏛 Hall Level</span>
-                    <span class="panel-stat-value">${acc.hall_level || 0}</span>
-                    <span class="panel-stat-sub">${Math.round((acc.hall_level || 0) / 25 * 100)}% to max</span>
-                </div>
-                <div class="panel-stat-item">
-                    <span class="panel-stat-label">🏪 Market Level</span>
-                    <span class="panel-stat-value">${acc.market_level || 0}</span>
-                    <span class="panel-stat-sub">${Math.round((acc.market_level || 0) / 25 * 100)}% to max</span>
-                </div>
-                <div class="panel-stat-item">
-                    <span class="panel-stat-label">🔗 Match Status</span>
-                    <span class="panel-stat-value" style="font-size:14px;padding-top:2px;">
-                        ${accMatching === 'Yes'
-                ? '<span class="badge-status-yes" style="font-size:13px;padding:4px 10px;">✓ Matched</span>'
-                : '<span class="badge-status-no" style="font-size:13px;padding:4px 10px;">✗ Unsynced</span>'}
-                    </span>
-                    <span class="panel-stat-sub">${accountsTotal} account(s) linked</span>
-                </div>
-                <div class="panel-stat-item">
-                    <span class="panel-stat-label">🌐 Provider</span>
-                    <span class="panel-stat-value" style="font-size:15px;padding-top:4px;">${acc.provider || 'Global'}</span>
-                    <span class="panel-stat-sub">${displayAlliance}</span>
-                </div>
-            </div>
+                <!-- Stats Row -->
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <div class="stat-label">
+                            <svg width="12" height="12" fill="none" stroke="var(--primary)" stroke-width="2.5" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                            Power
+                        </div>
+                        <div class="stat-value accent">${powFormatted}</div>
+                        <div class="stat-sub">Combat strength index</div>
+                    </div>
 
-            <!-- Tabs -->
-            <div class="panel-tabs">
-                <div class="panel-tab ${this._activeDetailTab === 'overview' ? 'active' : ''}" onclick="AccountsPage.switchTab('overview')">Overview</div>
-                <div class="panel-tab ${this._activeDetailTab === 'resources' ? 'active' : ''}" onclick="AccountsPage.switchTab('resources')">Resources</div>
-                <div class="panel-tab ${this._activeDetailTab === 'activity' ? 'active' : ''}" onclick="AccountsPage.switchTab('activity')">Activity Log</div>
-            </div>
+                    <div class="stat-card">
+                        <div class="stat-label">
+                            <svg width="12" height="12" fill="none" stroke="var(--yellow-500)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                            Hall Level
+                        </div>
+                        <div class="stat-value">${acc.hall_level || 0}</div>
+                        <div class="progress-bar"><div class="progress-fill" style="width:${Math.round((acc.hall_level || 0) / 25 * 100)}%"></div></div>
+                        <div class="stat-sub">${Math.round((acc.hall_level || 0) / 25 * 100)}% to max (25)</div>
+                    </div>
 
-            <!-- Tab Content -->
-            <div id="panel-tab-content" class="panel-body">
-                <div class="panel-tab-body">
+                    <div class="stat-card">
+                        <div class="stat-label">
+                            <span class="sync-dot"></span>
+                            Last Sync
+                        </div>
+                        <div class="stat-value" style="font-size:24px; padding-top:4px;">${timeAgo}</div>
+                        <div class="stat-sub">${activeStatus.substring(2)} · ${emuDisplay}</div>
+                    </div>
+                </div>
+
+                <!-- Tabs -->
+                <div class="panel-tabs">
+                    <div class="panel-tab ${this._activeDetailTab === 'overview' ? 'active' : ''}" onclick="AccountsPage.switchTab('overview')">Overview</div>
+                    <div class="panel-tab ${this._activeDetailTab === 'resources' ? 'active' : ''}" onclick="AccountsPage.switchTab('resources')">Resources</div>
+                    <div class="panel-tab ${this._activeDetailTab === 'activity' ? 'active' : ''}" onclick="AccountsPage.switchTab('activity')">Activity Log</div>
+                </div>
+
+                <!-- Tab Content -->
+                <div id="panel-tab-content">
                     ${this._renderActiveTab(acc)}
                 </div>
             </div>
@@ -903,7 +1161,7 @@ const AccountsPage = {
         const acc = this._accountsData.find(a => a.account_id === this._selectedAccountId);
         const container = document.getElementById('panel-tab-content');
         if (container && acc) {
-            container.innerHTML = `<div class="panel-tab-body">${this._renderActiveTab(acc)}</div>`;
+            container.innerHTML = this._renderActiveTab(acc);
             document.querySelectorAll('.panel-tab').forEach(el => {
                 el.classList.toggle('active', el.textContent.trim().toLowerCase().startsWith(tabId.toLowerCase().split(' ')[0]));
             });
@@ -975,104 +1233,64 @@ const AccountsPage = {
             const isOnline = (acc.emu_status || '').toLowerCase() === 'online';
 
             return `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:28px;">
-                    <!-- Left -->
-                    <div style="display:flex;flex-direction:column;gap:20px;">
-                        <div>
-                            <div class="ov-section-title">Login & Access</div>
-                            <div class="info-card">
-                                <div class="ov-row">
-                                    <span class="ov-label">Method</span>
-                                    <span class="ov-value"><span class="${loginDotClass}"></span> ${loginMethod}</span>
-                                </div>
-                                <div class="ov-row">
-                                    <span class="ov-label">Email</span>
-                                    <span class="ov-value" style="font-family:monospace;font-size:12px;font-weight:500;">${displayEmail}</span>
-                                </div>
-                            </div>
+                <div class="info-grid">
+                    <!-- Column 1: Login + Emulator -->
+                    <div class="info-card">
+                        <div class="section-title">Login &amp; Access</div>
+                        <div class="info-row">
+                            <span class="info-key">Method</span>
+                            <span class="info-val">
+                                <span class="${loginDotClass}"></span>
+                                ${loginMethod}
+                            </span>
                         </div>
-                        <div>
-                            <div class="ov-section-title">Emulator Info</div>
-                            <div class="info-card">
-                                <div class="ov-row">
-                                    <span class="ov-label">Instance</span>
-                                    <span class="ov-value">
-                                        ${emuDisplay}
-                                        <span style="width:7px;height:7px;border-radius:50%;background:${isOnline ? 'var(--emerald-500)' : 'var(--border)'};${isOnline ? 'box-shadow:0 0 5px var(--emerald-500);' : ''}display:inline-block;"></span>
-                                    </span>
-                                </div>
-                                <div class="ov-row">
-                                    <span class="ov-label">Provider</span>
-                                    <span class="ov-value">${acc.provider || 'Global'}</span>
-                                </div>
-                            </div>
+                        <div class="info-row">
+                            <span class="info-key">Email</span>
+                            <span class="info-val" style="font-size:12px; color: var(--muted-foreground)">${displayEmail}</span>
+                        </div>
+
+                        <div class="section-title" style="margin-top:24px">Emulator Info</div>
+                        <div class="info-row">
+                            <span class="info-key">Instance</span>
+                            <span class="info-val">
+                                ${emuDisplay}
+                                <span class="${isOnline ? 'status-dot-on' : 'status-dot-off'}" style="margin-left:2px"></span>
+                            </span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Provider</span>
+                            <span class="info-val"><span class="provider-tag">${acc.provider || 'Global'}</span></span>
                         </div>
                     </div>
 
-                    <!-- Right -->
-                    <div style="display:flex;flex-direction:column;gap:20px;">
-                        <div>
-                            <div class="ov-section-title">Game Status</div>
-                            <div class="info-card">
-                                <div class="ov-row">
-                                    <span class="ov-label">Alliance</span>
-                                    <span class="ov-value">${displayAlliance}</span>
-                                </div>
-                                <div class="ov-row">
-                                    <span class="ov-label">Hall Level</span>
-                                    <span class="ov-value">
-                                        ${hallLvl}
-                                        <span class="level-mini-bar"><span class="level-mini-fill" style="width:${hallPct}%;display:block;height:100%;"></span></span>
-                                        <span style="font-size:11px;color:var(--muted-foreground);font-weight:400;">/ 25</span>
-                                    </span>
-                                </div>
-                                <div class="ov-row">
-                                    <span class="ov-label">Market Level</span>
-                                    <span class="ov-value">
-                                        ${marketLvl}
-                                        <span class="level-mini-bar"><span class="level-mini-fill" style="width:${mktPct}%;display:block;height:100%;"></span></span>
-                                        <span style="font-size:11px;color:var(--muted-foreground);font-weight:400;">/ 25</span>
-                                    </span>
-                                </div>
-                            </div>
+                    <!-- Column 2: Game Status -->
+                    <div class="info-card">
+                        <div class="section-title">Game Status</div>
+                        <div class="info-row">
+                            <span class="info-key">Alliance</span>
+                            <span class="info-val"><span class="alliance-tag">${displayAlliance}</span></span>
                         </div>
-                        <div>
-                            <div class="ov-section-title">Match</div>
-                            <div class="info-card">
-                                <div class="ov-row">
-                                    <span class="ov-label">
-                                        Status
-                                        <svg style="width:11px;height:11px;color:var(--muted-foreground)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" title="Whether this account is matched to a player profile"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-                                    </span>
-                                    <span class="ov-value ${accMatching === 'Yes' ? 'matched' : ''}">
-                                        ${accMatching === 'Yes'
-                    ? '<svg style="width:13px;height:13px;background:var(--emerald-500);color:white;border-radius:3px;padding:1px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg> Matched'
-                    : '<span style="color:var(--red-500);">✗ Unsynced</span>'}
-                                    </span>
+                        <div class="info-row">
+                            <span class="info-key">Hall Level</span>
+                            <span class="info-val">
+                                <div class="level-meter">
+                                    <span class="level-num">${hallLvl}</span>
+                                    <div class="meter"><div class="meter-fill" style="width:${hallPct}%"></div></div>
+                                    <span class="level-max">/ 25</span>
                                 </div>
-                                <div class="ov-row">
-                                    <span class="ov-label">Total Linked</span>
-                                    <span class="ov-value">${accountsTotal} account(s)</span>
+                            </span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Market Level</span>
+                            <span class="info-val">
+                                <div class="level-meter">
+                                    <span class="level-num">${marketLvl}</span>
+                                    <div class="meter"><div class="meter-fill" style="width:${mktPct}%"></div></div>
+                                    <span class="level-max">/ 25</span>
                                 </div>
-                            </div>
+                            </span>
                         </div>
                     </div>
-                </div>
-
-                <!-- Quick Actions -->
-                <div class="ov-quick-actions">
-                    <button class="ov-qa-btn">
-                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                        Force Sync
-                    </button>
-                    <button class="ov-qa-btn">
-                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                        Edit Account
-                    </button>
-                    <button class="ov-qa-btn">
-                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                        View Alliance
-                    </button>
                 </div>
             `;
         }
@@ -1153,7 +1371,8 @@ const AccountsPage = {
                     <div class="res-card ${oreIsCritical ? 'critical' : ''}">
                         <div class="res-header">
                             <svg class="res-icon" style="width:14px;color:${oreIsCritical ? 'var(--red-500)' : 'var(--indigo-400,#818cf8)'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-                            <span class="res-label ore" style="${oreIsCritical ? 'color:var(--red-500);' : ''}">Ore${oreIsCritical ? ' ⚠' : ''}</span>
+                            <span class="res-label ore" style="${oreIsCritical ? 'color:var(--red-500);' : ''}">Ore</span>
+                            ${oreIsCritical ? '<span style="font-size:9px;font-weight:700;background:var(--red-500);color:#fff;padding:1px 6px;border-radius:4px;margin-left:6px;letter-spacing:0.5px;">CRITICAL</span>' : ''}
                         </div>
                         <div class="res-value ${oreIsCritical ? 'critical' : ''}">${oreFormatted}</div>
                         <div class="res-bar"><div class="res-fill ${oreIsCritical ? 'critical-fill' : 'ore'}" style="width:${orePct}%"></div></div>
@@ -1243,20 +1462,8 @@ const AccountsPage = {
                 <div>
                     <div class="act-section-title" style="margin-bottom:16px;">Recent History</div>
                     <div class="timeline">
-                        <div class="tl-item">
-                            <div class="tl-dot primary"></div>
-                            <div class="tl-time">Today, 10:23 AM</div>
-                            <div class="tl-text"><strong>Synced successfully</strong> via LDP-${acc.emu_index}</div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot success"></div>
-                            <div class="tl-time">Yesterday, 4:00 PM</div>
-                            <div class="tl-text">Resources updated: <strong>Gold +12k</strong></div>
-                        </div>
-                        <div class="tl-item">
-                            <div class="tl-dot info"></div>
-                            <div class="tl-time">2 days ago</div>
-                            <div class="tl-text"><strong>Account matched</strong> for ${acc.lord_name || '—'}</div>
+                        <div style="text-align:center; padding: 20px; font-size:13px; color:var(--muted-foreground); border:1px dashed var(--border); border-radius:6px;">
+                            Activity history will appear here after sync operations.
                         </div>
                     </div>
                 </div>
@@ -1319,7 +1526,7 @@ const AccountsPage = {
     },
 
     async fetchData() {
-        this._isLoading = true;
+        this._pageState = 'loading';
 
         if (typeof router !== 'undefined' && router._currentPage === 'accounts') {
             const root = document.getElementById('page-root');
@@ -1331,15 +1538,31 @@ const AccountsPage = {
                 fetch('/api/accounts'),
                 fetch('/api/pending-accounts'),
             ]);
+
+            if (!accRes.ok) throw new Error(`HTTP Error ${accRes.status}`);
+
             this._accountsData = await accRes.json();
             const pendData = await pendRes.json();
             this._pendingAccounts = Array.isArray(pendData) ? pendData : [];
+
+            if (this._accountsData.length === 0) {
+                this._pageState = 'empty';
+            } else {
+                this._pageState = 'ready';
+                // Auto-fetch comparisons for all accounts
+                this._accountsData.forEach(account => {
+                    if (account.game_id && !this._comparisonCache[account.game_id]) {
+                        this._fetchComparison(account.game_id);
+                    }
+                });
+            }
         } catch (e) {
             console.error('Failed to fetch accounts:', e);
             this._accountsData = [];
             this._pendingAccounts = [];
+            this._pageState = 'error';
+            this._errorMessage = e.message || 'Connection error';
         } finally {
-            this._isLoading = false;
             if (typeof router !== 'undefined' && router._currentPage === 'accounts') {
                 const root = document.getElementById('page-root');
                 if (root) root.innerHTML = this.render();
@@ -1452,36 +1675,63 @@ const AccountsPage = {
         const alliance = document.getElementById('pq-alliance')?.value || '';
         const note = document.getElementById('pq-note')?.value || '';
 
+        const btn = event?.currentTarget;
+        if (btn) {
+            btn.disabled = true;
+            const oldTxt = btn.textContent;
+            btn.textContent = 'Creating...';
+            btn.dataset.oldTxt = oldTxt;
+        }
+
         try {
             const res = await fetch(`/api/pending-accounts/${pendingId}/confirm`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ login_method: loginMethod, email, provider, alliance, note }),
             });
+
+            if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+
             const data = await res.json();
             if (data.status === 'confirmed') {
-                if (window.app && app.showUtilsToast) app.showUtilsToast('Account confirmed! ✓');
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Account confirmed! ✓', 'success');
                 this.fetchData();
             } else {
-                if (window.app && app.showUtilsToast) app.showUtilsToast('Confirm failed: ' + (data.error || 'Unknown'));
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Confirm failed: ' + (data.error || 'Unknown'), 'error');
             }
         } catch (e) {
-            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error confirming account');
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error confirming account (' + e.message + ')', 'error');
+        } finally {
+            if (btn && document.body.contains(btn)) {
+                btn.disabled = false;
+                btn.textContent = btn.dataset.oldTxt;
+            }
         }
     },
 
     async dismissPending(pendingId) {
         if (!confirm('Dismiss this pending account? It will reappear on next scan.')) return;
+
+        const btn = event?.currentTarget;
+        if (btn) btn.disabled = true;
+
         try {
             const res = await fetch(`/api/pending-accounts/${pendingId}/dismiss`, { method: 'POST' });
+
+            if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+
             const data = await res.json();
             if (data.status === 'dismissed') {
                 this.fetchData();
             } else {
-                if (window.app && app.showUtilsToast) app.showUtilsToast('Dismiss failed: ' + (data.error || 'Unknown'));
+                if (window.app && app.showUtilsToast) app.showUtilsToast('Dismiss failed: ' + (data.error || 'Unknown'), 'error');
             }
         } catch (e) {
-            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error dismissing');
+            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error dismissing (' + e.message + ')', 'error');
+        } finally {
+            if (btn && document.body.contains(btn)) {
+                btn.disabled = false;
+            }
         }
     },
 

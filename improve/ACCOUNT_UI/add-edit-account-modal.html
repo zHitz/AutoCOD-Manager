@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Add New Account</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0c10;
+    --overlay: rgba(0,0,0,0.7);
+    --surface: #111318;
+    --surface2: #181c24;
+    --surface3: #1e2330;
+    --border: rgba(255,255,255,0.07);
+    --border-focus: rgba(249,115,22,0.5);
+    --accent: #f97316;
+    --accent2: #fb923c;
+    --gold: #f59e0b;
+    --green: #22c55e;
+    --blue: #38bdf8;
+    --text: #f1f5f9;
+    --muted: #64748b;
+    --muted2: #94a3b8;
+  }
+
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Outfit', sans-serif;
+    padding: 20px;
+  }
+
+  /* Ambient glow behind modal */
+  body::after {
+    content: '';
+    position: fixed; top: 0; left: 50%; transform: translateX(-50%);
+    width: 700px; height: 300px;
+    background: radial-gradient(ellipse, rgba(249,115,22,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* Noise */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none; opacity: 0.3;
+  }
+
+  /* ── Modal ── */
+  .modal {
+    position: relative; z-index: 10;
+    width: 100%; max-width: 780px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+    animation: scaleIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.95) translateY(10px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* Top accent line */
+  .modal::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--accent) 40%, var(--gold) 60%, transparent 100%);
+  }
+
+  /* ── Modal Header ── */
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 26px 30px 22px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-title {
+    display: flex; align-items: center; gap: 14px;
+  }
+
+  .modal-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: linear-gradient(135deg, rgba(249,115,22,0.2), rgba(249,115,22,0.05));
+    border: 1px solid rgba(249,115,22,0.25);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent);
+  }
+
+  .modal-title h2 {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 20px; font-weight: 700; letter-spacing: 0.03em;
+    color: var(--text);
+  }
+  .modal-title p { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .close-btn {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+  }
+  .close-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.12); }
+
+  /* ── Modal Body ── */
+  .modal-body { padding: 28px 30px; }
+
+  /* Section headers */
+  .form-section { margin-bottom: 28px; }
+  .section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--accent); text-transform: uppercase;
+    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-label::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(249,115,22,0.25), transparent);
+  }
+
+  /* Grid */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .form-grid.full { grid-template-columns: 1fr; }
+
+  /* Field */
+  .field { display: flex; flex-direction: column; gap: 7px; }
+
+  .field label {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+    color: var(--muted2); text-transform: uppercase;
+    display: flex; align-items: center; gap: 5px;
+  }
+
+  .required {
+    display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); margin-bottom: 1px;
+  }
+
+  .field input,
+  .field select,
+  .field textarea {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px; font-weight: 400;
+    color: var(--text);
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    outline: none;
+    appearance: none; -webkit-appearance: none;
+    width: 100%;
+  }
+
+  .field input::placeholder,
+  .field textarea::placeholder { color: var(--muted); }
+
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(249,115,22,0.1);
+    background: var(--surface3);
+  }
+
+  .field select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%2364748b' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+    cursor: pointer;
+  }
+
+  .field select option { background: #1e2330; color: var(--text); }
+
+  .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
+
+  .hint { font-size: 11px; color: var(--muted); margin-top: -2px; }
+
+  /* ── Modal Footer ── */
+  .modal-footer {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 18px 30px 24px;
+    border-top: 1px solid var(--border);
+  }
+
+  .btn {
+    padding: 10px 22px; border-radius: 10px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+    cursor: pointer; border: none;
+    display: flex; align-items: center; gap: 7px;
+    transition: all 0.2s;
+  }
+
+  .btn-ghost {
+    background: transparent; color: var(--muted2);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #ea6a0a);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(249,115,22,0.35), 0 1px 0 rgba(255,255,255,0.1) inset;
+  }
+  .btn-primary:hover {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(249,115,22,0.4);
+  }
+  .btn-primary:active { transform: translateY(0); }
+
+  @media (max-width: 560px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .modal-body, .modal-header, .modal-footer { padding-left: 20px; padding-right: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="modal">
+
+  <!-- Header -->
+  <div class="modal-header">
+    <div class="modal-title">
+      <div class="modal-icon">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+        </svg>
+      </div>
+      <div>
+        <h2>Add New Account</h2>
+        <p>Register a new bot account to the system</p>
+      </div>
+    </div>
+    <button class="close-btn">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Body -->
+  <div class="modal-body">
+
+    <!-- Section: Identity -->
+    <div class="form-section">
+      <div class="section-label">Identity</div>
+      <div class="form-grid">
+        <div class="field">
+          <label><span class="required"></span> Game ID</label>
+          <input type="text" placeholder="e.g. 12345678"/>
+          <span class="hint">The unique in-game numeric player ID.</span>
+        </div>
+        <div class="field">
+          <label>Emulator Index</label>
+          <input type="text" placeholder="Optional"/>
+        </div>
+        <div class="field">
+          <label>In-game Lord Name</label>
+          <input type="text" placeholder=""/>
+        </div>
+        <div class="field">
+          <label>Power (M)</label>
+          <input type="text" placeholder="e.g. 14.9"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: Login -->
+    <div class="form-section">
+      <div class="section-label">Login &amp; Access</div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Login Method</label>
+          <select>
+            <option value="" disabled selected>-- Select --</option>
+            <option>Google</option>
+            <option>Facebook</option>
+            <option>Apple</option>
+            <option>Guest</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Login Email</label>
+          <input type="email" placeholder="account@gmail.com"/>
+        </div>
+        <div class="field">
+          <label>Provider</label>
+          <select>
+            <option>Global</option>
+            <option>Funtap</option>
+            <option>VNG</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Alliance Tag</label>
+          <input type="text" placeholder="e.g. [RFFO]"/>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: Notes -->
+    <div class="form-section" style="margin-bottom:0">
+      <div class="section-label">Internal Notes</div>
+      <div class="form-grid full">
+        <div class="field">
+          <textarea placeholder="Optional notes about this account..."></textarea>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="modal-footer">
+    <button class="btn btn-ghost">Cancel</button>
+    <button class="btn btn-primary">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+      </svg>
+      Save Account
+    </button>
+  </div>
+
+</div>
+</body>
+</html>

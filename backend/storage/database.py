@@ -84,18 +84,48 @@ CREATE TABLE IF NOT EXISTS macro_runs (
     FOREIGN KEY (emulator_id) REFERENCES emulators(id)
 );
 
--- Task execution history (replaces task_logs)
+-- Task execution history (v3)
 CREATE TABLE IF NOT EXISTS task_runs (
+    run_id          TEXT PRIMARY KEY,
+    source_page     TEXT, 
+    trigger_type    TEXT, 
+    triggered_by    TEXT,
+    target_id       INTEGER, 
+    status          TEXT,
+    started_at      TEXT, 
+    ended_at        TEXT, 
+    duration_ms     INTEGER,
+    metadata_json   TEXT
+);
+
+-- Task execution steps (v3)
+CREATE TABLE IF NOT EXISTS task_run_steps (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    emulator_id     INTEGER NOT NULL,
-    task_type       TEXT NOT NULL,
-    status          TEXT DEFAULT 'queued',
-    error           TEXT DEFAULT '',
-    duration_ms     INTEGER DEFAULT 0,
-    result_json     TEXT DEFAULT '',
-    started_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-    finished_at     TEXT,
-    FOREIGN KEY (emulator_id) REFERENCES emulators(id)
+    run_id          TEXT, 
+    step_index      INTEGER, 
+    function_id     TEXT,
+    input_json      TEXT, 
+    output_json     TEXT, 
+    status          TEXT,
+    error_code      TEXT, 
+    error_message   TEXT,
+    started_at      TEXT, 
+    ended_at        TEXT, 
+    latency_ms      INTEGER,
+    FOREIGN KEY (run_id) REFERENCES task_runs(run_id)
+);
+
+-- Audit logs (v3)
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor           TEXT,
+    action          TEXT,
+    target_type     TEXT,
+    target_id       INTEGER,
+    before_json     TEXT,
+    after_json      TEXT,
+    reason          TEXT,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Account metadata (N:1 with emulators — multiple accounts per emulator)
@@ -156,7 +186,8 @@ CREATE TABLE IF NOT EXISTS account_groups (
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_snap_emu_time ON scan_snapshots(emulator_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_res_snap ON scan_resources(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_taskrun_emu ON task_runs(emulator_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_taskrun_start ON task_runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_taskrunsteps_run ON task_run_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_macrorun_emu ON macro_runs(emulator_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_accounts_emu ON accounts(emulator_id);
 CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id);
@@ -308,9 +339,19 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
     print("[DB Migration] v1 -> v2 migration complete.")
 
 
-
-
-# ──────────────────────────────────────────────
+def _migrate_v2_to_v3(conn: sqlite3.Connection):
+    """Migrate from v2 to v3 schema (drops old task_runs)."""
+    # Check if task_runs has 'emulator_id' column (v2 schema)
+    cursor = conn.execute("PRAGMA table_info(task_runs)")
+    columns = [row[1] for row in cursor.fetchall()]
+    
+    if "emulator_id" in columns:
+        print("[DB Migration] Detected v2 task_runs schema, dropping for v3 migration...")
+        conn.execute("DROP TABLE IF EXISTS task_runs")
+        # Re-run CREATE_TABLES_SQL to recreate properly
+        conn.executescript(CREATE_TABLES_SQL)
+        conn.commit()
+        print("[DB Migration] v2 -> v3 migration complete.")# ──────────────────────────────────────────────
 # Database class
 # ──────────────────────────────────────────────
 
@@ -332,6 +373,7 @@ class Database:
 
         # Migrate v1 data if needed
         _migrate_v1_to_v2(conn)
+        _migrate_v2_to_v3(conn)
 
         conn.close()
         self._initialized = True
