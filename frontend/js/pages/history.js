@@ -119,40 +119,34 @@ const HistoryPage = {
         if (refreshBtn) refreshBtn.classList.add('is-spinning');
 
         try {
-            const history = await API.getHistory(200);
-            // Normalize API response to match expected format
-            const items = Array.isArray(history) ? history : [];
-            this.state.items = items.map(item => {
-                let parsedData = {};
-                if (item.result_json) {
-                    try {
-                        parsedData = typeof item.result_json === 'string' ? JSON.parse(item.result_json) : item.result_json;
-                        if (typeof parsedData === 'string') parsedData = JSON.parse(parsedData); // Double stringify fix
-                        if (parsedData && parsedData.data) parsedData = parsedData.data; // Unwrap .data wrapper
-                    } catch (e) { parsedData = { raw: item.result_json }; }
+            let items = [];
+
+            try {
+                const history = await API.getHistory(200);
+                items = this.normalizeHistoryPayload(history);
+            } catch (_) {
+                // Fallback chain below handles this.
+            }
+
+            if (!items.length) {
+                try {
+                    const executionRuns = await API.getExecutionRuns();
+                    items = this.normalizeHistoryPayload(executionRuns);
+                } catch (_) {
+                    // Continue to next fallback.
                 }
+            }
 
-                // If no real data, don't show an empty object
-                const hasData = parsedData && Object.keys(parsedData).length > 0;
+            if (!items.length) {
+                try {
+                    const queueHistory = await API.getQueueHistory(200);
+                    items = this.normalizeHistoryPayload(queueHistory);
+                } catch (_) {
+                    // Continue to mock fallback in catch below.
+                }
+            }
 
-                return {
-                    id: String(item.id || `${item.serial}-${item.started_at}`),
-                    task_id: String(item.id || '').slice(-8).toUpperCase(),
-                    task_type: item.task_type || 'unknown',
-                    serial: item.serial || item.emu_name || '--',
-                    status: (item.status || 'UNKNOWN').toUpperCase(),
-                    data: hasData ? parsedData : null,
-                    error: item.error || null,
-                    is_reliable: !item.error,
-                    reliability: item.error ? 40 : 95,
-                    started_at: item.started_at || item.created_at || null,
-                    finished_at: item.finished_at || null,
-                    duration_ms: item.duration_ms || 0,
-                    source: item.source || 'system',
-                    logs: item.logs || [],
-                    emu_name: item.emu_name || '',
-                };
-            });
+            this.state.items = items.map((item) => this.normalizeHistoryItem(item));
             this.state.useMockData = false;
         } catch (e) {
             console.warn('[History] API failed, using mock:', e);
@@ -167,6 +161,57 @@ const HistoryPage = {
         }
     },
 
+    normalizeHistoryPayload(payload) {
+        if (Array.isArray(payload)) return payload;
+        if (payload && Array.isArray(payload.data)) return payload.data;
+        return [];
+    },
+
+    normalizeHistoryItem(item) {
+        let parsedData = {};
+        const metadataRaw = item?.metadata_json || item?.metadata;
+        let metadata = {};
+
+        if (metadataRaw) {
+            try {
+                metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) : metadataRaw;
+            } catch (_) {
+                metadata = {};
+            }
+        }
+
+        const rawResult = item?.result_json ?? metadata?.result_json;
+        if (rawResult) {
+            try {
+                parsedData = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+                if (typeof parsedData === 'string') parsedData = JSON.parse(parsedData);
+                if (parsedData && parsedData.data) parsedData = parsedData.data;
+            } catch (_) {
+                parsedData = { raw: rawResult };
+            }
+        }
+
+        const hasData = parsedData && Object.keys(parsedData).length > 0;
+        const rawId = item?.id || item?.run_id || `${item?.serial || item?.emu_name || 'unknown'}-${item?.started_at || item?.created_at || Date.now()}`;
+
+        return {
+            id: String(rawId),
+            task_id: String(rawId).slice(-8).toUpperCase(),
+            task_type: item?.task_type || metadata?.task_type || item?.source_page || 'unknown',
+            serial: item?.serial || metadata?.serial || '--',
+            status: String(item?.status || metadata?.status || 'UNKNOWN').toUpperCase(),
+            data: hasData ? parsedData : null,
+            error: item?.error || metadata?.error || null,
+            is_reliable: !(item?.error || metadata?.error),
+            reliability: (item?.error || metadata?.error) ? 40 : 95,
+            started_at: item?.started_at || item?.created_at || null,
+            finished_at: item?.finished_at || item?.ended_at || null,
+            duration_ms: Number(item?.duration_ms || 0),
+            source: item?.source || item?.source_page || 'system',
+            logs: Array.isArray(item?.logs) ? item.logs : [],
+            emu_name: item?.emu_name || item?.emulator_name || metadata?.emu_name || '',
+        };
+    },
     getFilteredItems() {
         const { search, date, device, status, task, quick } = this.state.filters;
         const normalizedSearch = search.trim().toLowerCase();

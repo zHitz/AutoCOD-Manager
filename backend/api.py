@@ -221,9 +221,9 @@ async def get_queue():
     return task_queue.get_queue()
 
 
-@app.get("/api/tasks/history")
-async def get_history(limit: int = 50):
-    """Get task execution history (in-memory + DB fallback)."""
+@app.get("/api/tasks/history/queue")
+async def get_queue_history(limit: int = 50):
+    """Get task execution history from in-memory queue with DB fallback."""
     mem_history = task_queue.get_history(limit)
     if mem_history:
         return mem_history

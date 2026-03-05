@@ -43,6 +43,8 @@ const API = {
     },
     getQueue() { return this.get('/api/tasks/queue'); },
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
+    getQueueHistory(limit) { return this.get(`/api/tasks/history/queue?limit=${limit || 50}`); },
+    getExecutionRuns() { return this.get('/api/execution/runs'); },
 
     // ── Reports ──
     getReports(limit, serial) {

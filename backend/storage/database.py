@@ -966,69 +966,137 @@ class Database:
     async def save_task_run(
         self, emulator_id: int, task_type: str,
         status: str = "queued"
-    ) -> int:
-        """Create a new task run record. Returns run id."""
+    ) -> int | str:
+        """Create a new task run record. Returns run id (int for v2, str for v3)."""
         async with self._get_conn() as db:
-            cursor = await db.execute(
-                """INSERT INTO task_runs (emulator_id, task_type, status)
-                   VALUES (?, ?, ?)""",
-                (emulator_id, task_type, status),
+            schema_cursor = await db.execute("PRAGMA table_info(task_runs)")
+            cols = {row[1] for row in await schema_cursor.fetchall()}
+
+            # Legacy schema compatibility
+            if {"emulator_id", "task_type", "status"}.issubset(cols):
+                cursor = await db.execute(
+                    """INSERT INTO task_runs (emulator_id, task_type, status)
+                       VALUES (?, ?, ?)""",
+                    (emulator_id, task_type, status),
+                )
+                await db.commit()
+                return cursor.lastrowid
+
+            # v3 schema compatibility
+            import uuid
+            run_id = str(uuid.uuid4())
+            meta = {"task_type": task_type, "emulator_id": emulator_id}
+            await db.execute(
+                """INSERT INTO task_runs (
+                       run_id, source_page, trigger_type, triggered_by, target_id,
+                       status, started_at, duration_ms, metadata_json
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    "task",
+                    "manual",
+                    "task_queue",
+                    emulator_id,
+                    str(status or "queued").upper(),
+                    datetime.now().isoformat(),
+                    0,
+                    json.dumps(meta),
+                ),
             )
             await db.commit()
-            return cursor.lastrowid
+            return run_id
 
     async def update_task_run(
-        self, run_id: int, status: str = None,
+        self, run_id: int | str, status: str = None,
         error: str = None, duration_ms: int = None,
         result_json: str = None, finished_at: str = None
     ):
         """Update a task run record."""
-        updates = []
-        params = []
-        if status is not None:
-            updates.append("status = ?")
-            params.append(status)
-        if error is not None:
-            updates.append("error = ?")
-            params.append(error)
-        if duration_ms is not None:
-            updates.append("duration_ms = ?")
-            params.append(duration_ms)
-        if result_json is not None:
-            updates.append("result_json = ?")
-            params.append(result_json)
-        if finished_at is not None:
-            updates.append("finished_at = ?")
-            params.append(finished_at)
-
-        if not updates:
-            return
-
-        params.append(run_id)
         async with self._get_conn() as db:
+            schema_cursor = await db.execute("PRAGMA table_info(task_runs)")
+            cols = {row[1] for row in await schema_cursor.fetchall()}
+
+            # Legacy schema compatibility
+            if {"id", "status"}.issubset(cols):
+                updates = []
+                params = []
+                if status is not None:
+                    updates.append("status = ?")
+                    params.append(status)
+                if error is not None:
+                    updates.append("error = ?")
+                    params.append(error)
+                if duration_ms is not None:
+                    updates.append("duration_ms = ?")
+                    params.append(duration_ms)
+                if result_json is not None:
+                    updates.append("result_json = ?")
+                    params.append(result_json)
+                if finished_at is not None:
+                    updates.append("finished_at = ?")
+                    params.append(finished_at)
+                if not updates:
+                    return
+                params.append(run_id)
+                set_clause = ", ".join(updates)
+                await db.execute(
+                    f"UPDATE task_runs SET {set_clause} WHERE id = ?",
+                    params,
+                )
+                await db.commit()
+                return
+
+            # v3 schema compatibility
+            current_meta = {}
+            if "metadata_json" in cols:
+                cur = await db.execute(
+                    "SELECT metadata_json FROM task_runs WHERE run_id = ?",
+                    (str(run_id),),
+                )
+                row = await cur.fetchone()
+                if row and row[0]:
+                    try:
+                        current_meta = json.loads(row[0])
+                    except Exception:
+                        current_meta = {}
+
+            if error is not None:
+                current_meta["error"] = error
+            if result_json is not None:
+                current_meta["result_json"] = result_json
+
+            updates = []
+            params = []
+            if status is not None:
+                updates.append("status = ?")
+                params.append(str(status).upper())
+            if duration_ms is not None:
+                updates.append("duration_ms = ?")
+                params.append(duration_ms)
+            if finished_at is not None:
+                ended_col = "ended_at" if "ended_at" in cols else "finished_at"
+                updates.append(f"{ended_col} = ?")
+                params.append(finished_at)
+            if "metadata_json" in cols:
+                updates.append("metadata_json = ?")
+                params.append(json.dumps(current_meta, default=str))
+
+            if not updates:
+                return
+
+            params.append(str(run_id))
+            set_clause = ", ".join(updates)
             await db.execute(
-                f"UPDATE task_runs SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE task_runs SET {set_clause} WHERE run_id = ?",
                 params,
             )
             await db.commit()
 
     async def get_task_history(self, limit: int = 200) -> list[dict]:
         """Get unified task execution history from task_runs + scan_snapshots."""
+        results = list(await self.get_task_runs(limit=limit))
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
-
-            # Query task_runs
-            cursor = await db.execute(
-                """SELECT t.id, t.task_type, t.status, t.error, t.duration_ms,
-                          t.result_json, t.started_at, t.finished_at,
-                          e.serial, e.name as emu_name, e.emu_index
-                   FROM task_runs t
-                   LEFT JOIN emulators e ON t.emulator_id = e.id
-                   ORDER BY t.started_at DESC
-                   LIMIT ?""",
-                (limit,),
-            )
-            task_rows = await cursor.fetchall()
 
             # Query scan_snapshots (full scans not routed through task_queue)
             cursor2 = await db.execute(
@@ -1050,15 +1118,7 @@ class Database:
             )
             scan_rows = await cursor2.fetchall()
 
-            results = []
-
-            # Process task_runs
-            for row in task_rows:
-                r = dict(row)
-                r["source"] = "task_queue"
-                results.append(r)
-
-            # Process scan_snapshots (avoid duplicates — skip if same timestamp+serial exists in tasks)
+            # Process scan_snapshots (avoid duplicates - skip if same timestamp+serial exists in tasks)
             task_keys = set()
             for r in results:
                 task_keys.add(f"{r.get('serial','')}-{r.get('started_at','')}")
@@ -1083,7 +1143,6 @@ class Database:
                 if r.get("game_id"):
                     data["game_id"] = r["game_id"]
                 if data:
-                    import json
                     r["result_json"] = json.dumps(data)
                 results.append(r)
 
@@ -1096,26 +1155,84 @@ class Database:
         """Get task execution history."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
+            schema_cursor = await db.execute("PRAGMA table_info(task_runs)")
+            cols = {row[1] for row in await schema_cursor.fetchall()}
+
+            # Legacy schema (with emulator_id/task_type/etc.)
+            if "emulator_id" in cols:
+                if emulator_index is not None:
+                    cursor = await db.execute(
+                        """SELECT t.*, e.serial, e.emu_index, e.name as emulator_name
+                           FROM task_runs t
+                           JOIN emulators e ON t.emulator_id = e.id
+                           WHERE e.emu_index = ?
+                           ORDER BY t.started_at DESC LIMIT ?""",
+                        (emulator_index, limit),
+                    )
+                else:
+                    cursor = await db.execute(
+                        """SELECT t.*, e.serial, e.emu_index, e.name as emulator_name
+                           FROM task_runs t
+                           JOIN emulators e ON t.emulator_id = e.id
+                           ORDER BY t.started_at DESC LIMIT ?""",
+                        (limit,),
+                    )
+                rows = [dict(row) for row in await cursor.fetchall()]
+                for row in rows:
+                    row["source"] = row.get("source") or "task_queue"
+                    row["emu_name"] = row.get("emu_name") or row.get("emulator_name", "")
+                return rows
+
+            # v3 schema
+            ended_col = "ended_at" if "ended_at" in cols else "finished_at"
             if emulator_index is not None:
                 cursor = await db.execute(
-                    """SELECT t.*, e.serial, e.emu_index, e.name as emulator_name
-                       FROM task_runs t
-                       JOIN emulators e ON t.emulator_id = e.id
-                       WHERE e.emu_index = ?
-                       ORDER BY t.started_at DESC LIMIT ?""",
+                    f"""SELECT t.run_id, t.source_page, t.trigger_type, t.triggered_by,
+                               t.target_id, t.status, t.started_at, t.{ended_col} as finished_at,
+                               t.duration_ms, t.metadata_json,
+                               e.serial, e.emu_index, e.name as emulator_name
+                        FROM task_runs t
+                        LEFT JOIN emulators e ON t.target_id = e.id
+                        WHERE e.emu_index = ?
+                        ORDER BY t.started_at DESC LIMIT ?""",
                     (emulator_index, limit),
                 )
             else:
                 cursor = await db.execute(
-                    """SELECT t.*, e.serial, e.emu_index, e.name as emulator_name
-                       FROM task_runs t
-                       JOIN emulators e ON t.emulator_id = e.id
-                       ORDER BY t.started_at DESC LIMIT ?""",
+                    f"""SELECT t.run_id, t.source_page, t.trigger_type, t.triggered_by,
+                               t.target_id, t.status, t.started_at, t.{ended_col} as finished_at,
+                               t.duration_ms, t.metadata_json,
+                               e.serial, e.emu_index, e.name as emulator_name
+                        FROM task_runs t
+                        LEFT JOIN emulators e ON t.target_id = e.id
+                        ORDER BY t.started_at DESC LIMIT ?""",
                     (limit,),
                 )
-            return [dict(row) for row in await cursor.fetchall()]
-
-    # ── Account CRUD ──────────────────────────────
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                d = dict(row)
+                meta = {}
+                if d.get("metadata_json"):
+                    try:
+                        meta = json.loads(d["metadata_json"])
+                    except Exception:
+                        meta = {}
+                results.append({
+                    "id": d.get("run_id"),
+                    "task_type": meta.get("task_type") or d.get("source_page") or "workflow",
+                    "status": d.get("status", ""),
+                    "error": meta.get("error", ""),
+                    "duration_ms": d.get("duration_ms", 0),
+                    "result_json": meta.get("result_json", ""),
+                    "started_at": d.get("started_at"),
+                    "finished_at": d.get("finished_at"),
+                    "serial": d.get("serial") or meta.get("serial", ""),
+                    "emu_name": d.get("emulator_name") or meta.get("emu_name", ""),
+                    "emu_index": d.get("emu_index"),
+                    "source": d.get("source_page") or "workflow",
+                })
+            return results
 
     async def upsert_account(
         self, game_id: str, emulator_id: int = None,
