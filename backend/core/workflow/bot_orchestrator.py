@@ -108,7 +108,26 @@ class BotOrchestrator:
             steps=steps,
             ws_callback=self.ws_callback
         )
-        
+    
+    async def _emit_activity_event(self, event_type: str, account_id: str, activity_id: str, activity_name: str, status: str = "", error: str = "", duration_ms: int = 0):
+        """Emit a WebSocket event for activity lifecycle changes."""
+        if not self.ws_callback:
+            return
+        data = {
+            "group_id": self.group_id,
+            "account_id": account_id,
+            "activity_id": activity_id,
+            "activity_name": activity_name,
+            "status": status,
+            "error": error,
+            "duration_ms": duration_ms
+        }
+        import inspect
+        if inspect.iscoroutinefunction(self.ws_callback):
+            await self.ws_callback(event_type, data)
+        else:
+            self.ws_callback(event_type, data)
+
     async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int):
         """Closes old emulator / game and boots new one."""
         import logging
@@ -292,6 +311,23 @@ class BotOrchestrator:
                     result = None
                     step_status = "FAILED"
                     step_error = ""
+                    error_code = ""
+                    
+                    # ── LOG: Activity Started ──
+                    log_id = await execution_log.start_account_activity(
+                        run_id=self.run_id,
+                        account_id=int(acc_id),
+                        game_id=acc.get("game_id", ""),
+                        emulator_id=emu_idx,
+                        group_id=self.group_id,
+                        activity_id=act_id_or_name,
+                        activity_name=act.get("name", act_id_or_name),
+                        source="workflow",
+                        metadata=act_cfg
+                    )
+                    
+                    # Emit WS event: activity started
+                    await self._emit_activity_event("activity_started", acc_id, act_id_or_name, act.get("name", act_id_or_name))
                     
                     try:
                         if limit_min > 0:
@@ -307,6 +343,7 @@ class BotOrchestrator:
                             self.activity_statuses[act_id_or_name] = "error"
                             self.current_activity["status"] = "error"
                             step_error = result.get("error", "Unknown execution failure") if result else "No result returned"
+                            error_code = "EXEC_FAIL"
                         else:
                             self.activity_statuses[act_id_or_name] = "done"
                             step_status = "SUCCESS"
@@ -317,14 +354,30 @@ class BotOrchestrator:
                         self.activity_statuses[act_id_or_name] = "error"
                         self.current_activity["status"] = "error"
                         step_error = f"Timeout limit {limit_min}m reached"
+                        error_code = "TIMEOUT"
                     except Exception as e:
                         account_success = False
                         self.activity_statuses[act_id_or_name] = "error"
                         self.current_activity["status"] = "error"
                         step_error = str(e)
+                        error_code = "EXCEPTION"
                         
                     step_end = time.time()
                     latency = int((step_end - step_start) * 1000)
+                    
+                    # ── LOG: Activity Finished ──
+                    await execution_log.finish_account_activity(
+                        log_id=log_id,
+                        status=step_status,
+                        error_code=error_code,
+                        error_message=step_error,
+                        duration_ms=latency,
+                        result=result if isinstance(result, dict) else {}
+                    )
+                    
+                    # Emit WS event: activity completed/failed
+                    ws_event = "activity_completed" if step_status == "SUCCESS" else "activity_failed"
+                    await self._emit_activity_event(ws_event, acc_id, act_id_or_name, act.get("name", act_id_or_name), step_status, step_error, latency)
                     
                     await execution_log.append_step_log(
                         run_id=self.run_id,

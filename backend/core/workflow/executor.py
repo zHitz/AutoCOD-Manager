@@ -72,7 +72,7 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
         # Step Execution Loop
         for i, step in enumerate(steps):
             fn_id = step.get("function_id")
-            config = step.get("config", {})
+            config = step.get("config") or {}
             
             await log(f"[{i + 1}/{total_steps}] Executing {fn_id}...", "run")
             await progress(i, total_steps)
@@ -107,13 +107,13 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                 
             # App/System Controls
             elif fn_id == "sys_start_app":
-                pkg = config.get("package", "com.farlightgames.samo.gp")
+                pkg = config.get("package", "com.farlightgames.samo.gp.vn")
                 was_running = await asyncio.to_thread(core_actions.ensure_app_running, serial, pkg)
                 if not was_running:
                     await asyncio.sleep(10) # Give it time to boot up
             
             elif fn_id == "sys_close_app":
-                pkg = config.get("package", "com.farlightgames.samo.gp")
+                pkg = config.get("package", "com.farlightgames.samo.gp.vn")
                 await asyncio.to_thread(adb_helper.kill_app, serial, pkg)
                 await asyncio.sleep(2)
                 
@@ -124,11 +124,12 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
             # ── Startup / Boot ──
             elif fn_id == "startup_to_lobby":
                 timeout = int(config.get("timeout", 120))
-                ok = await asyncio.to_thread(core_actions.startup_to_lobby, serial, detector, package_name="com.farlightgames.samo.gp", load_timeout=timeout)
+                ok = await asyncio.to_thread(core_actions.startup_to_lobby, serial, detector, package_name="com.farlightgames.samo.gp.vn", load_timeout=timeout)
 
             # ── Full Scan ──
             elif fn_id == "scan_full":
                 from backend.core import full_scan as full_scan_module
+                import asyncio as _aio
                 result = await asyncio.to_thread(
                     full_scan_module.start_full_scan,
                     emulator_index, emulator_name,
@@ -138,12 +139,28 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                     await log(f"  Full scan reported error: {result.get('error', 'unknown')}", "err")
                     ok = False
                 else:
-                    await log("  Full Scan completed", "ok")
+                    await log("  Full Scan started, waiting for completion...", "info")
+                    while True:
+                        statuses = full_scan_module.get_scan_status()
+                        scan_info = None
+                        for s in statuses:
+                            if s.get("emulator_index") == emulator_index:
+                                scan_info = s
+                                break
+                        
+                        if not scan_info or scan_info.get("status") in ["completed", "failed", "error"]:
+                            if scan_info and scan_info.get("status") in ["failed", "error"]:
+                                await log(f"  Full scan failed: {scan_info.get('error')}", "err")
+                                ok = False
+                            else:
+                                await log("  Full Scan completed", "ok")
+                            break
+                        await _aio.sleep(2)
 
             # ── ADB Tap (registry id: adb_tap) ──
             elif fn_id == "adb_tap":
-                x = int(config.get("x", 0))
-                y = int(config.get("y", 0))
+                x = int((config or {}).get("x", 0))
+                y = int((config or {}).get("y", 0))
                 await asyncio.to_thread(adb_helper.tap, serial, x, y)
                 await asyncio.sleep(0.5)
 
@@ -156,15 +173,39 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
             elif fn_id == "run_macro":
                 from backend.core import macro_replay
                 from backend.core import ldplayer_manager
-                macro_file = config.get("file", "")
-                loop_count = int(config.get("loop", 1))
+                import asyncio as _aio
+                macro_file = (config or {}).get("file", "")
+                loop_count = int((config or {}).get("loop", 1))
                 if macro_file:
                     import os
                     filepath = os.path.join(ldplayer_manager._get_operations_dir(), macro_file)
                     if os.path.exists(filepath):
                         for loop_i in range(loop_count):
                             await log(f"  Macro '{macro_file}' loop {loop_i + 1}/{loop_count}", "info")
-                            await asyncio.to_thread(macro_replay.start_replay, emulator_index, filepath, macro_file, ws_callback=ws_callback)
+                            res = await asyncio.to_thread(macro_replay.start_replay, emulator_index, filepath, macro_file, ws_callback=ws_callback)
+                            if res and not res.get("success", True):
+                                await log(f"  Macro start error: {res.get('error', 'unknown')}", "err")
+                                ok = False
+                                break
+                            
+                            while True:
+                                statuses = macro_replay.get_status()
+                                # Key format in macro_replay: f"{serial}:{filename}"
+                                macro_info = None
+                                for s in statuses:
+                                    if s.get("serial") == serial and s.get("filename") == macro_file:
+                                        macro_info = s
+                                        break
+                                
+                                if not macro_info or macro_info.get("status") in ["completed", "error", "failed"]:
+                                    if macro_info and macro_info.get("status") in ["error", "failed"]:
+                                        await log(f"  Macro failed: {macro_info.get('error', 'unknown')}", "err")
+                                        ok = False
+                                    break
+                                await _aio.sleep(2)
+                                
+                            if not ok:
+                                break
                     else:
                         await log(f"  Macro file not found: {macro_file}", "err")
                         ok = False
@@ -214,18 +255,18 @@ async def execute_recipe(emulator_index: int, emulator_name: str, steps: list, w
                 ok = await asyncio.to_thread(core_actions.go_to_rss_center_farm, serial, detector)
 
             elif fn_id == "nav_to_farming":
-                resource_type = config.get("resource_type", "wood")
+                resource_type = (config or {}).get("resource_type", "wood")
                 ok = await asyncio.to_thread(core_actions.go_to_farming, serial, detector, resource_type=resource_type)
 
             elif fn_id == "flow_delay":
-                delay_sec = config.get("seconds", 10)
+                delay_sec = (config or {}).get("seconds", 10)
                 await log(f"  Waiting {delay_sec}s...", "info")
                 import asyncio as _aio
                 await _aio.sleep(delay_sec)
                 ok = True
 
             elif fn_id == "sys_close_app":
-                package = config.get("package", "com.farlightgames.samo.gp")
+                package = (config or {}).get("package", "com.farlightgames.samo.gp.vn")
                 await log(f"  Closing app: {package}", "info")
                 await asyncio.to_thread(adb_helper.shell, serial, f"am force-stop {package}")
                 ok = True

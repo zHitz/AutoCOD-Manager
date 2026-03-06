@@ -59,3 +59,70 @@ async def complete_run(run_id: str, status: str, duration_ms: int):
             (status, datetime.now().isoformat(), duration_ms, run_id)
         )
         await db.commit()
+
+
+# ── Account Activity Logs (v2 fact table for Task page) ──
+
+async def start_account_activity(
+    run_id: str,
+    account_id: int,
+    game_id: str,
+    emulator_id: int,
+    group_id: int,
+    activity_id: str,
+    activity_name: str,
+    source: str = "workflow",
+    metadata: dict = None
+) -> int:
+    """Insert a RUNNING row into account_activity_logs. Returns the row id."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cursor = await db.execute(
+            """INSERT INTO account_activity_logs (
+                run_id, account_id, game_id, emulator_id, group_id,
+                activity_id, activity_name, status, started_at,
+                source, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?, ?)""",
+            (
+                run_id,
+                account_id,
+                game_id,
+                emulator_id,
+                group_id,
+                activity_id,
+                activity_name,
+                datetime.now().isoformat(),
+                source,
+                json.dumps(metadata) if metadata else "{}"
+            )
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def finish_account_activity(
+    log_id: int,
+    status: str,
+    error_code: str = "",
+    error_message: str = "",
+    duration_ms: int = 0,
+    result: dict = None
+):
+    """Update an account_activity_logs row to its final status."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute(
+            """UPDATE account_activity_logs SET
+                status = ?, error_code = ?, error_message = ?,
+                finished_at = ?, duration_ms = ?, result_json = ?
+            WHERE id = ?""",
+            (
+                status,
+                error_code,
+                error_message,
+                datetime.now().isoformat(),
+                duration_ms,
+                json.dumps(result) if result else "{}",
+                log_id
+            )
+        )
+        await db.commit()
+

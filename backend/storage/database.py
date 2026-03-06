@@ -192,6 +192,34 @@ CREATE INDEX IF NOT EXISTS idx_macrorun_emu ON macro_runs(emulator_id, started_a
 CREATE INDEX IF NOT EXISTS idx_accounts_emu ON accounts(emulator_id);
 CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id);
 CREATE INDEX IF NOT EXISTS idx_snap_game_id ON scan_snapshots(game_id);
+
+-- Activity execution history per account (v2 — fact table for Task page)
+CREATE TABLE IF NOT EXISTS account_activity_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT NOT NULL,
+    account_id      INTEGER NOT NULL,
+    game_id         TEXT NOT NULL,
+    emulator_id     INTEGER,
+    group_id        INTEGER,
+    activity_id     TEXT NOT NULL,
+    activity_name   TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK(status IN ('PENDING','RUNNING','SUCCESS','FAILED','SKIPPED','CANCELED')),
+    error_code      TEXT DEFAULT '',
+    error_message   TEXT DEFAULT '',
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    duration_ms     INTEGER DEFAULT 0,
+    attempts        INTEGER DEFAULT 1,
+    source          TEXT DEFAULT 'workflow',
+    metadata_json   TEXT DEFAULT '{}',
+    result_json     TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_aal_account_started ON account_activity_logs(account_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aal_game_started    ON account_activity_logs(game_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aal_activity_started ON account_activity_logs(activity_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aal_status_started   ON account_activity_logs(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aal_run              ON account_activity_logs(run_id);
 """
 
 

@@ -888,7 +888,7 @@ async def run_bot_activities(body: dict):
     if close_after_min and int(close_after_min) > 0:
         # Add a delay equal to close_after_min, then close the app
         steps.append({"function_id": "flow_delay", "config": {"seconds": int(close_after_min) * 60}})
-        steps.append({"function_id": "sys_close_app", "config": {"package": "com.farlightgames.samo.gp"}})
+        steps.append({"function_id": "sys_close_app", "config": {"package": "com.farlightgames.samo.gp.vn"}})
 
     # Resolve emulator indices from group's account_ids
     if not emulator_indices and group_id:
@@ -1317,6 +1317,109 @@ async def get_execution_run_detail(run_id: str):
 # ──────────────────────────────────────────────
 # Startup
 # ──────────────────────────────────────────────
+
+# ── Task Checklist API (for Task Monitoring page) ──
+
+@app.get("/api/task/checklist")
+async def get_task_checklist(date: str = None, group_id: int = None):
+    """
+    Returns activity execution history grouped by account for the Task page.
+    Query params: ?date=YYYY-MM-DD&group_id=X
+    If date is omitted, defaults to today.
+    """
+    import aiosqlite
+    from datetime import datetime as dt_cls
+
+    target_date = date or dt_cls.now().strftime("%Y-%m-%d")
+
+    try:
+        async with aiosqlite.connect(config.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            where_parts = ["date(aal.started_at) = ?"]
+            params = [target_date]
+
+            if group_id:
+                where_parts.append("aal.group_id = ?")
+                params.append(group_id)
+
+            where_clause = " AND ".join(where_parts)
+
+            query = f"""
+                SELECT 
+                    aal.account_id, aal.game_id, aal.emulator_id, aal.group_id,
+                    aal.activity_id, aal.activity_name, aal.status,
+                    aal.error_message, aal.started_at, aal.finished_at,
+                    aal.duration_ms, aal.run_id,
+                    a.lord_name,
+                    e.name AS emulator_name, e.emu_index
+                FROM account_activity_logs aal
+                LEFT JOIN accounts a ON aal.account_id = a.id
+                LEFT JOIN emulators e ON aal.emulator_id = e.emu_index
+                WHERE {where_clause}
+                ORDER BY aal.account_id, aal.started_at DESC
+            """
+
+            cursor = await db.execute(query, params)
+            rows = [dict(r) for r in await cursor.fetchall()]
+
+            accounts_map = {}
+            for row in rows:
+                acc_id = row["account_id"]
+                if acc_id not in accounts_map:
+                    accounts_map[acc_id] = {
+                        "account_id": acc_id,
+                        "game_id": row["game_id"],
+                        "lord_name": row.get("lord_name") or row["game_id"],
+                        "emulator_name": row.get("emulator_name") or f"Emu-{row.get('emu_index', '?')}",
+                        "emulator_id": row.get("emulator_id"),
+                        "group_id": row.get("group_id"),
+                        "activities": {},
+                        "stats": {"total": 0, "done": 0, "failed": 0, "coverage": 0}
+                    }
+
+                act_id = row["activity_id"]
+                act_entry = accounts_map[acc_id]["activities"]
+                if act_id not in act_entry:
+                    act_entry[act_id] = {
+                        "activity_name": row["activity_name"],
+                        "status": row["status"],
+                        "last_run": row["started_at"],
+                        "runs_today": 0,
+                        "total_duration_ms": 0,
+                        "error": ""
+                    }
+                act_entry[act_id]["runs_today"] += 1
+                act_entry[act_id]["total_duration_ms"] += row.get("duration_ms") or 0
+                if row["started_at"] >= act_entry[act_id]["last_run"]:
+                    act_entry[act_id]["status"] = row["status"]
+                    act_entry[act_id]["last_run"] = row["started_at"]
+                    act_entry[act_id]["error"] = row.get("error_message") or ""
+
+            for acc in accounts_map.values():
+                activities = acc["activities"]
+                total = len(activities)
+                done = sum(1 for a in activities.values() if a["status"] == "SUCCESS")
+                failed = sum(1 for a in activities.values() if a["status"] == "FAILED")
+                acc["stats"] = {
+                    "total": total, "done": done, "failed": failed,
+                    "coverage": round((done / total) * 100) if total > 0 else 0
+                }
+
+            accounts_list = list(accounts_map.values())
+            total_accounts = len(accounts_list)
+            avg_coverage = round(sum(a["stats"]["coverage"] for a in accounts_list) / total_accounts) if total_accounts > 0 else 0
+
+            return {
+                "status": "success",
+                "date": target_date,
+                "accounts": accounts_list,
+                "summary": {"total_accounts": total_accounts, "avg_coverage": avg_coverage}
+            }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 
 @app.on_event("startup")
 async def startup():
