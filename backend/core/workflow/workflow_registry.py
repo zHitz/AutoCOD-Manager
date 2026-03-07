@@ -13,8 +13,15 @@ FUNCTION_REGISTRY = [
         "color": "#6366f1",
         "description": "Boot game if not running, then navigate to lobby",
         "params": [
-            {"key": "timeout", "label": "Load Timeout (sec)", "type": "number", "default": 120, "min": 30, "max": 300}
-        ]
+            {
+                "key": "timeout",
+                "label": "Load Timeout (sec)",
+                "type": "number",
+                "default": 120,
+                "min": 30,
+                "max": 300,
+            }
+        ],
     },
     {
         "id": "go_to_profile",
@@ -23,7 +30,7 @@ FUNCTION_REGISTRY = [
         "icon": "👤",
         "color": "#6366f1",
         "description": "Navigate to profile menu from lobby",
-        "params": []
+        "params": [],
     },
     {
         "id": "go_to_profile_details",
@@ -32,7 +39,7 @@ FUNCTION_REGISTRY = [
         "icon": "📋",
         "color": "#6366f1",
         "description": "Navigate to profile details from profile menu",
-        "params": []
+        "params": [],
     },
     {
         "id": "extract_player_id",
@@ -41,7 +48,7 @@ FUNCTION_REGISTRY = [
         "icon": "🆔",
         "color": "#6366f1",
         "description": "Copy player ID from profile via clipboard intercept",
-        "params": []
+        "params": [],
     },
     {
         "id": "back_to_lobby",
@@ -51,8 +58,15 @@ FUNCTION_REGISTRY = [
         "color": "#6366f1",
         "description": "Navigate back to lobby from any state",
         "params": [
-            {"key": "max_attempts", "label": "Max Attempts", "type": "number", "default": 15, "min": 5, "max": 30}
-        ]
+            {
+                "key": "max_attempts",
+                "label": "Max Attempts",
+                "type": "number",
+                "default": 15,
+                "min": 5,
+                "max": 30,
+            }
+        ],
     },
     {
         "id": "wait_for_state",
@@ -62,16 +76,29 @@ FUNCTION_REGISTRY = [
         "color": "#6366f1",
         "description": "Block until emulator reaches a target game state",
         "params": [
-            {"key": "target_state", "label": "Target State", "type": "select", "default": "IN-GAME LOBBY (IN_CITY)",
-             "options": [
-                 "IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)",
-                 "IN-GAME LOBBY (PROFILE MENU)", "IN-GAME LOBBY (PROFILE MENU DETAIL)",
-                 "LOADING SCREEN"
-             ]},
-            {"key": "timeout_sec", "label": "Timeout (sec)", "type": "number", "default": 60, "min": 10, "max": 300}
-        ]
+            {
+                "key": "target_state",
+                "label": "Target State",
+                "type": "select",
+                "default": "IN-GAME LOBBY (IN_CITY)",
+                "options": [
+                    "IN-GAME LOBBY (IN_CITY)",
+                    "IN-GAME LOBBY (OUT_CITY)",
+                    "IN-GAME LOBBY (PROFILE MENU)",
+                    "IN-GAME LOBBY (PROFILE MENU DETAIL)",
+                    "LOADING SCREEN",
+                ],
+            },
+            {
+                "key": "timeout_sec",
+                "label": "Timeout (sec)",
+                "type": "number",
+                "default": 60,
+                "min": 10,
+                "max": 300,
+            },
+        ],
     },
-
     # ── ADB Actions ──
     {
         "id": "adb_tap",
@@ -81,9 +108,23 @@ FUNCTION_REGISTRY = [
         "color": "#fb923c",
         "description": "Tap a specific X,Y coordinate on device screen",
         "params": [
-            {"key": "x", "label": "X", "type": "number", "default": 540, "min": 0, "max": 1920},
-            {"key": "y", "label": "Y", "type": "number", "default": 960, "min": 0, "max": 1080}
-        ]
+            {
+                "key": "x",
+                "label": "X",
+                "type": "number",
+                "default": 540,
+                "min": 0,
+                "max": 1920,
+            },
+            {
+                "key": "y",
+                "label": "Y",
+                "type": "number",
+                "default": 960,
+                "min": 0,
+                "max": 1080,
+            },
+        ],
     },
     {
         "id": "adb_swipe",
@@ -97,8 +138,13 @@ FUNCTION_REGISTRY = [
             {"key": "y1", "label": "From Y", "type": "number", "default": 800},
             {"key": "x2", "label": "To X", "type": "number", "default": 540},
             {"key": "y2", "label": "To Y", "type": "number", "default": 300},
-            {"key": "duration", "label": "Duration (ms)", "type": "number", "default": 300}
-        ]
+            {
+                "key": "duration",
+                "label": "Duration (ms)",
+                "type": "number",
+                "default": 300,
+            },
+        ],
     },
     {
         "id": "adb_press_back",
@@ -108,9 +154,21 @@ FUNCTION_REGISTRY = [
         "color": "#fb923c",
         "description": "Send BACK key event to device",
         "params": [
-            {"key": "count", "label": "Times", "type": "number", "default": 1, "min": 1, "max": 10},
-            {"key": "delay", "label": "Delay Between (sec)", "type": "number", "default": 1.5}
-        ]
+            {
+                "key": "count",
+                "label": "Times",
+                "type": "number",
+                "default": 1,
+                "min": 1,
+                "max": 10,
+            },
+            {
+                "key": "delay",
+                "label": "Delay Between (sec)",
+                "type": "number",
+                "default": 1.5,
+            },
+        ],
     },
     {
         "id": "adb_screencap",
@@ -119,9 +177,8 @@ FUNCTION_REGISTRY = [
         "icon": "📸",
         "color": "#fb923c",
         "description": "Capture screenshot from device",
-        "params": []
+        "params": [],
     },
-
     # ── App Control ──
     {
         "id": "open_app",
@@ -130,7 +187,7 @@ FUNCTION_REGISTRY = [
         "icon": "📱",
         "color": "#22c55e",
         "description": "Launch the game application on device",
-        "params": []
+        "params": [],
     },
     {
         "id": "check_app_foreground",
@@ -139,9 +196,8 @@ FUNCTION_REGISTRY = [
         "icon": "🔍",
         "color": "#22c55e",
         "description": "Check if game app is in foreground",
-        "params": []
+        "params": [],
     },
-
     # ── Scan Operations ──
     {
         "id": "scan_full",
@@ -150,7 +206,7 @@ FUNCTION_REGISTRY = [
         "icon": "🔬",
         "color": "#38bdf8",
         "description": "Complete data scan (profile, resources, levels)",
-        "params": []
+        "params": [],
     },
     {
         "id": "scan_profile",
@@ -159,9 +215,8 @@ FUNCTION_REGISTRY = [
         "icon": "👤",
         "color": "#38bdf8",
         "description": "Scan player name and power level only",
-        "params": []
+        "params": [],
     },
-
     # ── Scripts ──
     {
         "id": "run_macro",
@@ -172,10 +227,16 @@ FUNCTION_REGISTRY = [
         "description": "Execute a recorded .record macro file",
         "params": [
             {"key": "file", "label": "Macro File", "type": "text", "default": ""},
-            {"key": "loop", "label": "Loop Count", "type": "number", "default": 1, "min": 1, "max": 100}
-        ]
+            {
+                "key": "loop",
+                "label": "Loop Count",
+                "type": "number",
+                "default": 1,
+                "min": 1,
+                "max": 100,
+            },
+        ],
     },
-
     # ── Flow Control ──
     {
         "id": "flow_delay",
@@ -185,8 +246,15 @@ FUNCTION_REGISTRY = [
         "color": "#f59e0b",
         "description": "Wait for a specified number of seconds",
         "params": [
-            {"key": "seconds", "label": "Duration (sec)", "type": "number", "default": 10, "min": 1, "max": 3600}
-        ]
+            {
+                "key": "seconds",
+                "label": "Duration (sec)",
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 3600,
+            }
+        ],
     },
     {
         "id": "check_state",
@@ -196,8 +264,13 @@ FUNCTION_REGISTRY = [
         "color": "#f59e0b",
         "description": "Use OpenCV to detect the current game state",
         "params": [
-            {"key": "threshold", "label": "Match Threshold", "type": "number", "default": 0.8}
-        ]
+            {
+                "key": "threshold",
+                "label": "Match Threshold",
+                "type": "number",
+                "default": 0.8,
+            }
+        ],
     },
 ]
 
@@ -215,7 +288,7 @@ RECIPE_TEMPLATES = [
             {"function_id": "flow_delay", "config": {"seconds": 30}},
             {"function_id": "scan_full", "config": {}},
             {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
-        ]
+        ],
     },
     {
         "id": "tpl_id_extract",
@@ -227,7 +300,7 @@ RECIPE_TEMPLATES = [
             {"function_id": "go_to_profile", "config": {}},
             {"function_id": "extract_player_id", "config": {}},
             {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
-        ]
+        ],
     },
     {
         "id": "tpl_full_scan",
@@ -238,7 +311,7 @@ RECIPE_TEMPLATES = [
             {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
             {"function_id": "scan_full", "config": {}},
             {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
-        ]
+        ],
     },
     {
         "id": "tpl_swap_macro",
@@ -247,10 +320,13 @@ RECIPE_TEMPLATES = [
         "icon": "🔁",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
-            {"function_id": "run_macro", "config": {"file": "Swap_Charactor", "loop": 5}},
+            {
+                "function_id": "run_macro",
+                "config": {"file": "Swap_Charactor", "loop": 5},
+            },
             {"function_id": "flow_delay", "config": {"seconds": 10}},
             {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
-        ]
+        ],
     },
 ]
 
@@ -284,7 +360,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_rss_center_farm", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
     },
     {
         "id": "gather_resource",
@@ -296,9 +372,15 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_farming", "config": {"resource_type": "wood"}},
         ],
         "config_fields": [
-            {"key": "resource_type", "label": "Farm Resource Type", "type": "select", "options": ["gold", "wood", "stone", "mana"], "default": "wood"},
+            {
+                "key": "resource_type",
+                "label": "Farm Resource Type",
+                "type": "select",
+                "options": ["gold", "wood", "stone", "mana"],
+                "default": "wood",
+            },
         ],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
     },
     {
         "id": "full_scan",
@@ -310,7 +392,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "scan_full", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
     },
     {
         "id": "catch_pet",
@@ -323,7 +405,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "capture_pet", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60}
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
     },
 ]
 
@@ -346,24 +428,24 @@ def build_steps_for_activity(activity_id: str, user_config: dict = None):
     act = get_activity_by_id(activity_id)
     if not act:
         return None
-    
+
     cfg = user_config or {}
     steps = []
-    
+
     for step_def in act.get("steps", []):
         # Deep copy to avoid mutating the registry
         step = {
             "function_id": step_def["function_id"],
-            "config": step_def.get("config", {}).copy()
+            "config": step_def.get("config", {}).copy(),
         }
-        
+
         # We simply merge all user_config into the step config where keys overlap.
         for key, val in cfg.items():
             if key in act.get("defaults", {}):
                 # Ignore global defaults like 'cooldown_enabled' inside step configs
                 continue
             step["config"][key] = val
-            
+
         steps.append(step)
-        
+
     return steps

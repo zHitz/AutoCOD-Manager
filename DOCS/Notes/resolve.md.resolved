@@ -1,0 +1,302 @@
+# Resolve: Full Scan ↔ Account ↔ Database — Vấn đề & Giải pháp
+
+> **Ngày:** 2026-03-01 | **Phạm vi:** Luồng Full Scan → Database → Account Page UI
+
+---
+
+## 1. Hiện trạng: Chuyện gì đang xảy ra?
+
+### Data Flow hiện tại
+
+```mermaid
+flowchart LR
+    A["Full Scan<br/>(full_scan.py)"] -->|parsed_data| B["save_scan_snapshot()"]
+    B -->|upsert| C["emulators<br/>(emu_index = key)"]
+    B -->|INSERT| D["scan_snapshots<br/>(append-only)"]
+    B -->|INSERT| E["scan_resources<br/>(gold/wood/ore/mana)"]
+
+    F["User tạo Account<br/>(UI form)"] -->|upsert| G["accounts<br/>(1:1 with emulator)"]
+    F -->|upsert| C
+
+    H["Account Page<br/>GET /api/accounts"] -->|JOIN| G
+    H -->|JOIN| C
+    H -->|latest| D
+    H -->|by snapshot_id| E
+```
+
+### Mối quan hệ hiện tại trong DB
+
+| Bảng | Liên kết | Ràng buộc |
+|---|---|---|
+| [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) → [emulators](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#345-353) | [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) FK | **UNIQUE** — 1 emulator = 1 account |
+| `scan_snapshots` → [emulators](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#345-353) | [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) FK | 1:N — mỗi scan tạo row mới |
+| `scan_resources` → `scan_snapshots` | `snapshot_id` FK | 1:N — mỗi snapshot có nhiều resources |
+
+### Vấn đề cốt lõi: **Mọi thứ map qua [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344), không phải qua game account**
+
+Khi Full Scan chạy:
+1. [full_scan.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/full_scan.py) nhận `emulator_index` → tính `serial` → gọi [save_scan_snapshot()](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#367-435)
+2. [save_scan_snapshot()](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#367-435) upsert [emulators](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#345-353) bằng [emu_index](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#986-1043), rồi INSERT vào `scan_snapshots` với [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344)
+3. **Không hề tương tác với bảng [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404)**
+
+Khi Account Page load:
+1. [get_all_accounts()](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#926-985) JOIN [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) + [emulators](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#345-353) + latest `scan_snapshots` bằng [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344)
+2. Lấy scan snapshot mới nhất → hiển thị `lord_name`, `power`, resources, v.v.
+
+---
+
+## 2. Trả lời trực tiếp các câu hỏi
+
+### Q1: Sau khi Full Scan, UI Account có hiển thị thông tin đó không?
+
+**Có — nhưng CHỈ KHI** account đó đã được tạo trước trong bảng [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404).
+
+Luồng cụ thể:
+- Full Scan tạo row trong `scan_snapshots` liên kết với [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344)
+- Account Page query [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) JOIN [emulators](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#345-353) → lấy latest `scan_snapshots` bằng [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344)
+- Nếu emulator đó **chưa có record** trong bảng [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) → **Account Page không hiển thị gì**
+- Nếu emulator đó **có record** trong [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) → hiển thị đúng data từ scan
+
+> [!WARNING]
+> Full Scan KHÔNG tự tạo record trong bảng [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404). User phải manually "Add Account" trước, hoặc hệ thống phải tự tạo sau scan.
+
+### Q2: Khi Scan Full mà Account đã có data, hệ thống xử lý thế nào?
+
+**Hiện tại: Không có vấn đề — vì `scan_snapshots` là append-only.**
+
+- Full Scan luôn **INSERT row mới** vào `scan_snapshots`, không bao giờ UPDATE
+- Account Page luôn lấy **row mới nhất** (`ORDER BY created_at DESC LIMIT 1`)
+- Nên data cũ vẫn được bảo toàn trong lịch sử, data mới tự động hiển thị
+
+**Tuy nhiên**, "biết chính xác Account đó là thông tin nào" hiện tại dựa hoàn toàn vào [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344). Hệ thống đang giả định:
+
+> **1 Emulator = 1 Game Account = 1 row trong [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404)**
+
+### Q3: Thực tế 1 Emulator có thể chứa 4 Account game — giải quyết sao?
+
+**Đây là vấn đề nghiêm trọng nhất.** Hiện tại hệ thống KHÔNG hỗ trợ kịch bản này.
+
+---
+
+## 3. Phân tích kịch bản thực tế
+
+### Kịch bản: 1 Emulator, 4 Game Accounts
+
+Giả sử Emulator #1 lần lượt login 4 accounts khác nhau và Full Scan:
+
+| Lần Scan | Lord Name | Power | Emulator |
+|---|---|---|---|
+| Scan 1 | `dragonball Goten` | 14.8M | #1 |
+| Scan 2 | `warcraft Rex` | 22.1M | #1 |
+| Scan 3 | `shadow Knight` | 5.2M | #1 |
+| Scan 4 | `dragonball Goten` | 15.0M | #1 (quay lại account cũ) |
+
+**Hiện tại sẽ xảy ra:**
+
+```
+scan_snapshots:
+┌────┬─────────────┬────────────────────┬─────────┐
+│ id │ emulator_id │ lord_name          │ power   │
+├────┼─────────────┼────────────────────┼─────────┤
+│ 1  │ 1           │ dragonball Goten   │ 14.8M   │  ← Scan 1
+│ 2  │ 1           │ warcraft Rex       │ 22.1M   │  ← Scan 2
+│ 3  │ 1           │ shadow Knight      │ 5.2M    │  ← Scan 3
+│ 4  │ 1           │ dragonball Goten   │ 15.0M   │  ← Scan 4
+└────┴─────────────┴────────────────────┴─────────┘
+
+accounts:
+┌────┬─────────────┬──────────┐
+│ id │ emulator_id │ note     │
+├────┼─────────────┼──────────┤
+│ 1  │ 1           │ Main acc │  ← Chỉ 1 record (UNIQUE)
+└────┴─────────────┴──────────┘
+```
+
+**Kết quả trên Account Page:**
+- Chỉ hiển thị **1 account** cho Emulator #1
+- Data hiển thị = **Scan 4** (mới nhất) = `dragonball Goten, 15.0M`
+- 3 accounts kia (`warcraft Rex`, `shadow Knight`) **hoàn toàn bị bỏ qua**
+- Không có cách nào phân biệt "account nào đang active" trên emulator
+
+### Các vấn đề phát sinh
+
+| # | Vấn đề | Mức độ |
+|---|---|---|
+| 1 | **1 emulator chỉ có 1 account record** — UNIQUE constraint trên [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) | 🔴 Critical |
+| 2 | **Full Scan không tự tạo/link account** — Scan xong nhưng Account Page trống nếu chưa Add | 🔴 Critical |
+| 3 | **Không phân biệt game account** — All scans gộp chung dưới 1 [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) | 🔴 Critical |
+| 4 | **Metadata (login, email) không match game identity** — Account table lưu login info nhưng không biết nó của `lord_name` nào | 🟡 Medium |
+| 5 | **Lịch sử scan lẫn lộn** — Scan history của Emulator #1 chứa data của cả 4 accounts | 🟡 Medium |
+
+---
+
+## 4. Giải pháp đề xuất
+
+### Option A: **Account = Lord Name** (Đề xuất chính)
+
+Thay đổi cốt lõi: **Dùng `lord_name` làm identity chính của account**, không dùng [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) UNIQUE.
+
+#### Schema thay đổi
+
+```sql
+-- Bỏ UNIQUE trên emulator_id, thêm UNIQUE trên (emulator_id, lord_name)
+CREATE TABLE accounts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    emulator_id     INTEGER NOT NULL,
+    lord_name       TEXT NOT NULL DEFAULT '',       -- Game identity
+    login_method    TEXT DEFAULT '',
+    email           TEXT DEFAULT '',
+    provider        TEXT DEFAULT 'Global',
+    alliance        TEXT DEFAULT '',
+    note            TEXT DEFAULT '',
+    is_active       INTEGER DEFAULT 1,             -- Currently active on emulator?
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (emulator_id) REFERENCES emulators(id),
+    UNIQUE(emulator_id, lord_name)                 -- 1 emulator + 1 lord = 1 account
+);
+```
+
+#### Sau Full Scan — Auto-link logic
+
+```
+Full Scan xong → parsed_data có lord_name
+    │
+    ├─ Tìm trong accounts WHERE emulator_id = ? AND lord_name = ?
+    │
+    ├─ TÌM THẤY → Set is_active = 1, các account khác cùng emulator set is_active = 0
+    │              Scan data đã link tự nhiên qua emulator_id + thời gian
+    │
+    └─ KHÔNG TÌM THẤY → Tự tạo account mới với lord_name đó
+                          Set is_active = 1
+```
+
+#### Ưu điểm
+- Tự động detect account mới khi scan lần đầu
+- Biết chính xác account nào đang active
+- History tách biệt: filter scan_snapshots WHERE lord_name = 'X'
+- Backward compatible: account cũ vẫn hoạt động
+
+#### Nhược điểm
+- Nếu OCR sai lord_name → tạo duplicate account
+- Cần migration bảng accounts hiện tại
+
+---
+
+### Option B: **Scan gắn trực tiếp với Account** (Phức tạp hơn)
+
+Thêm `account_id` FK vào `scan_snapshots`:
+
+```sql
+ALTER TABLE scan_snapshots ADD COLUMN account_id INTEGER REFERENCES accounts(id);
+```
+
+Full Scan xong → match by `lord_name` → gắn `account_id` vào snapshot.
+
+#### Ưu điểm
+- Quan hệ rõ ràng: mỗi scan thuộc chính xác 1 account
+- Query chính xác hơn
+
+#### Nhược điểm
+- Breaking change lớn: cần update tất cả queries
+- Full Scan phải biết account trước khi save
+- Phức tạp khi account chưa tồn tại
+
+---
+
+### Option C: **Giữ nguyên 1:1, chấp nhận giới hạn** (Đơn giản nhất)
+
+Giữ 1 emulator = 1 account. Khi user switch game account trên emulator:
+- Full Scan sẽ ghi đè data mới nhất
+- Account Page luôn hiển thị account **đang active** (scan gần nhất)
+- User phải tự quản lý bằng ghi chú
+
+#### Ưu điểm
+- Không cần thay đổi gì
+- Đơn giản, ít bug
+
+#### Nhược điểm
+- Mất tracking cho các account không active
+- Lịch sử lẫn lộn giữa nhiều accounts
+
+---
+
+## 5. So sánh 3 Options
+
+| Tiêu chí | Option A | Option B | Option C |
+|---|---|---|---|
+| Multi-account per emulator | ✅ Full | ✅ Full | ❌ Không |
+| Tự động detect account mới | ✅ Có | ✅ Có | ❌ Không |
+| Độ phức tạp implementation | 🟡 Medium | 🔴 High | ✅ None |
+| Breaking changes | 🟡 Migration | 🔴 Many queries | ✅ None |
+| Scan history per account | ✅ Filter by lord_name | ✅ Direct FK | ❌ Lẫn lộn |
+| Account active tracking | ✅ `is_active` flag | ✅ Latest scan | ❌ Manual |
+| OCR error tolerance | 🟡 Cần fuzzy match | 🟡 Cần fuzzy match | ✅ Không relevant |
+| Phù hợp scale 10+ emus | ✅ Tốt | ✅ Tốt | 🟡 Acceptable |
+
+---
+
+## 6. Đề xuất: Option A + Auto-create sau Full Scan
+
+### Flow hoàn chỉnh sau implementation
+
+```
+User click Full Scan trên Emulator #1
+    │
+    ▼
+[1] Capture → PDF → OCR → Parse
+    │   parsed_data = { lord_name: "dragonball Goten", power: 15000000, ... }
+    │
+    ▼
+[2] save_scan_snapshot()
+    │   → Upsert emulators (emu_index = 1)
+    │   → INSERT scan_snapshots (emulator_id, lord_name, power, ...)
+    │   → INSERT scan_resources (gold, wood, ore, mana)
+    │
+    ▼
+[3] auto_link_account()  ← MỚI
+    │   → SELECT FROM accounts WHERE emulator_id = ? AND lord_name = 'dragonball Goten'
+    │
+    ├─ FOUND → UPDATE accounts SET is_active = 1 WHERE id = found_id
+    │          UPDATE accounts SET is_active = 0 WHERE emulator_id = ? AND id != found_id
+    │
+    └─ NOT FOUND → INSERT accounts (emulator_id, lord_name, is_active=1, provider='Global')
+                    UPDATE accounts SET is_active = 0 WHERE emulator_id = ? AND lord_name != 'dragonball Goten'
+    │
+    ▼
+[4] WebSocket broadcast → UI refresh
+    │
+    ▼
+Account Page hiển thị:
+    ┌─ Emulator #1: "dragonball Goten" (Active ✅) — 15.0M power
+    ├─ Emulator #1: "warcraft Rex" (Inactive) — 22.1M power
+    └─ Emulator #1: "shadow Knight" (Inactive) — 5.2M power
+```
+
+### Account Page sẽ hiển thị thế nào?
+
+| # | Emu | Lord Name | Status | Power | Last Scan |
+|---|---|---|---|---|---|
+| 1 | LDP-1 | dragonball Goten | 🟢 Active | 15.0M | 2 min ago |
+| 2 | LDP-1 | warcraft Rex | ⚪ Inactive | 22.1M | 2 hours ago |
+| 3 | LDP-1 | shadow Knight | ⚪ Inactive | 5.2M | 1 day ago |
+| 4 | LDP-2 | zeus Almighty | 🟢 Active | 30.2M | 5 min ago |
+
+### Files cần thay đổi (nếu được approve)
+
+| File | Thay đổi |
+|---|---|
+| [database.py](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py) | ALTER accounts table, bỏ UNIQUE(emulator_id), thêm UNIQUE(emulator_id, lord_name), thêm `is_active`, thêm `auto_link_account()` |
+| [full_scan.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/full_scan.py) | Gọi `auto_link_account()` sau [save_scan_snapshot()](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#367-435) |
+| [api.py](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py) | Update [get_all_accounts()](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#926-985) query |
+| [accounts.js](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/accounts.js) | Thêm hiển thị Active/Inactive status, nhóm accounts theo emulator |
+| [guide_database.md](file:///f:/COD_CHECK/UI_MANAGER/TEST/DATABASE/guide_database.md) | Cập nhật schema, thêm bảng accounts vào docs |
+
+---
+
+## 7. Câu hỏi cần User quyết định
+
+1. **Bạn chọn Option nào?** (A / B / C)
+2. **Khi OCR đọc sai lord_name** (ví dụ "dragonball Goten" bị đọc thành "dragonball G0ten") — bạn muốn tạo account mới hay dùng fuzzy matching để merge?
+3. **Account Page nên hiển thị TẤT CẢ accounts (cả inactive)** hay chỉ active accounts với toggle để xem inactive?
+4. **Khi user Add Account manual** — có nên gắn `lord_name` vào form Add không? (Hiện tại đã có field này)

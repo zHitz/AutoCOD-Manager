@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!-- SEO Tags -->
+  <meta name="description"
+    content="COD Game Automation Manager - Manage workflows, emulators, and accounts securely." />
+  <meta property="og:title" content="COD Game Automation Manager" />
+  <meta property="og:description" content="Automate and manage multiple game emulators effectively with Antigravity." />
+  <meta property="og:type" content="website" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>dragonball Goten — Bot Profile</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #0a0c10;
+      --surface: #111318;
+      --surface2: #181c24;
+      --border: rgba(255, 255, 255, 0.06);
+      --accent: #f97316;
+      --accent2: #fb923c;
+      --gold: #f59e0b;
+      --green: #22c55e;
+      --blue: #38bdf8;
+      --text: #f1f5f9;
+      --muted: #64748b;
+      --muted2: #94a3b8;
+    }
+
+    html,
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+    }
+
+    /* Noise overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.4;
+    }
+
+    /* Ambient glow */
+    body::after {
+      content: '';
+      position: fixed;
+      top: -200px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(249, 115, 22, 0.08) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      margin-bottom: 20px;
+      animation: fadeDown 0.4s ease both;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .avatar {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent) 0%, #c2410c 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: #fff;
+      box-shadow: 0 0 24px rgba(249, 115, 22, 0.35);
+      flex-shrink: 0;
+    }
+
+    .title-block h1 {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: var(--text);
+    }
+
+    .title-block .meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .meta span {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-green {
+      background: rgba(34, 197, 94, 0.12);
+      color: var(--green);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+    }
+
+    .badge-blue {
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--blue);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .dot-green {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    .dot-orange {
+      background: var(--accent);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 9px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(249, 115, 22, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent2);
+      transform: translateY(-1px);
+    }
+
+    .btn-ghost {
+      background: var(--surface2);
+      color: var(--muted2);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    /* ── Stat Cards ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+      animation: fadeDown 0.4s 0.1s ease both;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 24px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .stat-card:hover {
+      border-color: rgba(249, 115, 22, 0.25);
+      transform: translateY(-2px);
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .stat-card:hover::before {
+      opacity: 1;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-value {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    .stat-value.accent {
+      color: var(--accent);
+    }
+
+    .stat-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 4px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--gold));
+      transition: width 1s ease;
+      animation: growBar 1s 0.5s ease both;
+      transform-origin: left;
+    }
+
+    @keyframes growBar {
+      from {
+        width: 0 !important;
+      }
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+      animation: fadeDown 0.4s 0.15s ease both;
+    }
+
+    .tab {
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab:hover:not(.active) {
+      color: var(--muted2);
+    }
+
+    /* ── Info Sections ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      animation: fadeDown 0.4s 0.2s ease both;
+    }
+
+    .info-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+    }
+
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(249, 115, 22, 0.3), transparent);
+    }
+
+    .info-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .info-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .info-row:first-of-type {
+      padding-top: 0;
+    }
+
+    .info-key {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .info-val {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .provider-tag {
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--blue);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      padding: 2px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .alliance-tag {
+      font-family: 'Rajdhani', sans-serif;
+      background: rgba(249, 115, 22, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(249, 115, 22, 0.25);
+      padding: 3px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    /* Level meter */
+    .level-meter {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .level-num {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--gold);
+      min-width: 20px;
+    }
+
+    .meter {
+      width: 80px;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .meter-fill {
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--gold), #fde047);
+    }
+
+    .level-max {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── Animations ── */
+    @keyframes fadeDown {
+      from {
+        opacity: 0;
+        transform: translateY(-12px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Sync pulse */
+    .sync-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s infinite;
+      display: inline-block;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+      }
+
+      50% {
+        box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+      }
+    }
+
+    /* Icons (inline SVG via text) */
+    .icon {
+      width: 14px;
+      height: 14px;
+      display: inline-flex;
+    }
+
+    @media (max-width: 640px) {
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+
+      .info-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
+      }
+
+      .header-actions {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page" aria-label="Profile">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <div class="avatar">D</div>
+        <div class="title-block">
+          <h1>dragonball Goten</h1>
+          <div class="meta">
+            <span>
+              <span class="badge badge-green"><span class="dot dot-green"></span>Online</span>
+            </span>
+            <span>
+              <span class="badge badge-blue">✓ Matched</span>
+            </span>
+            <span>ID: 10559675</span>
+            <span>BotInstance1</span>
+          </div>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-ghost">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="1" />
+            <circle cx="19" cy="12" r="1" />
+            <circle cx="5" cy="12" r="1" />
+          </svg>
+        </button>
+        <button class="btn btn-primary">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          Edit
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">
+          <svg width="12" height="12" fill="none" stroke="var(--accent)" stroke-width="2.5" viewBox="0 0 24 24">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          </svg>
+          Power
+        </div>
+        <div class="stat-value accent">14.9M</div>
+        <div class="stat-sub">Combat strength index</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-label">
+          <svg width="12" height="12" fill="none" stroke="var(--gold)" stroke-width="2.5" viewBox="0 0 24 24">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          Hall Level
+        </div>
+        <div class="stat-value">23</div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:92%"></div>
+        </div>
+        <div class="stat-sub">92% to max (25)</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-label">
+          <span class="sync-dot"></span>
+          Last Sync
+        </div>
+        <div class="stat-value" style="font-size:24px">8:52:48 PM</div>
+        <div class="stat-sub">Active · BotInstance1</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active">Overview</div>
+      <div class="tab">Resources</div>
+      <div class="tab">Activity Log</div>
+    </div>
+
+    <!-- Info Grid -->
+    <div class="info-grid">
+
+      <!-- Login & Access + Emulator -->
+      <div class="info-card">
+        <div class="section-title">Login &amp; Access</div>
+        <div class="info-row">
+          <span class="info-key">Method</span>
+          <span class="info-val">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color:#ea4335">
+              <path
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+              <path
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                fill="#34a853" />
+              <path
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                fill="#fbbc05" />
+              <path
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                fill="#ea4335" />
+            </svg>
+            Google
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Email</span>
+          <span class="info-val" style="font-size:12px; color: var(--muted2)">16.leminhnguyen@gmail.com</span>
+        </div>
+
+        <div class="section-title" style="margin-top:24px">Emulator Info</div>
+        <div class="info-row">
+          <span class="info-key">Instance</span>
+          <span class="info-val">
+            BotInstance1 <span class="dot dot-green" style="margin-left:2px"></span>
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Provider</span>
+          <span class="info-val"><span class="provider-tag">Funtap</span></span>
+        </div>
+      </div>
+
+      <!-- Game Status -->
+      <div class="info-card">
+        <div class="section-title">Game Status</div>
+        <div class="info-row">
+          <span class="info-key">Alliance</span>
+          <span class="info-val"><span class="alliance-tag">[RFFO]</span></span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Hall Level</span>
+          <span class="info-val">
+            <div class="level-meter">
+              <span class="level-num">23</span>
+              <div class="meter">
+                <div class="meter-fill" style="width:92%"></div>
+              </div>
+              <span class="level-max">/ 25</span>
+            </div>
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Market Level</span>
+          <span class="info-val">
+            <div class="level-meter">
+              <span class="level-num">23</span>
+              <div class="meter">
+                <div class="meter-fill" style="width:92%"></div>
+              </div>
+              <span class="level-max">/ 25</span>
+            </div>
+          </span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+
+</html>

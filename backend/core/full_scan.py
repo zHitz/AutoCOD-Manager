@@ -4,22 +4,22 @@ Full Scan Pipeline — Orchestrator for capture -> PDF -> OCR -> parse -> save.
 Runs the complete scan pipeline for one or more emulators in background threads.
 Broadcasts WebSocket progress events at each step.
 """
+
 import time
 import threading
 import os
-from backend.config import config
 from backend.core.macro_replay import _get_adb_serial
 
 # Track scan state
 _running_scans = {}
 _lock = threading.Lock()
 
-WORK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                         "data", "scan_captures")
+WORK_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "scan_captures"
+)
 
 
-def _scan_worker(emulator_index: int, emulator_name: str,
-                  ws_callback=None):
+def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
     """Background thread: runs full scan pipeline for one emulator."""
     serial = _get_adb_serial(emulator_index)
     key = f"scan-{emulator_index}"
@@ -42,12 +42,15 @@ def _scan_worker(emulator_index: int, emulator_name: str,
                 if key in _running_scans:
                     _running_scans[key]["step"] = step
             if ws_callback:
-                ws_callback("scan_progress", {
-                    "emulator_index": emulator_index,
-                    "serial": serial,
-                    "step": step,
-                    "detail": detail,
-                })
+                ws_callback(
+                    "scan_progress",
+                    {
+                        "emulator_index": emulator_index,
+                        "serial": serial,
+                        "step": step,
+                        "detail": detail,
+                    },
+                )
 
         # ── Step 0: Capture Game ID via WORKFLOW module ──
         _broadcast("extracting_id", "Extracting Game ID from profile...")
@@ -81,7 +84,10 @@ def _scan_worker(emulator_index: int, emulator_name: str,
 
         # STOP if no Game ID — scan is useless without identity
         if not game_id:
-            _broadcast("failed", "Cannot identify account — Game ID extraction failed. Scan aborted.")
+            _broadcast(
+                "failed",
+                "Cannot identify account — Game ID extraction failed. Scan aborted.",
+            )
             raise RuntimeError("Game ID extraction failed — aborting Full Scan")
 
         # ── Step 1: Capture Screenshots ──
@@ -91,7 +97,9 @@ def _scan_worker(emulator_index: int, emulator_name: str,
         def progress_cb(phase, step, total):
             _broadcast(f"capturing ({step}/{total})", f"Phase: {phase}")
 
-        pdf_path = run_full_capture_modern(serial, detector, WORK_DIR, progress_callback=progress_cb)
+        pdf_path = run_full_capture_modern(
+            serial, detector, WORK_DIR, progress_callback=progress_cb
+        )
 
         if not pdf_path:
             raise RuntimeError("Screenshot capture failed - no PDF created")
@@ -102,17 +110,25 @@ def _scan_worker(emulator_index: int, emulator_name: str,
         ocr_result = None
         max_ocr_retries = 3
         for ocr_attempt in range(1, max_ocr_retries + 1):
-            _broadcast("ocr_processing", f"Uploading PDF to OCR API... (attempt {ocr_attempt}/{max_ocr_retries})")
+            _broadcast(
+                "ocr_processing",
+                f"Uploading PDF to OCR API... (attempt {ocr_attempt}/{max_ocr_retries})",
+            )
             ocr_result = run_ocr(pdf_path)
             if ocr_result["success"]:
                 break
             print(f"[FullScan] OCR attempt {ocr_attempt} failed: {ocr_result['error']}")
             if ocr_attempt < max_ocr_retries:
-                _broadcast("ocr_retry", f"OCR failed, retrying ({ocr_attempt}/{max_ocr_retries})...")
+                _broadcast(
+                    "ocr_retry",
+                    f"OCR failed, retrying ({ocr_attempt}/{max_ocr_retries})...",
+                )
                 time.sleep(2)
 
         if not ocr_result or not ocr_result["success"]:
-            raise RuntimeError(f"OCR failed after {max_ocr_retries} attempts: {ocr_result['error']}")
+            raise RuntimeError(
+                f"OCR failed after {max_ocr_retries} attempts: {ocr_result['error']}"
+            )
 
         _broadcast("parsing", "Parsing OCR results...")
 
@@ -123,10 +139,14 @@ def _scan_worker(emulator_index: int, emulator_name: str,
         _broadcast("validating", "Verifying OCR data integrity...")
 
         res = parsed_data.get("resources", {})
-        total_resources = sum([
-            res.get("gold", 0), res.get("wood", 0),
-            res.get("ore", 0), res.get("mana", 0),
-        ])
+        total_resources = sum(
+            [
+                res.get("gold", 0),
+                res.get("wood", 0),
+                res.get("ore", 0),
+                res.get("mana", 0),
+            ]
+        )
         power = parsed_data.get("power", 0)
         hall = parsed_data.get("hall_level", 0)
         market = parsed_data.get("market_level", 0)
@@ -140,35 +160,63 @@ def _scan_worker(emulator_index: int, emulator_name: str,
 
         # GATE 2: Compare with latest DB snapshot — refuse to overwrite non-zero with zero
         try:
-            import asyncio as _aio
-            from backend.storage.database import database as _db
+            import sqlite3
+            from backend.config import config as _config
 
-            async def _check_previous():
-                return await _db.get_emulator_data(emulator_index=emulator_index)
-
-            prev = _aio.run(_check_previous())
+            prev = None
+            with sqlite3.connect(_config.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """SELECT s.*, e.emu_index as emulator_index, e.serial, e.name as emulator_name
+                       FROM scan_snapshots s
+                       JOIN emulators e ON s.emulator_id = e.id
+                       WHERE e.emu_index = ?
+                       ORDER BY s.created_at DESC LIMIT 1""",
+                    (emulator_index,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    prev = dict(row)
+                    snap_id = prev["id"]
+                    res_cursor = conn.execute(
+                        "SELECT * FROM scan_resources WHERE snapshot_id = ?",
+                        (snap_id,)
+                    )
+                    for res_row in res_cursor.fetchall():
+                        rd = dict(res_row)
+                        rtype = rd["resource_type"]
+                        prev[rtype] = rd.get("bag_value", 0)
+                    
             if prev:
                 prev_hall = prev.get("hall_level", 0)
                 prev_power = prev.get("power", 0)
 
                 # If previous had real data but new has zeros in critical fields
                 if prev_hall > 0 and hall == 0:
-                    print(f"[FullScan] WARNING: Hall was {prev_hall}, new OCR says 0. Keeping old value.")
+                    print(
+                        f"[FullScan] WARNING: Hall was {prev_hall}, new OCR says 0. Keeping old value."
+                    )
                     parsed_data["hall_level"] = prev_hall
 
                 if prev_power > 0 and power == 0:
-                    print(f"[FullScan] WARNING: Power was {prev_power}, new OCR says 0. Keeping old value.")
+                    print(
+                        f"[FullScan] WARNING: Power was {prev_power}, new OCR says 0. Keeping old value."
+                    )
                     parsed_data["power"] = prev_power
 
                 prev_market = prev.get("market_level", 0)
                 if prev_market > 0 and market == 0:
-                    print(f"[FullScan] WARNING: Market was {prev_market}, new OCR says 0. Keeping old value.")
+                    print(
+                        f"[FullScan] WARNING: Market was {prev_market}, new OCR says 0. Keeping old value."
+                    )
                     parsed_data["market_level"] = prev_market
 
                 for key in ["gold", "wood", "ore", "mana"]:
                     prev_val = prev.get(key, 0) or 0
                     if prev_val > 0 and res.get(key, 0) == 0:
-                        print(f"[FullScan] WARNING: {key} was {prev_val}, new OCR says 0. Keeping old value.")
+                        print(
+                            f"[FullScan] WARNING: {key} was {prev_val}, new OCR says 0. Keeping old value."
+                        )
                         parsed_data["resources"][key] = prev_val
 
         except Exception as val_err:
@@ -225,19 +273,25 @@ def _scan_worker(emulator_index: int, emulator_name: str,
             }
 
         if ws_callback:
-            ws_callback("scan_completed", {
-                "emulator_index": emulator_index,
-                "serial": serial,
-                "elapsed_ms": elapsed_ms,
-                "data": parsed_data,
-                "game_id": game_id,
-                "link_result": link_result,
-            })
+            ws_callback(
+                "scan_completed",
+                {
+                    "emulator_index": emulator_index,
+                    "serial": serial,
+                    "elapsed_ms": elapsed_ms,
+                    "data": parsed_data,
+                    "game_id": game_id,
+                    "link_result": link_result,
+                },
+            )
 
-        print(f"[FullScan] Completed #{emulator_index} ({emulator_name}) in {elapsed_ms}ms | Game ID: {game_id or 'N/A'}")
+        print(
+            f"[FullScan] Completed #{emulator_index} ({emulator_name}) in {elapsed_ms}ms | Game ID: {game_id or 'N/A'}"
+        )
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
 
         with _lock:
@@ -250,22 +304,29 @@ def _scan_worker(emulator_index: int, emulator_name: str,
             }
 
         if ws_callback:
-            ws_callback("scan_failed", {
-                "emulator_index": emulator_index,
-                "serial": serial,
-                "error": str(e),
-            })
+            ws_callback(
+                "scan_failed",
+                {
+                    "emulator_index": emulator_index,
+                    "serial": serial,
+                    "error": str(e),
+                },
+            )
 
 
-def start_full_scan(emulator_index: int, emulator_name: str = "",
-                     ws_callback=None) -> dict:
+def start_full_scan(
+    emulator_index: int, emulator_name: str = "", ws_callback=None
+) -> dict:
     """Start a full scan for one emulator in a background thread."""
     key = f"scan-{emulator_index}"
 
     with _lock:
         existing = _running_scans.get(key)
         if existing and existing.get("status") == "running":
-            return {"success": False, "error": f"Scan already running on #{emulator_index}"}
+            return {
+                "success": False,
+                "error": f"Scan already running on #{emulator_index}",
+            }
 
     thread = threading.Thread(
         target=_scan_worker,

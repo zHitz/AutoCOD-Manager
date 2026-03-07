@@ -3,6 +3,7 @@ SQLite Storage — Database for emulators, scan snapshots, macro runs, and task 
 
 Schema v2: Normalized 6-table design with migration from v1.
 """
+
 import aiosqlite
 import sqlite3
 import json
@@ -220,12 +221,33 @@ CREATE INDEX IF NOT EXISTS idx_aal_game_started    ON account_activity_logs(game
 CREATE INDEX IF NOT EXISTS idx_aal_activity_started ON account_activity_logs(activity_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aal_status_started   ON account_activity_logs(status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aal_run              ON account_activity_logs(run_id);
+
+-- Task checklist templates
+CREATE TABLE IF NOT EXISTS task_templates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    scope       TEXT DEFAULT 'org',
+    scope_id    INTEGER DEFAULT 0,
+    is_default  INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS task_template_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id  INTEGER NOT NULL,
+    activity_id  TEXT NOT NULL,
+    sort_order   INTEGER DEFAULT 0,
+    is_critical  INTEGER DEFAULT 0,
+    FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE
+);
 """
 
 
 # ──────────────────────────────────────────────
 # Migration: v1 → v2
 # ──────────────────────────────────────────────
+
 
 def _check_v1_tables(conn: sqlite3.Connection) -> list[str]:
     """Return list of v1 table names that still exist."""
@@ -372,16 +394,23 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     # Check if task_runs has 'emulator_id' column (v2 schema)
     cursor = conn.execute("PRAGMA table_info(task_runs)")
     columns = [row[1] for row in cursor.fetchall()]
-    
+
     if "emulator_id" in columns:
-        print("[DB Migration] Detected v2 task_runs schema, dropping for v3 migration...")
+        print(
+            "[DB Migration] Detected v2 task_runs schema, dropping for v3 migration..."
+        )
         conn.execute("DROP TABLE IF EXISTS task_runs")
         # Re-run CREATE_TABLES_SQL to recreate properly
         conn.executescript(CREATE_TABLES_SQL)
         conn.commit()
-        print("[DB Migration] v2 -> v3 migration complete.")# ──────────────────────────────────────────────
+        print(
+            "[DB Migration] v2 -> v3 migration complete."
+        )  # ──────────────────────────────────────────────
+
+
 # Database class
 # ──────────────────────────────────────────────
+
 
 class Database:
     """Async SQLite database wrapper with normalized schema."""
@@ -414,18 +443,13 @@ class Database:
     # Emulators
     # ──────────────────────────────────────────
 
-    async def get_emulator_id(self, emu_index: int) -> int | None:
-        """Get emulator DB id by emu_index."""
-        async with self._get_conn() as db:
-            cursor = await db.execute(
-                "SELECT id FROM emulators WHERE emu_index = ?", (emu_index,)
-            )
-            row = await cursor.fetchone()
-            return row[0] if row else None
-
     async def upsert_emulator(
-        self, emu_index: int, serial: str, name: str = "",
-        resolution: str = "960x540", status: str = "ONLINE"
+        self,
+        emu_index: int,
+        serial: str,
+        name: str = "",
+        resolution: str = "960x540",
+        status: str = "ONLINE",
     ) -> int:
         """Insert or update an emulator. Returns emulator id."""
         async with self._get_conn() as db:
@@ -439,8 +463,14 @@ class Database:
                      resolution = excluded.resolution,
                      status = excluded.status,
                      last_seen_at = excluded.last_seen_at""",
-                (emu_index, serial, name, resolution, status,
-                 datetime.now().isoformat()),
+                (
+                    emu_index,
+                    serial,
+                    name,
+                    resolution,
+                    status,
+                    datetime.now().isoformat(),
+                ),
             )
             await db.commit()
 
@@ -450,8 +480,9 @@ class Database:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
-    async def get_emulator_id(self, emu_index: int = None,
-                               serial: str = None) -> int | None:
+    async def get_emulator_id(
+        self, emu_index: int | None = None, serial: str | None = None
+    ) -> int | None:
         """Get emulator DB id by index or serial."""
         async with self._get_conn() as db:
             if emu_index is not None:
@@ -471,9 +502,7 @@ class Database:
         """Get all registered emulators."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                "SELECT * FROM emulators ORDER BY emu_index"
-            )
+            cursor = await db.execute("SELECT * FROM emulators ORDER BY emu_index")
             return [dict(row) for row in await cursor.fetchall()]
 
     async def update_emulator_status(self, emu_index: int, status: str):
@@ -560,8 +589,9 @@ class Database:
             await db.commit()
             return snap_id
 
-    async def get_emulator_data(self, serial: str = None,
-                                 emulator_index: int = None) -> dict | None:
+    async def get_emulator_data(
+        self, serial: str | None = None, emulator_index: int | None = None
+    ) -> dict | None:
         """Get latest scan data for a specific emulator.
         Returns data in a format compatible with the old emulator_data table.
         """
@@ -593,7 +623,9 @@ class Database:
             if not row:
                 return None
 
-            result = dict(row)
+            import typing
+
+            result: typing.Dict[str, typing.Any] = dict(row)
 
             # Attach resources
             snap_id = result["id"]
@@ -629,8 +661,10 @@ class Database:
             rows = await cursor.fetchall()
 
             results = []
+            import typing
+
             for row in rows:
-                result = dict(row)
+                result: typing.Dict[str, typing.Any] = dict(row)
                 snap_id = result["id"]
                 res_cursor = await db.execute(
                     "SELECT * FROM scan_resources WHERE snapshot_id = ?",
@@ -645,8 +679,9 @@ class Database:
 
             return results
 
-    async def get_emulator_scan_history(self, emulator_index: int,
-                                         limit: int = 20) -> list[dict]:
+    async def get_emulator_scan_history(
+        self, emulator_index: int, limit: int = 20
+    ) -> list[dict]:
         """Get scan history for a specific emulator."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -661,8 +696,10 @@ class Database:
             rows = await cursor.fetchall()
 
             results = []
+            import typing
+
             for row in rows:
-                result = dict(row)
+                result: typing.Dict[str, typing.Any] = dict(row)
                 snap_id = result["id"]
                 res_cursor = await db.execute(
                     "SELECT * FROM scan_resources WHERE snapshot_id = ?",
@@ -702,7 +739,9 @@ class Database:
             if not latest_row:
                 return {"current": None, "previous": None, "delta": None}
 
-            current = dict(latest_row)
+            import typing
+
+            current: typing.Dict[str, typing.Any] = dict(latest_row)
             latest_time = current.get("created_at", "")
 
             # Attach resources to current
@@ -732,7 +771,7 @@ class Database:
             delta = None
 
             if prev_row:
-                previous = dict(prev_row)
+                previous: typing.Dict[str, typing.Any] = dict(prev_row)
 
                 # Attach resources to previous
                 res_cursor2 = await db.execute(
@@ -747,14 +786,22 @@ class Database:
 
                 # 3. Compute deltas
                 delta = {
-                    "power": (current.get("power", 0) or 0) - (previous.get("power", 0) or 0),
-                    "hall_level": (current.get("hall_level", 0) or 0) - (previous.get("hall_level", 0) or 0),
-                    "market_level": (current.get("market_level", 0) or 0) - (previous.get("market_level", 0) or 0),
-                    "pet_token": (current.get("pet_token", 0) or 0) - (previous.get("pet_token", 0) or 0),
-                    "gold": (current.get("gold", 0) or 0) - (previous.get("gold", 0) or 0),
-                    "wood": (current.get("wood", 0) or 0) - (previous.get("wood", 0) or 0),
-                    "ore": (current.get("ore", 0) or 0) - (previous.get("ore", 0) or 0),
-                    "mana": (current.get("mana", 0) or 0) - (previous.get("mana", 0) or 0),
+                    "power": int(current.get("power", 0) or 0)
+                    - int(previous.get("power", 0) or 0),
+                    "hall_level": int(current.get("hall_level", 0) or 0)
+                    - int(previous.get("hall_level", 0) or 0),
+                    "market_level": int(current.get("market_level", 0) or 0)
+                    - int(previous.get("market_level", 0) or 0),
+                    "pet_token": int(current.get("pet_token", 0) or 0)
+                    - int(previous.get("pet_token", 0) or 0),
+                    "gold": int(current.get("gold", 0) or 0)
+                    - int(previous.get("gold", 0) or 0),
+                    "wood": int(current.get("wood", 0) or 0)
+                    - int(previous.get("wood", 0) or 0),
+                    "ore": int(current.get("ore", 0) or 0)
+                    - int(previous.get("ore", 0) or 0),
+                    "mana": int(current.get("mana", 0) or 0)
+                    - int(previous.get("mana", 0) or 0),
                     "previous_scan_at": previous.get("created_at", ""),
                 }
 
@@ -764,8 +811,16 @@ class Database:
     # Legacy-compatible methods (scan_results)
     # ──────────────────────────────────────────
 
-    async def save_scan_result(self, serial, task_type, status, data,
-                                is_reliable, validation_errors, duration_ms):
+    async def save_scan_result(
+        self,
+        serial,
+        task_type,
+        status,
+        data,
+        is_reliable,
+        validation_errors,
+        duration_ms,
+    ):
         """Legacy method — saves as a task_run + scan_snapshot if applicable."""
         emu_id = await self.get_emulator_id(serial=serial)
         if not emu_id:
@@ -777,13 +832,13 @@ class Database:
                 """INSERT INTO task_runs
                    (emulator_id, task_type, status, result_json, duration_ms)
                    VALUES (?, ?, ?, ?, ?)""",
-                (emu_id, task_type, status,
-                 json.dumps(data, default=str), duration_ms),
+                (emu_id, task_type, status, json.dumps(data, default=str), duration_ms),
             )
             await db.commit()
 
-    async def save_task_log(self, task_id, serial, task_type, status,
-                             error=None, duration_ms=0):
+    async def save_task_log(
+        self, task_id, serial, task_type, status, error=None, duration_ms=0
+    ):
         """Legacy method — saves as task_run."""
         emu_id = await self.get_emulator_id(serial=serial)
         if not emu_id:
@@ -798,7 +853,9 @@ class Database:
             )
             await db.commit()
 
-    async def get_scan_history(self, limit=50, serial=None) -> list[dict]:
+    async def get_scan_history(
+        self, limit: int = 50, serial: str | None = None
+    ) -> list[dict]:
         """Get scan snapshot history (replaces old scan_results query)."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -888,9 +945,12 @@ class Database:
     # ──────────────────────────────────────────
 
     async def upsert_macro(
-        self, filename: str, display_name: str = "",
-        resolution: str = "", duration_ms: int = 0,
-        file_path: str = ""
+        self,
+        filename: str,
+        display_name: str = "",
+        resolution: str = "",
+        duration_ms: int = 0,
+        file_path: str = "",
     ) -> int:
         """Insert or update a macro definition. Returns macro id."""
         async with self._get_conn() as db:
@@ -913,8 +973,11 @@ class Database:
             return row[0] if row else 0
 
     async def save_macro_run(
-        self, macro_id: int, emulator_id: int,
-        status: str = "running", ops_total: int = 0
+        self,
+        macro_id: int,
+        emulator_id: int,
+        status: str = "running",
+        ops_total: int = 0,
     ) -> int:
         """Create a new macro run record. Returns run id."""
         async with self._get_conn() as db:
@@ -928,13 +991,18 @@ class Database:
             return cursor.lastrowid
 
     async def update_macro_run(
-        self, run_id: int, status: str = None,
-        ops_completed: int = None, error: str = None,
-        finished_at: str = None
+        self,
+        run_id: int,
+        status: str | None = None,
+        ops_completed: int | None = None,
+        error: str | None = None,
+        finished_at: str | None = None,
     ):
         """Update a macro run record."""
-        updates = []
-        params = []
+        import typing
+
+        updates: typing.List[str] = []
+        params: typing.List[typing.Any] = []
         if status is not None:
             updates.append("status = ?")
             params.append(status)
@@ -959,8 +1027,9 @@ class Database:
             )
             await db.commit()
 
-    async def get_macro_runs(self, emulator_index: int = None,
-                              limit: int = 50) -> list[dict]:
+    async def get_macro_runs(
+        self, emulator_index: int | None = None, limit: int = 50
+    ) -> list[dict]:
         """Get macro execution history."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -992,8 +1061,7 @@ class Database:
     # ──────────────────────────────────────────
 
     async def save_task_run(
-        self, emulator_id: int, task_type: str,
-        status: str = "queued"
+        self, emulator_id: int, task_type: str, status: str = "queued"
     ) -> int | str:
         """Create a new task run record. Returns run id (int for v2, str for v3)."""
         async with self._get_conn() as db:
@@ -1012,6 +1080,7 @@ class Database:
 
             # v3 schema compatibility
             import uuid
+
             run_id = str(uuid.uuid4())
             meta = {"task_type": task_type, "emulator_id": emulator_id}
             await db.execute(
@@ -1035,9 +1104,13 @@ class Database:
             return run_id
 
     async def update_task_run(
-        self, run_id: int | str, status: str = None,
-        error: str = None, duration_ms: int = None,
-        result_json: str = None, finished_at: str = None
+        self,
+        run_id: int | str,
+        status: str | None = None,
+        error: str | None = None,
+        duration_ms: int | None = None,
+        result_json: str | None = None,
+        finished_at: str | None = None,
     ):
         """Update a task run record."""
         async with self._get_conn() as db:
@@ -1046,8 +1119,10 @@ class Database:
 
             # Legacy schema compatibility
             if {"id", "status"}.issubset(cols):
-                updates = []
-                params = []
+                import typing
+
+                updates: typing.List[str] = []
+                params: typing.List[typing.Any] = []
                 if status is not None:
                     updates.append("status = ?")
                     params.append(status)
@@ -1093,8 +1168,10 @@ class Database:
             if result_json is not None:
                 current_meta["result_json"] = result_json
 
-            updates = []
-            params = []
+            import typing
+
+            updates: typing.List[str] = []
+            params: typing.List[typing.Any] = []
             if status is not None:
                 updates.append("status = ?")
                 params.append(str(status).upper())
@@ -1149,11 +1226,11 @@ class Database:
             # Process scan_snapshots (avoid duplicates - skip if same timestamp+serial exists in tasks)
             task_keys = set()
             for r in results:
-                task_keys.add(f"{r.get('serial','')}-{r.get('started_at','')}")
+                task_keys.add(f"{r.get('serial', '')}-{r.get('started_at', '')}")
 
             for row in scan_rows:
                 r = dict(row)
-                key = f"{r.get('serial','')}-{r.get('started_at','')}"
+                key = f"{r.get('serial', '')}-{r.get('started_at', '')}"
                 if key in task_keys:
                     continue
                 r["source"] = "full_scan"
@@ -1178,8 +1255,9 @@ class Database:
             results.sort(key=lambda x: x.get("started_at", "") or "", reverse=True)
             return results[:limit]
 
-    async def get_task_runs(self, emulator_index: int = None,
-                             limit: int = 50) -> list[dict]:
+    async def get_task_runs(
+        self, emulator_index: int | None = None, limit: int = 50
+    ) -> list[dict]:
         """Get task execution history."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -1208,7 +1286,9 @@ class Database:
                 rows = [dict(row) for row in await cursor.fetchall()]
                 for row in rows:
                     row["source"] = row.get("source") or "task_queue"
-                    row["emu_name"] = row.get("emu_name") or row.get("emulator_name", "")
+                    row["emu_name"] = row.get("emu_name") or row.get(
+                        "emulator_name", ""
+                    )
                 return rows
 
             # v3 schema
@@ -1246,27 +1326,36 @@ class Database:
                         meta = json.loads(d["metadata_json"])
                     except Exception:
                         meta = {}
-                results.append({
-                    "id": d.get("run_id"),
-                    "task_type": meta.get("task_type") or d.get("source_page") or "workflow",
-                    "status": d.get("status", ""),
-                    "error": meta.get("error", ""),
-                    "duration_ms": d.get("duration_ms", 0),
-                    "result_json": meta.get("result_json", ""),
-                    "started_at": d.get("started_at"),
-                    "finished_at": d.get("finished_at"),
-                    "serial": d.get("serial") or meta.get("serial", ""),
-                    "emu_name": d.get("emulator_name") or meta.get("emu_name", ""),
-                    "emu_index": d.get("emu_index"),
-                    "source": d.get("source_page") or "workflow",
-                })
+                results.append(
+                    {
+                        "id": d.get("run_id"),
+                        "task_type": meta.get("task_type")
+                        or d.get("source_page")
+                        or "workflow",
+                        "status": d.get("status", ""),
+                        "error": meta.get("error", ""),
+                        "duration_ms": d.get("duration_ms", 0),
+                        "result_json": meta.get("result_json", ""),
+                        "started_at": d.get("started_at"),
+                        "finished_at": d.get("finished_at"),
+                        "serial": d.get("serial") or meta.get("serial", ""),
+                        "emu_name": d.get("emulator_name") or meta.get("emu_name", ""),
+                        "emu_index": d.get("emu_index"),
+                        "source": d.get("source_page") or "workflow",
+                    }
+                )
             return results
 
     async def upsert_account(
-        self, game_id: str, emulator_id: int = None,
-        lord_name: str = "", login_method: str = "",
-        email: str = "", provider: str = "Global",
-        alliance: str = "", note: str = "",
+        self,
+        game_id: str,
+        emulator_id: int | None = None,
+        lord_name: str = "",
+        login_method: str = "",
+        email: str = "",
+        provider: str = "Global",
+        alliance: str = "",
+        note: str = "",
         is_active: int = 0,
     ) -> int:
         """Insert or update account by game_id. Returns account id."""
@@ -1286,19 +1375,38 @@ class Database:
                        note = CASE WHEN excluded.note != '' THEN excluded.note ELSE accounts.note END,
                        is_active = excluded.is_active,
                        updated_at = excluded.updated_at""",
-                (game_id, emulator_id, lord_name, login_method, email, provider, alliance, note, is_active, now),
+                (
+                    game_id,
+                    emulator_id,
+                    lord_name,
+                    login_method,
+                    email,
+                    provider,
+                    alliance,
+                    note,
+                    is_active,
+                    now,
+                ),
             )
             await db.commit()
             # Get the actual id (lastrowid returns 0 on conflict update)
-            id_cur = await db.execute("SELECT id FROM accounts WHERE game_id = ?", (game_id,))
+            id_cur = await db.execute(
+                "SELECT id FROM accounts WHERE game_id = ?", (game_id,)
+            )
             row = await id_cur.fetchone()
             return row[0] if row else cursor.lastrowid
 
     async def upsert_account_full(
-        self, game_id: str, emulator_index: int = None,
-        lord_name: str = "", power: float = 0,
-        login_method: str = "", email: str = "", provider: str = "Global",
-        alliance: str = "", note: str = "",
+        self,
+        game_id: str,
+        emulator_index: int | None = None,
+        lord_name: str = "",
+        power: float = 0,
+        login_method: str = "",
+        email: str = "",
+        provider: str = "Global",
+        alliance: str = "",
+        note: str = "",
     ) -> int:
         """Create/update account with game_id and optionally create a manual scan snapshot."""
         emu_id = None
@@ -1340,8 +1448,11 @@ class Database:
         return acc_id
 
     async def auto_link_account(
-        self, emulator_id: int, game_id: str,
-        lord_name: str = "", snapshot_id: int = 0,
+        self,
+        emulator_id: int,
+        game_id: str,
+        lord_name: str = "",
+        snapshot_id: int = 0,
     ) -> dict:
         """After a scan, link game_id to accounts or create pending.
         Returns {"action": "linked"|"pending", "account_id"|"pending_id": int}"""
@@ -1377,7 +1488,7 @@ class Database:
                 # Unknown account — check pending (dismissed ones should reappear)
                 await db.execute(
                     "DELETE FROM pending_accounts WHERE game_id = ? AND status = 'dismissed'",
-                    (game_id,)
+                    (game_id,),
                 )
                 # Insert or update pending
                 cursor = await db.execute(
@@ -1396,6 +1507,8 @@ class Database:
                 )
                 prow = await pid_cur.fetchone()
                 return {"action": "pending", "pending_id": prow["id"] if prow else 0}
+
+            return {}
 
     def _attach_scan_defaults(self, acc: dict):
         """Set default scan fields on an account dict."""
@@ -1451,7 +1564,9 @@ class Database:
 
                 if scan_row:
                     scan = dict(scan_row)
-                    acc["lord_name"] = scan.get("lord_name", "") or acc.get("acc_lord_name", "")
+                    acc["lord_name"] = scan.get("lord_name", "") or acc.get(
+                        "acc_lord_name", ""
+                    )
                     acc["power"] = scan.get("power", 0)
                     acc["hall_level"] = scan.get("hall_level", 0)
                     acc["market_level"] = scan.get("market_level", 0)
@@ -1525,7 +1640,9 @@ class Database:
 
             if scan_row:
                 scan = dict(scan_row)
-                acc["lord_name"] = scan.get("lord_name", "") or acc.get("acc_lord_name", "")
+                acc["lord_name"] = scan.get("lord_name", "") or acc.get(
+                    "acc_lord_name", ""
+                )
                 acc["power"] = scan.get("power", 0)
                 acc["hall_level"] = scan.get("hall_level", 0)
                 acc["market_level"] = scan.get("market_level", 0)
@@ -1592,7 +1709,8 @@ class Database:
         """Delete account by game_id."""
         async with self._get_conn() as db:
             cursor = await db.execute(
-                "DELETE FROM accounts WHERE game_id = ?", (game_id,),
+                "DELETE FROM accounts WHERE game_id = ?",
+                (game_id,),
             )
             await db.commit()
             return cursor.rowcount > 0
@@ -1613,9 +1731,13 @@ class Database:
             return [dict(row) for row in await cursor.fetchall()]
 
     async def confirm_pending_account(
-        self, pending_id: int, login_method: str = "",
-        email: str = "", provider: str = "Global",
-        alliance: str = "", note: str = "",
+        self,
+        pending_id: int,
+        login_method: str = "",
+        email: str = "",
+        provider: str = "Global",
+        alliance: str = "",
+        note: str = "",
     ) -> int:
         """Confirm a pending account → create it in accounts table. Returns account id."""
         async with self._get_conn() as db:
@@ -1686,10 +1808,15 @@ class Database:
             return dict(row) if row else None
 
     async def create_schedule(
-        self, name: str, macro_filename: str,
-        schedule_type: str = "once", schedule_value: str = "",
-        target_mode: str = "all_online", target_indices: str = "[]",
-        is_enabled: int = 1, next_run_at: str = "",
+        self,
+        name: str,
+        macro_filename: str,
+        schedule_type: str = "once",
+        schedule_value: str = "",
+        target_mode: str = "all_online",
+        target_indices: str = "[]",
+        is_enabled: int = 1,
+        next_run_at: str = "",
     ) -> int:
         """Create a new schedule. Returns schedule id."""
         async with self._get_conn() as db:
@@ -1698,8 +1825,16 @@ class Database:
                    (name, macro_filename, schedule_type, schedule_value,
                     target_mode, target_indices, is_enabled, next_run_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (name, macro_filename, schedule_type, schedule_value,
-                 target_mode, target_indices, is_enabled, next_run_at),
+                (
+                    name,
+                    macro_filename,
+                    schedule_type,
+                    schedule_value,
+                    target_mode,
+                    target_indices,
+                    is_enabled,
+                    next_run_at,
+                ),
             )
             await db.commit()
             return cursor.lastrowid
@@ -1707,8 +1842,14 @@ class Database:
     async def update_schedule(self, schedule_id: int, **kwargs) -> bool:
         """Update schedule fields."""
         allowed = {
-            "name", "macro_filename", "schedule_type", "schedule_value",
-            "target_mode", "target_indices", "is_enabled", "next_run_at",
+            "name",
+            "macro_filename",
+            "schedule_type",
+            "schedule_value",
+            "target_mode",
+            "target_indices",
+            "is_enabled",
+            "next_run_at",
         }
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
@@ -1733,7 +1874,9 @@ class Database:
             await db.commit()
             return cursor.rowcount > 0
 
-    async def record_schedule_run(self, schedule_id: int, next_run_at: str = "") -> bool:
+    async def record_schedule_run(
+        self, schedule_id: int, next_run_at: str = ""
+    ) -> bool:
         """Record that a schedule has been executed."""
         async with self._get_conn() as db:
             cursor = await db.execute(
@@ -1754,10 +1897,12 @@ class Database:
         """Get all account groups."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM account_groups ORDER BY created_at DESC")
+            cursor = await db.execute(
+                "SELECT * FROM account_groups ORDER BY created_at DESC"
+            )
             return [dict(row) for row in await cursor.fetchall()]
 
-    async def create_group(self, name: str, account_ids: str = '[]') -> int:
+    async def create_group(self, name: str, account_ids: str = "[]") -> int:
         """Create a new account group."""
         async with self._get_conn() as db:
             cursor = await db.execute(
@@ -1767,7 +1912,9 @@ class Database:
             await db.commit()
             return cursor.lastrowid
 
-    async def update_group(self, group_id: int, name: str = None, account_ids: str = None) -> bool:
+    async def update_group(
+        self, group_id: int, name: str | None = None, account_ids: str | None = None
+    ) -> bool:
         """Update an account group."""
         fields = {}
         if name is not None:
@@ -1791,7 +1938,9 @@ class Database:
     async def delete_group(self, group_id: int) -> bool:
         """Delete an account group."""
         async with self._get_conn() as db:
-            cursor = await db.execute("DELETE FROM account_groups WHERE id = ?", (group_id,))
+            cursor = await db.execute(
+                "DELETE FROM account_groups WHERE id = ?", (group_id,)
+            )
             await db.commit()
             return cursor.rowcount > 0
 

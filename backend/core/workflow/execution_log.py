@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from backend.config import config
 
+
 async def create_run(run_id: str, meta: dict):
     """Create a new execution run record."""
     async with aiosqlite.connect(config.db_path) as db:
@@ -20,12 +21,22 @@ async def create_run(run_id: str, meta: dict):
                 "RUNNING",
                 datetime.now().isoformat(),
                 0,
-                json.dumps(meta)
-            )
+                json.dumps(meta),
+            ),
         )
         await db.commit()
 
-async def append_step_log(run_id: str, step_index: int, function_id: str, input_dict: dict, output_dict: dict, status: str, error_msg: str = "", latency_ms: int = 0):
+
+async def append_step_log(
+    run_id: str,
+    step_index: int,
+    function_id: str,
+    input_dict: dict,
+    output_dict: dict,
+    status: str,
+    error_msg: str = "",
+    latency_ms: int = 0,
+):
     """Append a step log to an existing run."""
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(
@@ -44,10 +55,11 @@ async def append_step_log(run_id: str, step_index: int, function_id: str, input_
                 error_msg,
                 datetime.now().isoformat(),  # started_at
                 datetime.now().isoformat(),  # ended_at (approx)
-                latency_ms
-            )
+                latency_ms,
+            ),
         )
         await db.commit()
+
 
 async def complete_run(run_id: str, status: str, duration_ms: int):
     """Mark a run as complete or failed with final duration."""
@@ -56,12 +68,13 @@ async def complete_run(run_id: str, status: str, duration_ms: int):
             """UPDATE task_runs SET 
                 status = ?, ended_at = ?, duration_ms = ?
             WHERE run_id = ?""",
-            (status, datetime.now().isoformat(), duration_ms, run_id)
+            (status, datetime.now().isoformat(), duration_ms, run_id),
         )
         await db.commit()
 
 
 # ── Account Activity Logs (v2 fact table for Task page) ──
+
 
 async def start_account_activity(
     run_id: str,
@@ -72,7 +85,7 @@ async def start_account_activity(
     activity_id: str,
     activity_name: str,
     source: str = "workflow",
-    metadata: dict = None
+    metadata: dict = None,
 ) -> int:
     """Insert a RUNNING row into account_activity_logs. Returns the row id."""
     async with aiosqlite.connect(config.db_path) as db:
@@ -92,8 +105,8 @@ async def start_account_activity(
                 activity_name,
                 datetime.now().isoformat(),
                 source,
-                json.dumps(metadata) if metadata else "{}"
-            )
+                json.dumps(metadata) if metadata else "{}",
+            ),
         )
         await db.commit()
         return cursor.lastrowid
@@ -105,7 +118,7 @@ async def finish_account_activity(
     error_code: str = "",
     error_message: str = "",
     duration_ms: int = 0,
-    result: dict = None
+    result: dict = None,
 ):
     """Update an account_activity_logs row to its final status."""
     async with aiosqlite.connect(config.db_path) as db:
@@ -121,8 +134,43 @@ async def finish_account_activity(
                 datetime.now().isoformat(),
                 duration_ms,
                 json.dumps(result) if result else "{}",
-                log_id
-            )
+                log_id,
+            ),
         )
         await db.commit()
 
+
+async def get_last_account_run(account_id: int) -> float:
+    """Return the timestamp of the most recent started_at for any activity on an account."""
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            """SELECT started_at FROM account_activity_logs 
+               WHERE account_id = ? 
+               ORDER BY started_at DESC LIMIT 1""",
+            (account_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0]:
+                try:
+                    return datetime.fromisoformat(row[0]).timestamp()
+                except ValueError:
+                    return 0
+            return 0
+
+
+async def get_last_activity_run(account_id: int, activity_id: str) -> float:
+    """Return the timestamp of the most recent SUCCESS run for a specific activity on an account."""
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            """SELECT started_at FROM account_activity_logs 
+               WHERE account_id = ? AND activity_id = ? AND status = 'SUCCESS'
+               ORDER BY started_at DESC LIMIT 1""",
+            (account_id, activity_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0]:
+                try:
+                    return datetime.fromisoformat(row[0]).timestamp()
+                except ValueError:
+                    return 0
+            return 0

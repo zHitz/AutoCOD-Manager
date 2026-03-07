@@ -1,0 +1,95 @@
+# QA REPORT: Activity Status
+
+## Requirement 1 — Activity Status Tracking
+**Status**: PASS
+
+**Code Location**: 
+- Backend: [f:\COD_CHECK\UI_MANAGER\backend\core\workflow\bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py) ([BotOrchestrator](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#15-439) logic)
+- Frontend: [f:\COD_CHECK\UI_MANAGER\frontend\js\pages\workflow.js](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/workflow.js) ([_updateActivityStatuses](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/workflow.js#1207-1271) function)
+
+**Implementation Explanation**:
+- Backend [BotOrchestrator](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#15-439) uses a dictionary `self.activity_statuses`. It tracks each activity's state: "pending", "running", "done", "error", or "skipped".
+- The state changes naturally as the executor loops through `self.activities`. Before executing an activity, it marks it as "running". Upon success, it sets it to "done". On exception or timeout, it sets it to "error".
+- Frontend listens to `bot_queue_update` over WebSocket padding it into the UI with the `acv-status-{id}` badge.
+
+**Execution Path Check**: 
+The code is executed within the main [_execute_current_account](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#103-111) loop of [BotOrchestrator](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#15-439), successfully reaching all conditions. (Runs sequentially).
+
+**Issues**: 
+- **Minor Terminology Difference**: The backend uses "done" instead of `COMPLETED`, and "error" instead of `FAILED`. The frontend translates these to "Done", "Error", "Queued", "Running", "Skipped". It logically matches the SPEC CHECKLIST but differs slightly in literal string outputs (SPEC mentioned `PENDING, RUNNING, COMPLETED, FAILED, N/A`).
+
+--------------------------------
+
+## Requirement 2 — Status Synchronization With Rotation
+**Status**: PASS
+
+**Code Location**: 
+- Backend: [backend/core/workflow/bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py)
+
+**Implementation Explanation**:
+- In `BotOrchestrator._execute_current_account` loop:
+  - It sequentially calls `executor.execute_recipe()`.
+  - It synchronously marks the current activity as "running", awaits it, marks it as "done"/"error", then advances to the next.
+  - No two activities are marked as "running" at the same time for the same group cycle.
+
+**Execution Path Check**:
+The synchronous loop ensures strict synchronization with execution order. The upper ones are marked "done", current is "running", and lower ones remain "pending".
+
+**Issues**:
+None found.
+
+--------------------------------
+
+## Requirement 3 — UI Status Indicator
+**Status**: PASS
+
+**Code Location**: 
+- Frontend: [f:\COD_CHECK\UI_MANAGER\frontend\js\pages\workflow.js](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/workflow.js) ([_updateActivityStatuses](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/workflow.js#1207-1271))
+
+**Implementation Explanation**:
+- The UI filters [getActivityConfig()](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/workflow.js#829-844) for enabled activities and updates their badges by id (`acv-status-${id}`).
+- Maps: `pending` -> Queued, `running` -> Running, `done` -> Done, `error` -> Error, `skipped` -> Skipped.
+- Overrides status string to "Stopping" if `queueData.stop_requested` is true and status was "running".
+- If a user hasn't checked a feature (disabled), it skips updating that activity's status badge (leaving it to its default "N/A").
+
+**Execution Path Check**:
+Function is triggered every time `bot_queue_update` is received from the server.
+
+**Issues**:
+None found.
+
+--------------------------------
+
+## Requirement 4 — Status Reset On New Rotation
+**Status**: PASS
+
+**Code Location**: 
+- Backend: [backend/core/workflow/bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py) (Line ~281)
+
+**Implementation Explanation**:
+- Inside the main while loop, at the beginning of each *account calculation step*, the backend calls:
+  `self.activity_statuses = {k: "pending" for k in act_keys}`.
+- This immediately zeroes out prior COMPLETED / FAILED statuses from the previous cycle and sets them back to `pending`.
+
+**Execution Path Check**:
+The dictionary is forcefully reset before iterations execute over `self.activities`. Frontend updates accordingly upon the next WebSocket broadcast.
+
+**Issues**:
+None found.
+
+--------------------------------
+
+## OVERALL SUMMARY
+
+Total Requirements: 4  
+Passed: 4  
+Partial: 0  
+Failed: 0  
+
+**Critical Issues**: None. The feature functionally executes nicely.
+
+**Potential Runtime Risks**:
+- If `bot_queue_update` is emitted very rapidly, UI state may flicker.
+
+**Recommended Fix Priority**:
+- **P2 — Improvement**: Align literal string mappings in frontend ("Queued", "Done", "Error") with the specific terminology requested if absolute 1:1 mapping ("PENDING", "COMPLETED", "FAILED") is strictly required for display text.

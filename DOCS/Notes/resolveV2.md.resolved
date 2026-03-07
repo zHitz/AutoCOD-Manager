@@ -1,0 +1,285 @@
+# Resolve v2: Full Scan ↔ Account — Kiến trúc lấy Game ID làm trung tâm
+
+> **Ngày:** 2026-03-01 | **Status:** Chờ User approve trước khi code
+
+---
+
+## Quyết định từ User
+
+| # | Quyết định | Ý nghĩa |
+|---|---|---|
+| 1 | **Game ID** (có sẵn trong game, copy bằng ADB clipboard) là identity key | Không dùng `lord_name` hay [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) — giảm sai sót tối đa |
+| 2 | Account Page hiển thị **TẤT CẢ accounts** | Emulator chỉ là công cụ, mục đích là nuôi account |
+| 3 | Account mới phát hiện → vào **hàng chờ (pending queue)** | User xác nhận + điền thông tin, rồi mới tạo chính thức |
+
+---
+
+## 1. Hiện trạng & Vấn đề
+
+### Hiện tại (v1)
+
+```
+accounts (1:1 with emulators via UNIQUE emulator_id)
+    → Full Scan KHÔNG tương tác bảng accounts
+    → 1 Emulator = 1 Account (sai thực tế)
+    → Không có game_id
+    → Không có pending queue
+```
+
+### Cần đạt được (v2)
+
+```
+accounts (N:1 with emulators — nhiều account trên 1 emulator)
+    → Full Scan detect game_id → tự link hoặc pending queue
+    → game_id là UNIQUE identifier — mỗi account độc nhất
+    → Account mới → pending → User confirm → tạo chính thức
+```
+
+---
+
+## 2. Cách lấy Game ID qua ADB
+
+Trong game, mỗi account có nút Copy ID. Flow:
+
+```
+[1] ADB tap vào nút Copy ID trong game
+[2] Game copy ID vào clipboard của Android
+[3] ADB đọc clipboard:
+    adb -s emulator-5556 shell "am broadcast -a clipper.get"
+    hoặc:
+    adb -s emulator-5556 shell "settings get secure clipboard_text"
+    hoặc (phổ biến nhất trên LDPlayer):
+    adb -s emulator-5556 shell "service call clipboard 2 s16 com.android.shell"
+```
+
+> [!NOTE]
+> Cần test trên LDPlayer để xác định command nào hoạt động. Có thể cần cài app helper (Clipper) nếu Android API không cho phép đọc clipboard trực tiếp. Đây là bước cần User test trước.
+
+### Tích hợp vào Full Scan
+
+Game ID sẽ là **phase 0** (trước profile) hoặc **phase cuối** (sau pet_token) trong [screen_capture.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/screen_capture.py):
+
+```
+Phase hiện tại: profile → resources → hall → market → pet_token
+Phase mới:      game_id → profile → resources → hall → market → pet_token
+```
+
+---
+
+## 3. Schema mới
+
+### Bảng [accounts](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py#400-404) (thay đổi)
+
+```sql
+CREATE TABLE IF NOT EXISTS accounts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id         TEXT NOT NULL UNIQUE,           -- ★ Game ID = identity chính
+    emulator_id     INTEGER,                        -- FK → emulators.id (nullable, có thể chưa gắn)
+    lord_name       TEXT DEFAULT '',                 -- Sync từ scan
+    login_method    TEXT DEFAULT '',
+    email           TEXT DEFAULT '',
+    provider        TEXT DEFAULT 'Global',
+    alliance        TEXT DEFAULT '',
+    note            TEXT DEFAULT '',
+    is_active       INTEGER DEFAULT 0,              -- Đang active trên emulator nào?
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (emulator_id) REFERENCES emulators(id)
+);
+
+-- Bỏ UNIQUE(emulator_id) → cho phép nhiều account trên 1 emulator
+-- Thêm UNIQUE(game_id) → mỗi game ID chỉ có 1 record
+```
+
+So sánh với v1:
+
+| Thay đổi | v1 | v2 |
+|---|---|---|
+| Identity key | [emulator_id](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#328-344) UNIQUE | `game_id` UNIQUE |
+| Emulator link | 1:1 bắt buộc | N:1, nullable |
+| Lord name | Không lưu trong accounts | Sync tự động từ scan |
+| `is_active` | Không có | 1 = đang active trên emulator |
+
+### Bảng `pending_accounts` (MỚI)
+
+```sql
+CREATE TABLE IF NOT EXISTS pending_accounts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id         TEXT NOT NULL UNIQUE,            -- Game ID phát hiện
+    emulator_id     INTEGER NOT NULL,                -- Emulator đã scan
+    lord_name       TEXT DEFAULT '',                  -- Từ OCR
+    power           INTEGER DEFAULT 0,               -- Từ OCR
+    snapshot_id     INTEGER,                          -- Link tới scan_snapshot đã tạo
+    status          TEXT DEFAULT 'pending',           -- pending / confirmed / dismissed
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (emulator_id) REFERENCES emulators(id),
+    FOREIGN KEY (snapshot_id) REFERENCES scan_snapshots(id)
+);
+```
+
+### Bảng `scan_snapshots` (thêm column)
+
+```sql
+ALTER TABLE scan_snapshots ADD COLUMN game_id TEXT DEFAULT '';
+```
+
+Cho phép mỗi scan snapshot link tới chính xác 1 game account.
+
+---
+
+## 4. Flow mới sau khi implement
+
+### Full Scan — Luồng hoàn chỉnh
+
+```mermaid
+flowchart TD
+    A["User click Full Scan<br/>trên Emulator #1"] --> B["Phase 0: Copy Game ID<br/>ADB tap nút Copy → đọc clipboard"]
+    B --> C["Phase 1-5: Profile, Resources,<br/>Hall, Market, Pet Token"]
+    C --> D["OCR → parse_scan_markdown()"]
+    D --> E["save_scan_snapshot()<br/>+ gắn game_id vào snapshot"]
+    
+    E --> F{"game_id tồn tại<br/>trong accounts?"}
+    
+    F -->|CÓ| G["✅ Auto-sync<br/>Update lord_name, power<br/>Set is_active = 1<br/>Deactivate accounts khác<br/>trên cùng emulator"]
+    
+    F -->|KHÔNG| H["⏳ Tạo pending_account<br/>game_id + lord_name + power<br/>+ snapshot_id"]
+    
+    H --> I["WebSocket → UI<br/>Hiện notification:<br/>'New account detected!'"]
+    
+    I --> J["User mở Pending Queue<br/>Review + điền thông tin:<br/>login_method, email, alliance, note"]
+    
+    J --> K["User click Confirm<br/>→ POST /api/accounts/confirm"]
+    
+    K --> L["Tạo account chính thức<br/>Move pending → accounts<br/>Link scan data"]
+    
+    G --> M["WebSocket → UI refresh"]
+    L --> M
+```
+
+### Khi Account đã tồn tại (auto-sync)
+
+```
+Full Scan xong → game_id = "ABC123"
+    → SELECT FROM accounts WHERE game_id = 'ABC123'
+    → FOUND (account_id = 7)
+    │
+    ├─ UPDATE accounts SET
+    │      lord_name = 'dragonball Goten' (mới nhất từ OCR),
+    │      emulator_id = 1 (emulator đang chạy),
+    │      is_active = 1,
+    │      updated_at = now()
+    │  WHERE game_id = 'ABC123'
+    │
+    ├─ UPDATE accounts SET is_active = 0
+    │  WHERE emulator_id = 1 AND game_id != 'ABC123'
+    │  (deactivate các account khác trên cùng emulator)
+    │
+    └─ UI tự refresh → hiển thị data mới nhất
+```
+
+### Khi Account mới (pending queue)
+
+```
+Full Scan xong → game_id = "XYZ789" (chưa có trong accounts)
+    │
+    ├─ INSERT INTO pending_accounts
+    │      (game_id='XYZ789', emulator_id=1, lord_name='new Player', power=500000, snapshot_id=42)
+    │
+    ├─ WebSocket broadcast → "pending_account_detected"
+    │
+    └─ UI hiện notification badge / modal:
+        ┌─────────────────────────────────────────────────┐
+        │  🆕 New Account Detected                        │
+        │                                                  │
+        │  Game ID:    XYZ789                              │
+        │  Lord Name:  new Player                          │
+        │  Power:      0.5M                                │
+        │  Emulator:   LDP-1                               │
+        │                                                  │
+        │  ─── Fill account details ───                    │
+        │  Login Method: [ Google ▼ ]                      │
+        │  Email:        [ ________________ ]              │
+        │  Provider:     [ Global ▼ ]                      │
+        │  Alliance:     [ ________________ ]              │
+        │  Note:         [ ________________ ]              │
+        │                                                  │
+        │  [ Dismiss ]              [ ✓ Confirm & Create ] │
+        └─────────────────────────────────────────────────┘
+```
+
+---
+
+## 5. Account Page — Hiển thị mới
+
+### Tất cả accounts, nhóm theo trạng thái
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Accounts (12 total)        [🔍 Search]  [📋 Table │ ▦ Grid]  [+ Add] │
+├──────────────────────────────────────────────────────────────────────────┤
+│  ⏳ Pending (2)  ← notification badge                                  │
+│  ┌─ XYZ789 — new Player — 0.5M — LDP-1 — [Review & Confirm]          │
+│  └─ DEF456 — unknown99  — 1.2M — LDP-3 — [Review & Confirm]          │
+├──────────────────────────────────────────────────────────────────────────┤
+│  # │ Game ID   │ Emulator │ Lord Name        │ Power  │ Status  │ ...  │
+│  1 │ ABC123    │ LDP-1    │ dragonball Goten │ 15.0M  │ 🟢 Active│     │
+│  2 │ GHI321    │ LDP-1    │ warcraft Rex     │ 22.1M  │ ⚪ Idle  │     │
+│  3 │ JKL654    │ LDP-2    │ zeus Almighty    │ 30.2M  │ 🟢 Active│     │
+│  4 │ MNO987    │   —      │ shadow Knight    │ 5.2M   │ 🔴 None │     │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+Giải thích status:
+- **🟢 Active**: Account đang active trên 1 emulator (`is_active = 1`)
+- **⚪ Idle**: Có liên kết emulator nhưng không active (emulator đang chạy account khác)
+- **🔴 None**: Chưa gắn emulator nào, hoặc emulator offline
+
+---
+
+## 6. API Endpoints mới / thay đổi
+
+| Endpoint | Method | Mô tả |
+|---|---|---|
+| `GET /api/accounts` | GET | Tất cả accounts (bao gồm status) — SỬA query |
+| `POST /api/accounts` | POST | Tạo account manual — SỬA thêm game_id |
+| `GET /api/pending-accounts` | GET | **MỚI** — Danh sách pending |
+| `POST /api/pending-accounts/{id}/confirm` | POST | **MỚI** — Xác nhận pending → tạo account |
+| `POST /api/pending-accounts/{id}/dismiss` | POST | **MỚI** — Bỏ qua pending |
+
+---
+
+## 7. Files cần thay đổi
+
+| File | Thay đổi | Mức độ |
+|---|---|---|
+| [database.py](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py) | Schema mới (accounts, pending_accounts), migration, CRUD methods | 🔴 Lớn |
+| [screen_capture.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/screen_capture.py) | Thêm phase `game_id` (ADB clipboard) | 🟡 Medium |
+| [full_scan.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/full_scan.py) | Auto-link / pending logic sau save_scan_snapshot | 🟡 Medium |
+| [ocr_client.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ocr_client.py) | Truyền game_id vào parsed_data | 🟢 Nhỏ |
+| [api.py](file:///f:/COD_CHECK/UI_MANAGER/backend/api.py) | Thêm pending endpoints, sửa accounts endpoints | 🟡 Medium |
+| [accounts.js](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/pages/accounts.js) | Pending queue UI, Game ID column, status badges | 🔴 Lớn |
+| [guide_database.md](file:///f:/COD_CHECK/UI_MANAGER/TEST/DATABASE/guide_database.md) | Cập nhật schema docs | 🟢 Nhỏ |
+
+---
+
+## 8. Câu hỏi cần User trả lời trước khi code
+
+> [!IMPORTANT]
+> **Q1:** Cách copy Game ID trong game — bạn có thể mô tả chính xác nút Copy nằm ở đâu trong game không? (Screenshot hoặc mô tả vị trí tọa độ). Đây là bước ADB tap → game copy → đọc clipboard.
+
+> [!IMPORTANT]
+> **Q2:** Trên LDPlayer, bạn đã thử đọc clipboard qua ADB chưa? Cần test xem command nào hoạt động:
+> ```
+> adb shell "am broadcast -a clipper.get"
+> adb shell settings get secure clipboard_text  
+> adb shell service call clipboard 2
+> ```
+
+> [!NOTE]
+> **Q3:** Khi user "Dismiss" một pending account, nó có nên bị dismiss vĩnh viễn (scan lại vẫn không hiện) hay chỉ ẩn tạm (scan lại sẽ hiện lại)?
+
+> [!NOTE]
+> **Q4:** Mức ưu tiên — bạn muốn implement tất cả cùng lúc hay chia phase? Ví dụ:
+> - **Phase 1:** Schema mới + migration + basic CRUD (không có game_id capture)
+> - **Phase 2:** ADB clipboard capture + auto-link logic
+> - **Phase 3:** Pending queue UI

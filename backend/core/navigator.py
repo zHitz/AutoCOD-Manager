@@ -2,6 +2,7 @@
 Game Navigator — Screen navigation sequences.
 Extracted from cod_app_sync.py, driven by coordinate map data.
 """
+
 import json
 import os
 import time
@@ -37,8 +38,10 @@ class GameNavigator:
                 for _ in range(repeat):
                     adb_helper.swipe(
                         serial,
-                        step["x1"], step["y1"],
-                        step["x2"], step["y2"],
+                        step["x1"],
+                        step["y1"],
+                        step["x2"],
+                        step["y2"],
                         step.get("duration", 300),
                     )
                     time.sleep(wait)

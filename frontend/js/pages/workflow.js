@@ -138,6 +138,36 @@ const WorkflowPage = {
            SECTION B: ACTIVITY (Bot) — PREMIUM REDESIGN
            ============================================== -->
       <div id="wf-section-activity" class="wf-section-container active" style="display:flex;flex-direction:column">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(180deg, var(--surface), var(--card));">
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <div style="font-size:12px; color:var(--muted-foreground); font-weight:600; letter-spacing:.03em; text-transform:uppercase;">Bot Controls</div>
+            <div style="font-size:13px; color:var(--foreground);">Run or stop sequential workflow for selected group</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button onclick="WF3.stopBotActivities()" style="
+                display:inline-flex; align-items:center; gap:5px;
+                padding:7px 14px; font-size:12px; font-weight:700;
+                background:#ef4444; color:white; border:none;
+                border-radius:var(--radius-md); cursor:pointer;
+                transition: all var(--duration-fast);
+                box-shadow:0 1px 4px rgba(239, 68, 68, 0.3);
+            " onmouseover="this.style.background='#dc2626'" onmouseout="this.style.background='#ef4444'">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+              Stop Bot
+            </button>
+            <button onclick="WF3.runBotActivities()" style="
+                display:inline-flex; align-items:center; gap:5px;
+                padding:7px 14px; font-size:12px; font-weight:700;
+                background:#22c55e; color:white; border:none;
+                border-radius:var(--radius-md); cursor:pointer;
+                transition: all var(--duration-fast);
+                box-shadow:0 1px 4px rgba(34,197,94,.3);
+            " onmouseover="this.style.background='#16a34a'" onmouseout="this.style.background='#22c55e'">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Start Bot
+            </button>
+          </div>
+        </div>
 
         <!-- 3-COLUMN LAYOUT: Groups Sidebar | Activities | Log/Config -->
         <div class="acv-layout">
@@ -203,34 +233,13 @@ const WorkflowPage = {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M3.51 9a10 10 0 0 0 0 6M20.49 9a10 10 0 0 0 0 6M4.93 19.07a10 10 0 0 0 14.14 0"/></svg>
                     Config
                   </button>
+                  <button class="acv-tab" id="acv-rtab-btn-queue" onclick="WF3.switchRightTab('queue')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+                    Queue
+                  </button>
                   <button class="acv-tab" id="acv-rtab-btn-status" onclick="WF3.switchRightTab('status')">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                     Live Status
-                  </button>
-                </div>
-                <!-- Action buttons -->
-                <div style="display:flex; gap:8px;">
-                  <button onclick="WF3.stopBotActivities()" style="
-                      display:inline-flex; align-items:center; gap:5px;
-                      padding:5px 12px; font-size:12px; font-weight:700;
-                      background: #ef4444; color:white; border:none;
-                      border-radius:var(--radius-md); cursor:pointer;
-                      transition: all var(--duration-fast);
-                      box-shadow:0 1px 4px rgba(239, 68, 68, 0.3);
-                  " onmouseover="this.style.background='#dc2626'" onmouseout="this.style.background='#ef4444'">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
-                    Stop Bot
-                  </button>
-                  <button onclick="WF3.runBotActivities()" style="
-                      display:inline-flex; align-items:center; gap:5px;
-                      padding:5px 12px; font-size:12px; font-weight:700;
-                      background: #22c55e; color:white; border:none;
-                      border-radius:var(--radius-md); cursor:pointer;
-                      transition: all var(--duration-fast);
-                      box-shadow:0 1px 4px rgba(34,197,94,.3);
-                  " onmouseover="this.style.background='#16a34a'" onmouseout="this.style.background='#22c55e'">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    Start Bot
                   </button>
                 </div>
               </div>
@@ -247,6 +256,14 @@ const WorkflowPage = {
               <div id="acv-rtab-config" class="acv-panel-body" style="display:none">
                 <div id="acv-config-panel" class="acv-config-panel">
                   <div class="acv-empty-hint">Select an activity from the left to view its config.</div>
+                </div>
+              </div>
+
+              <!-- Queue pane -->
+              <div id="acv-rtab-queue" class="acv-panel-body" style="display:none; padding:12px; overflow-y:auto;">
+                <div id="wf-account-queue-container" class="acv-queue-container" style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:10px;">
+                  <div class="acv-queue-header" style="font-weight:700; color:var(--foreground); margin-bottom:8px;">Sequential Execution Queue</div>
+                  <div style="font-size:12px; color:var(--muted-foreground); line-height:1.5;">Queue will appear when bot starts.</div>
                 </div>
               </div>
 
@@ -444,6 +461,8 @@ const WF3 = {
     // ── NEW: Dynamic Registry & Config Cache ──
     _systemActivities: [],   // Loaded from /api/workflow/activity-registry
     _groupConfigs: {},       // Cache for loaded group configs (v2 schema)
+    _statusPollInterval: null,
+    _isStatusPollInFlight: false,
 
     /**
      * Dynamically loads ES Module architecture (Strangler pattern)
@@ -527,6 +546,7 @@ const WF3 = {
         this.renderListView();
         // Activity is the default tab, load groups data immediately
         await this.loadGroupsData();
+        this._startLiveStatusPolling();
 
         // Restore logs to DOM
         this._replayLogs();
@@ -554,6 +574,15 @@ const WF3 = {
     cleanup() {
         this.steps = [];
         this.functions = [];
+        if (this._statusPollInterval) {
+            clearInterval(this._statusPollInterval);
+            this._statusPollInterval = null;
+        }
+        this._isStatusPollInFlight = false;
+        if (this._sessionTimerInterval) {
+            clearInterval(this._sessionTimerInterval);
+            this._sessionTimerInterval = null;
+        }
         // Optional: remove ws client listeners if navigation handles it strictly
         // wsClient.off('workflow_log');
         // wsClient.off('workflow_progress');
@@ -586,6 +615,7 @@ const WF3 = {
         } else if (tab === 'activity') {
             if (activitySec) { activitySec.style.display = 'flex'; activitySec.style.flexDirection = 'column'; }
             this.loadGroupsData();
+            this._startLiveStatusPolling();
         } else if (tab === 'group') {
             if (groupSec) groupSec.style.display = 'block';
             this.loadGroupsData();
@@ -608,18 +638,22 @@ const WF3 = {
     switchRightTab(tab) {
         const logPane = document.getElementById('acv-rtab-log');
         const cfgPane = document.getElementById('acv-rtab-config');
+        const quePane = document.getElementById('acv-rtab-queue');
         const stsPane = document.getElementById('acv-rtab-status');
 
         const btnLog = document.getElementById('acv-rtab-btn-log');
         const btnCfg = document.getElementById('acv-rtab-btn-config');
+        const btnQue = document.getElementById('acv-rtab-btn-queue');
         const btnSts = document.getElementById('acv-rtab-btn-status');
 
         if (logPane) logPane.style.display = (tab === 'log') ? '' : 'none';
         if (cfgPane) cfgPane.style.display = (tab === 'config') ? '' : 'none';
+        if (quePane) quePane.style.display = (tab === 'queue') ? '' : 'none';
         if (stsPane) stsPane.style.display = (tab === 'status') ? '' : 'none';
 
         if (btnLog) btnLog.classList.toggle('active', tab === 'log');
         if (btnCfg) btnCfg.classList.toggle('active', tab === 'config');
+        if (btnQue) btnQue.classList.toggle('active', tab === 'queue');
         if (btnSts) btnSts.classList.toggle('active', tab === 'status');
     },
 
@@ -831,7 +865,8 @@ const WF3 = {
         // Extract basic enabled flag state for dynamic list render from v2 schema
         const conf = this._groupConfigs[groupId] || { activities: {} };
 
-        return this._systemActivities.map(sys => {
+        // 1. Map all system activities based on config
+        const mapped = this._systemActivities.map(sys => {
             const actConf = conf.activities[sys.id] || {};
             return {
                 id: sys.id,
@@ -840,6 +875,25 @@ const WF3 = {
                 enabled: !!actConf.enabled
             };
         });
+
+        // 2. Sort explicitly based on stored activity_order array, if present
+        if (conf.activity_order && Array.isArray(conf.activity_order) && conf.activity_order.length > 0) {
+            mapped.sort((a, b) => {
+                const idxA = conf.activity_order.indexOf(a.id);
+                const idxB = conf.activity_order.indexOf(b.id);
+
+                // If both are found in the saved order, sort mathematically
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+
+                // If an item is missing from the saved order, push it to the bottom
+                if (idxA !== -1 && idxB === -1) return -1;
+                if (idxA === -1 && idxB !== -1) return 1;
+
+                return 0; // Both missing, maintain original system order
+            });
+        }
+
+        return mapped;
     },
 
     saveActivityConfig(groupId) {
@@ -847,7 +901,13 @@ const WF3 = {
         const items = document.querySelectorAll('#wf-act-dynamic-list .wf-act-group-cb');
 
         // Update local memory cache first
-        if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: { cooldown_min: 30, limit_min: 45 } };
+        if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: { cooldown_min: 30, limit_min: 45 }, activity_order: [] };
+
+        // Ensure activity_order array exists
+        if (!this._groupConfigs[groupId].activity_order) this._groupConfigs[groupId].activity_order = [];
+
+        // Clear order array to overwrite with fresh DOM order
+        this._groupConfigs[groupId].activity_order = [];
 
         items.forEach(cb => {
             const id = cb.dataset.id;
@@ -855,6 +915,9 @@ const WF3 = {
                 this._groupConfigs[groupId].activities[id] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
             }
             this._groupConfigs[groupId].activities[id].enabled = cb.checked;
+
+            // Push exact DOM order sequence into customized array
+            this._groupConfigs[groupId].activity_order.push(id);
         });
 
         // Save to backend (async, non-blocking)
@@ -862,7 +925,7 @@ const WF3 = {
     },
 
     getMiscConfig(groupId) {
-        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false };
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false, skip_cooldown: false };
         if (!groupId) return defaultMisc;
         const conf = this._groupConfigs[groupId];
         if (conf && conf.misc) {
@@ -876,13 +939,15 @@ const WF3 = {
         const cdEl = document.getElementById('misc-cooldown-min');
         const limitEl = document.getElementById('misc-limit-min');
         const chooseStartEl = document.getElementById('misc-choose-start-account');
+        const skipCdEl = document.getElementById('misc-skip-cooldown');
 
         if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
 
         this._groupConfigs[groupId].misc = {
             cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
             limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
-            choose_start_account: chooseStartEl ? chooseStartEl.checked : false
+            choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
+            skip_cooldown: skipCdEl ? skipCdEl.checked : false
         };
 
         this._saveConfigToBackend(groupId);
@@ -931,8 +996,30 @@ const WF3 = {
         if (!this._groupConfigs[groupId].activities[activityId]) {
             this._groupConfigs[groupId].activities[activityId] = {};
         }
-        this._groupConfigs[groupId].activities[activityId].last_run = new Date().toISOString();
+
+        const actNode = this._groupConfigs[groupId].activities[activityId];
+        actNode.last_run = new Date().toISOString();
+
+        const todayStr = new Date().toLocaleDateString();
+        if (actNode.runs_today_date !== todayStr) {
+            actNode.runs_today_date = todayStr;
+            actNode.runs_today = 1;
+        } else {
+            actNode.runs_today = (actNode.runs_today || 0) + 1;
+        }
+
         this._saveConfigToBackend(groupId); // Save immediately
+    },
+    _getRunsToday(activityId, groupId) {
+        const conf = this._groupConfigs[groupId];
+        if (conf && conf.activities && conf.activities[activityId]) {
+            const actNode = conf.activities[activityId];
+            const todayStr = new Date().toLocaleDateString();
+            if (actNode.runs_today_date === todayStr) {
+                return actNode.runs_today || 0;
+            }
+        }
+        return 0;
     },
     _isOnCooldown(activityId, groupId) {
         const cfg = this.getPerActivityConfig(activityId, groupId);
@@ -1095,8 +1182,8 @@ const WF3 = {
     },
 
     async _executeRunBotActivities(groupId, startAccountId) {
-        // Switch to Log tab to show output
-        this.switchRightTab('log');
+        // Switch to Queue tab to show sequential execution immediately
+        this.switchRightTab('queue');
         this._startSessionTimer();
         this.addBotLog('info', `Starting activities for group '${groupId}'...`);
 
@@ -1129,10 +1216,7 @@ const WF3 = {
         if (response.status === 'started') {
             this.addBotLog('ok', `✓ Sequential Bot started for Group ${groupId} (${response.accounts_queued} accounts)`);
             WfToast.show('s', 'Bot Started', `Queued ${response.accounts_queued} accounts`);
-            // Record last_run for all activities that were sent
-            for (const act of readyActivities) {
-                this._setLastRun(act.id, groupId);
-            }
+            // Backend now tracks last_run per account, so we don't set it globally here
         }
     },
 
@@ -1147,6 +1231,8 @@ const WF3 = {
         if (result.ok) {
             this.addBotLog('warn', `🛑 Stop requested. Bot will halt after current account finishes.`);
             WfToast.show('i', 'Stopping', 'Bot will stop soon.');
+            // Sync immediately after stop request so UI doesn't require page/tab switching.
+            await this._refreshSelectedGroupStatus();
         } else {
             console.error("Failed to stop bot", result.error);
         }
@@ -1154,54 +1240,111 @@ const WF3 = {
 
     // Render the account queue sent by WS `bot_queue_update`
     renderAccountQueue(queueData) {
-        // Find or create queue container in the right panel
         let container = document.getElementById('wf-account-queue-container');
-        if (!container) {
-            const logPane = document.getElementById('acv-rtab-log');
-            if (!logPane) return;
-
-            container = document.createElement('div');
-            container.id = 'wf-account-queue-container';
-            container.className = 'acv-queue-container';
-            logPane.insertBefore(container, logPane.firstChild);
-        }
+        if (!container) return;
 
         if (!queueData.is_running && !queueData.stop_requested) {
-            container.innerHTML = `<div class="acv-queue-header">Bot Stopped</div>`;
+            container.innerHTML = `
+                <div class="acv-queue-header" style="font-weight:700; color:var(--foreground); margin-bottom:8px;">Sequential Execution Queue</div>
+                <div style="font-size:12px; color:var(--muted-foreground);">Bot Stopped</div>
+            `;
             return;
         }
 
-        let html = `<div class="acv-queue-header">
-            Sequential Execution Queue (Cycle ${queueData.cycle})
-            ${queueData.stop_requested ? '<span style="color:red; font-size:12px;">(Stopping...)</span>' : ''}
-        </div>
-        <div class="acv-queue-list">`;
+        const accounts = Array.isArray(queueData.accounts) ? queueData.accounts : [];
+        const total = accounts.length;
+        const runningCount = accounts.filter(a => a.status === 'running').length;
+        const doneCount = accounts.filter(a => a.status === 'done').length;
+        const errorCount = accounts.filter(a => a.status === 'error').length;
+        const pendingCount = accounts.filter(a => !a.status || a.status === 'pending').length;
+        const currentIdx = Number.parseInt(queueData.current_idx, 10);
+        const currentAcc = Number.isInteger(currentIdx) && currentIdx >= 0 ? accounts[currentIdx] : null;
+        const progressPct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+        const stateLabel = queueData.stop_requested ? 'Stopping' : 'Running';
+        const stateColor = queueData.stop_requested ? '#ef4444' : '#16a34a';
 
-        queueData.accounts.forEach((acc, i) => {
-            const isCurrent = parseInt(queueData.current_idx) === i;
-            // status can be pending, running, done, error
-            let statusIcon = '⏳';
+        let html = `
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <div class="acv-queue-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0;">
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <div style="font-weight:700; color:var(--foreground);">Sequential Execution Queue</div>
+                    <div style="font-size:12px; color:var(--muted-foreground);">Cycle ${queueData.cycle || 1} - ${total} account(s)</div>
+                </div>
+                <div style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:rgba(0,0,0,.04); border:1px solid var(--border); font-size:12px; font-weight:700; color:${stateColor};">
+                    <span style="width:8px; height:8px; border-radius:999px; background:${stateColor}; display:inline-block;"></span>
+                    ${stateLabel}
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:8px;">
+                <div style="border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--card);">
+                    <div style="font-size:11px; color:var(--muted-foreground);">Pending</div>
+                    <div style="font-size:16px; font-weight:700; color:var(--foreground);">${pendingCount}</div>
+                </div>
+                <div style="border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--card);">
+                    <div style="font-size:11px; color:var(--muted-foreground);">Running</div>
+                    <div style="font-size:16px; font-weight:700; color:#2563eb;">${runningCount}</div>
+                </div>
+                <div style="border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--card);">
+                    <div style="font-size:11px; color:var(--muted-foreground);">Done</div>
+                    <div style="font-size:16px; font-weight:700; color:#16a34a;">${doneCount}</div>
+                </div>
+                <div style="border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--card);">
+                    <div style="font-size:11px; color:var(--muted-foreground);">Error</div>
+                    <div style="font-size:16px; font-weight:700; color:#dc2626;">${errorCount}</div>
+                </div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--card);">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                    <span style="font-size:12px; color:var(--muted-foreground);">Queue Progress</span>
+                    <span style="font-size:12px; font-weight:700; color:var(--foreground);">${progressPct}%</span>
+                </div>
+                <div style="height:8px; border-radius:999px; background:var(--muted); overflow:hidden;">
+                    <div style="height:100%; width:${progressPct}%; background:linear-gradient(90deg,#16a34a,#22c55e);"></div>
+                </div>
+            </div>
+
+            <div style="border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--card);">
+                <div style="font-size:11px; color:var(--muted-foreground); margin-bottom:4px;">Current Account</div>
+                <div style="font-size:13px; font-weight:700; color:var(--foreground);">
+                    ${currentAcc ? `${currentAcc.lord_name || 'Unknown'} (Emu ${currentAcc.emu_index ?? '--'})` : 'Waiting for next account...'}
+                </div>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:11px; color:var(--muted-foreground);">
+                <span><b style="color:var(--foreground);">Legend:</b></span>
+                <span>Pending = waiting in queue</span>
+                <span>Running = processing now</span>
+                <span>Done = finished successfully</span>
+                <span>Error = failed this cycle</span>
+            </div>
+
+            <div class="acv-queue-list">`;
+
+        accounts.forEach((acc, i) => {
+            const isCurrent = currentIdx === i;
+            let statusIcon = '...';
             let statusClass = 'pending';
-            if (acc.status === 'running') { statusIcon = '🔄'; statusClass = 'running'; }
-            if (acc.status === 'done') { statusIcon = '✅'; statusClass = 'done'; }
-            if (acc.status === 'error') { statusIcon = '❌'; statusClass = 'error'; }
+            if (acc.status === 'running') { statusIcon = 'RUN'; statusClass = 'running'; }
+            if (acc.status === 'done') { statusIcon = 'OK'; statusClass = 'done'; }
+            if (acc.status === 'error') { statusIcon = 'ERR'; statusClass = 'error'; }
 
             html += `
                 <div class="acv-queue-item ${isCurrent ? 'active' : ''} status-${statusClass}">
-                    <span class="acv-q-icon">${statusIcon}</span>
+                    <span class="acv-q-icon" style="font-size:10px; font-weight:700; min-width:36px; text-align:center; border-radius:6px; padding:2px 6px; background:var(--muted);">${statusIcon}</span>
                     <span class="acv-q-name">${acc.lord_name} (Emu ${acc.emu_index})</span>
                 </div>
             `;
         });
 
-        html += `</div>`;
+        html += `</div></div>`;
         container.innerHTML = html;
 
         // BUG 2 FIX: Update individual activity statuses
         this._updateActivityStatuses(queueData);
     },
 
-    // ── Per-Activity Status Updates ──
     _latestActivityStatuses: null,
 
     _updateActivityStatuses(queueData) {
@@ -1280,6 +1423,61 @@ const WF3 = {
                 }
             }
         } catch (e) { console.warn('Failed to poll group statuses:', e); }
+    },
+
+    async _refreshSelectedGroupStatus() {
+        if (!this.activitySelectedGroupId) return;
+
+        try {
+            if (!this.di) await this._initDI();
+            const res = await this.di.botRepo.getStatus(this.activitySelectedGroupId);
+            if (!res.ok || !res.data) {
+                this.isRunning = false;
+                this._updateGroupStatusBadge(this.activitySelectedGroupId, {
+                    is_running: false,
+                    all_on_cooldown: false,
+                });
+                this._updateActivityStatuses({
+                    is_running: false,
+                    stop_requested: false,
+                    activity_statuses: {},
+                    current_activity: null,
+                });
+                this.renderAccountQueue({
+                    is_running: false,
+                    stop_requested: false,
+                });
+                return;
+            }
+
+            this.isRunning = !!res.data.is_running;
+            this._updateGroupStatusBadge(this.activitySelectedGroupId, {
+                is_running: !!res.data.is_running,
+                all_on_cooldown: !!(res.data.is_running && res.data.accounts && res.data.accounts.every(a => a.status === 'pending')),
+            });
+            this._updateActivityStatuses(res.data);
+            this.renderAccountQueue(res.data);
+        } catch (e) {
+            console.warn('Failed to poll selected group status:', e);
+        }
+    },
+
+    _startLiveStatusPolling() {
+        if (this._statusPollInterval) return;
+
+        const tick = async () => {
+            if (this._isStatusPollInFlight) return;
+            this._isStatusPollInFlight = true;
+            try {
+                await this._pollGroupStatuses();
+                await this._refreshSelectedGroupStatus();
+            } finally {
+                this._isStatusPollInFlight = false;
+            }
+        };
+
+        tick();
+        this._statusPollInterval = setInterval(tick, 3000);
     },
 
     // Updates a single group's status dot in the Target Group list
@@ -1376,7 +1574,24 @@ const WF3 = {
             }
 
             return `
-            <div class="acv-activity-row ${item.enabled ? 'enabled' : ''}" id="acv-row-${idx}">
+            <div class="acv-activity-row ${item.enabled ? 'enabled' : ''}" id="acv-row-${item.id}" data-id="${item.id}"
+                draggable="true" 
+                ondragstart="WF3.onDragStart(event)" 
+                ondragover="WF3.onDragOver(event)" 
+                ondrop="WF3.onDrop(event)" 
+                ondragend="WF3.onDragEnd(event)">
+                
+                <div class="acv-drag-handle" title="Drag to reorder">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="8" y1="6" x2="21" y2="6"></line>
+                        <line x1="8" y1="12" x2="21" y2="12"></line>
+                        <line x1="8" y1="18" x2="21" y2="18"></line>
+                        <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                        <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                        <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                    </svg>
+                </div>
+
                 <label class="acv-check-label" style="cursor:pointer;" onclick="event.stopPropagation()">
                     <input type="checkbox" class="wf-act-group-cb" data-name="${item.name.replace(/'/g, "\\'")}" data-id="${item.id}" data-idx="${idx}" ${item.enabled ? 'checked' : ''}
                         onchange="WF3.saveActivityConfig(${groupId}); this.closest('.acv-activity-row').classList.toggle('enabled', this.checked)">
@@ -1395,6 +1610,112 @@ const WF3 = {
         }).join('');
     },
 
+    // ── Drag & Drop Handlers ──
+    onDragStart(e) {
+        // e.target is the .acv-activity-row
+        if (!e.target.classList.contains('acv-activity-row')) return;
+
+        e.dataTransfer.effectAllowed = 'move';
+        // Store the ID of the activity being dragged
+        const activityId = e.target.getAttribute('data-id');
+        e.dataTransfer.setData('text/plain', activityId);
+
+        // Add a class for visual styling
+        setTimeout(() => e.target.classList.add('dragging'), 0);
+    },
+
+    onDragOver(e) {
+        e.preventDefault(); // Necessary to allow dropping
+        e.dataTransfer.dropEffect = 'move';
+
+        const container = document.getElementById('wf-act-dynamic-list');
+        const draggingRow = container.querySelector('.dragging');
+        if (!draggingRow) return;
+
+        // Find the row we are currently hovering over
+        const targetRow = e.target.closest('.acv-activity-row');
+        if (!targetRow || targetRow === draggingRow) {
+            // Remove drop indicators if not hovering over a valid row
+            container.querySelectorAll('.acv-activity-row').forEach(r => r.style.borderTop = '');
+            container.querySelectorAll('.acv-activity-row').forEach(r => r.style.borderBottom = '');
+            return;
+        }
+
+        // Determine if we should drop above or below the target row
+        const box = targetRow.getBoundingClientRect();
+        const offset = e.clientY - box.top;
+        const insertAfter = offset > box.height / 2;
+
+        // Clear previous indicators
+        container.querySelectorAll('.acv-activity-row').forEach(r => {
+            r.style.borderTop = '';
+            r.style.borderBottom = '';
+        });
+
+        // Add visual drop indicator
+        if (insertAfter) {
+            targetRow.style.borderBottom = '2px solid var(--primary)';
+        } else {
+            targetRow.style.borderTop = '2px solid var(--primary)';
+        }
+    },
+
+    onDragLeave(e) {
+        const targetRow = e.target.closest('.acv-activity-row');
+        if (targetRow) {
+            targetRow.style.borderTop = '';
+            targetRow.style.borderBottom = '';
+        }
+    },
+
+    onDrop(e) {
+        e.preventDefault();
+        const draggedActivityId = e.dataTransfer.getData('text/plain');
+        if (!draggedActivityId) return;
+
+        const container = document.getElementById('wf-act-dynamic-list');
+        const draggedRow = document.getElementById(`acv-row-${draggedActivityId}`);
+        const targetRow = e.target.closest('.acv-activity-row');
+
+        if (!draggedRow || !targetRow || draggedRow === targetRow) return;
+
+        // Clear visual drop indicators
+        container.querySelectorAll('.acv-activity-row').forEach(r => {
+            r.style.borderTop = '';
+            r.style.borderBottom = '';
+        });
+
+        // Determine if we should drop above or below
+        const box = targetRow.getBoundingClientRect();
+        const offset = e.clientY - box.top;
+        if (offset > box.height / 2) {
+            // Insert after target row
+            targetRow.after(draggedRow);
+        } else {
+            // Insert before target row
+            targetRow.before(draggedRow);
+        }
+    },
+
+    onDragEnd(e) {
+        const container = document.getElementById('wf-act-dynamic-list');
+
+        // Clean up classes and styles
+        container.querySelectorAll('.acv-activity-row').forEach(r => {
+            r.classList.remove('dragging');
+            r.style.borderTop = '';
+            r.style.borderBottom = '';
+            r.style.opacity = '1';
+        });
+
+        // Save the new order automatically by extracting the active group ID
+        // Because "renderActivitiesForGroup" executes under the context of selectGroup
+        if (this.activitySelectedGroupId) {
+            this.saveActivityConfig(this.activitySelectedGroupId);
+        }
+    },
+    // ───────────────────────────
+
     renderMiscForGroup(groupId) {
         const container = document.getElementById('wf-act-dynamic-misc-list');
         if (!container) return;
@@ -1407,7 +1728,7 @@ const WF3 = {
         const misc = this.getMiscConfig(groupId);
 
         container.innerHTML = `
-            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+                <div class="acv-misc-item" style = "border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;" >
                 <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                     <span>⏳</span> Account Cooldown
                 </div>
@@ -1431,7 +1752,7 @@ const WF3 = {
                 </div>
             </div>
             
-            <div class="acv-misc-item">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
                 <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
                     <input type="checkbox" id="misc-choose-start-account" onchange="WF3.saveMiscConfig(${groupId})" ${misc.choose_start_account ? 'checked' : ''} style="margin-top: 3px;">
                     <div>
@@ -1444,7 +1765,21 @@ const WF3 = {
                     </div>
                 </label>
             </div>
-        `;
+            
+            <div class="acv-misc-item">
+                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                    <input type="checkbox" id="misc-skip-cooldown" onchange="WF3.saveMiscConfig(${groupId})" ${misc.skip_cooldown ? 'checked' : ''} style="margin-top: 3px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; color: #fb923c;">
+                            <span>⚡</span> Skip Cooldown (Force Run)
+                        </div>
+                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
+                            Ignore all account and activity cooldowns. Bot will re-run everything immediately.
+                        </div>
+                    </div>
+                </label>
+            </div>
+`;
     },
 
     // Update status badge for a specific activity
@@ -1540,24 +1875,24 @@ const WF3 = {
             const val = saved[d.key] !== undefined ? saved[d.key] : d.default;
             if (d.type === 'checkbox') {
                 return `
-                <div class="acv-cfg-field">
-                    <label class="acv-check-label" style="gap:10px;">
-                        <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
-                        <span class="acv-check-box"></span>
-                        <span>${d.label}</span>
-                    </label>
-                </div>`;
+    <div class="acv-cfg-field" >
+        <label class="acv-check-label" style="gap:10px;">
+            <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                <span class="acv-check-box"></span>
+                <span>${d.label}</span>
+        </label>
+                </div> `;
             }
             if (d.type === 'select') {
-                const opts = d.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('');
+                const opts = d.options.map(o => `<option value = "${o}" ${val === o ? 'selected' : ''}> ${o}</option> `).join('');
                 return `
-                <div class="acv-cfg-field">
+    <div class="acv-cfg-field" >
                     <label class="acv-cfg-label">${d.label}</label>
                     <select class="acv-cfg-select" data-cfgkey="${d.key}" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">${opts}</select>
-                </div>`;
+                </div> `;
             }
             return `
-            <div class="acv-cfg-field">
+    <div class="acv-cfg-field" >
                 <label class="acv-cfg-label">${d.label}</label>
                 <input type="number" class="acv-cfg-input" data-cfgkey="${d.key}" value="${val}" ${d.min !== undefined ? 'min="' + d.min + '"' : ''} ${d.max !== undefined ? 'max="' + d.max + '"' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
             </div>`;
@@ -1568,12 +1903,13 @@ const WF3 = {
         const cdMinutes = saved.cooldown_minutes !== undefined ? saved.cooldown_minutes : 60;
         const lastRun = this._getLastRun(activityId, groupId);
         const lastRunStr = lastRun ? new Date(lastRun).toLocaleString() : 'Never';
+        const runsToday = this._getRunsToday(activityId, groupId);
         const cooldownStatus = this._isOnCooldown(activityId, groupId)
-            ? `<span style="color:var(--amber-500)">⏳ ${this._formatCooldownRemaining(activityId, groupId)}</span>`
+            ? `<span style = "color:var(--amber-500)" >⏳ ${this._formatCooldownRemaining(activityId, groupId)}</span> `
             : (lastRun ? '<span style="color:var(--emerald-500)">✓ Ready</span>' : '');
 
         const cooldownHtml = `
-            <div class="acv-cfg-divider"></div>
+    <div class="acv-cfg-divider" ></div>
             <div class="acv-cfg-section-title">Cooldown</div>
             <div class="acv-cfg-field">
                 <label class="acv-check-label" style="gap:10px;">
@@ -1589,12 +1925,15 @@ const WF3 = {
             </div>
             <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground);">
                 <span>Last run: ${lastRunStr}</span>
-                ${cooldownStatus}
+                <span id="acv-cooldown-status-badge">${cooldownStatus}</span>
             </div>
-        `;
+            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground); margin-top:-5px;">
+                <span>Runs today: <strong style="color:var(--foreground);">${runsToday}</strong></span>
+            </div>
+`;
 
         panel.innerHTML = `
-            <div class="acv-cfg-header">
+    <div class="acv-cfg-header" >
                 <div class="acv-cfg-back-row">
                     <button class="acv-cfg-back" onclick="document.getElementById('acv-rtab-config').innerHTML='<div class=acv-empty-hint>Select an activity from the left to view its config.</div>'">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
@@ -1604,11 +1943,11 @@ const WF3 = {
                 <div class="acv-cfg-title">${activityName}</div>
                 <div class="acv-cfg-sub">Configuration for this group's activity</div>
             </div>
-            <div class="acv-cfg-fields">
-                ${fieldsHtml}
-                ${cooldownHtml}
-            </div>
-        `;
+    <div class="acv-cfg-fields">
+        ${fieldsHtml}
+        ${cooldownHtml}
+    </div>
+`;
     },
 
     renderGroupList() {
@@ -1624,7 +1963,7 @@ const WF3 = {
             const count = JSON.parse(g.account_ids || '[]').length;
             const isActive = this.currentGroupId === g.id;
             return `
-                <div class="grp-list-item ${isActive ? 'active' : ''}" onclick="WF3.editGroup(${g.id})">
+    <div class="grp-list-item ${isActive ? 'active' : ''}" onclick = "WF3.editGroup(${g.id})" >
                     <div class="grp-list-item-icon">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     </div>
@@ -1636,7 +1975,7 @@ const WF3 = {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
                     </div>
                 </div>
-            `;
+    `;
         }).join('');
     },
 
@@ -1691,17 +2030,17 @@ const WF3 = {
 
         // Resolve account data
         const members = this.accountsData.filter(a => accountIds.includes(a.account_id));
-        if (countEl) countEl.textContent = `${members.length} account${members.length !== 1 ? 's' : ''}`;
+        if (countEl) countEl.textContent = `${members.length} account${members.length !== 1 ? 's' : ''} `;
 
         container.innerHTML = members.map(acc => `
-            <div class="grp-member-item">
+    <div class="grp-member-item" >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                 <div class="grp-member-info">
                     <span class="grp-member-name">${acc.lord_name || 'Unknown'}</span>
                     <span class="grp-member-meta">${acc.emu_name || (acc.emu_index != null ? 'Emu ' + acc.emu_index : '?')} · ${acc.game_id}</span>
                 </div>
             </div>
-        `).join('');
+    `).join('');
     },
 
     enterGroupEditMode() {
@@ -1744,7 +2083,7 @@ const WF3 = {
         tbody.innerHTML = this.accountsData.map(acc => {
             const isSelected = selectedIds.includes(acc.account_id) ? 'checked' : '';
             return `
-                <tr style="border-bottom: 1px solid var(--border);">
+    <tr style = "border-bottom: 1px solid var(--border);" >
                     <td style="padding: 10px 14px; text-align: center;">
                         <input type="checkbox" class="wf-group-account-cb" value="${acc.account_id}" ${isSelected} onchange="WF3.updateGroupCount()">
                     </td>
@@ -1754,7 +2093,7 @@ const WF3 = {
                     <td style="padding: 10px 14px; color: var(--muted-foreground);">${acc.emu_name || (acc.emu_index != null ? `Emulator ${acc.emu_index}` : '?')}</td>
                     <td style="padding: 10px 14px; font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground);">${acc.game_id}</td>
                 </tr>
-            `;
+    `;
         }).join('');
         this.updateGroupCount();
     },
@@ -1855,7 +2194,7 @@ const WF3 = {
 
         if (tplGrid) {
             tplGrid.innerHTML = this.templates.map(t => `
-                <div class="wf-recipe-card wf-tpl-card" onclick="WF3.openTemplateInEditor('${t.id}')">
+    <div class="wf-recipe-card wf-tpl-card" onclick = "WF3.openTemplateInEditor('${t.id}')" >
                     <div class="wf-rc-icon">${t.icon}</div>
                     <div class="wf-rc-info">
                         <div class="wf-rc-name">${t.name}</div>
@@ -1866,7 +2205,7 @@ const WF3 = {
                         <span class="wf-rc-badge tpl">Template</span>
                     </div>
                 </div>
-            `).join('');
+    `).join('');
         }
 
         // Recipes
@@ -1877,15 +2216,15 @@ const WF3 = {
         if (recGrid) {
             if (this.recipes.length === 0) {
                 recGrid.innerHTML = `
-                    <div class="wf-list-empty">
+    <div class="wf-list-empty" >
                         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
                             <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
                         </svg>
                         <p>No saved recipes yet.<br>Click <strong>Create New</strong> or use a template to get started.</p>
-                    </div>`;
+                    </div> `;
             } else {
                 recGrid.innerHTML = this.recipes.map(r => `
-                    <div class="wf-recipe-card" onclick="WF3.openRecipeInEditor('${r.id}')">
+    <div class="wf-recipe-card" onclick = "WF3.openRecipeInEditor('${r.id}')" >
                         <div class="wf-rc-icon">${r.icon || '📝'}</div>
                         <div class="wf-rc-info">
                             <div class="wf-rc-name">${r.name}</div>
@@ -1898,7 +2237,7 @@ const WF3 = {
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         </button>
                     </div>
-                `).join('');
+    `).join('');
             }
         }
     },
@@ -1942,7 +2281,7 @@ const WF3 = {
     async deleteRecipeFromList(id) {
         if (!confirm('Delete this recipe?')) return;
         try {
-            await fetch(`/api/workflow/recipes/${id}`, { method: 'DELETE' });
+            await fetch(`/ api / workflow / recipes / ${id} `, { method: 'DELETE' });
             await this.fetchRecipes();
             this.renderListView();
             WfToast.show('s', 'Deleted', 'Recipe removed');
@@ -1974,8 +2313,8 @@ const WF3 = {
         }
 
         list.innerHTML = Object.entries(categories).map(([cat, fns]) => `
-            <div class="wf-sidebar-cat">${cat}</div>
-            ${fns.map(fn => `
+    <div class="wf-sidebar-cat" > ${cat}</div>
+        ${fns.map(fn => `
                 <div class="wf-sidebar-fn" onclick="WF3.addStepFromSidebar('${fn.id}')">
                     <span class="wf-sidebar-fn-icon" style="color:${fn.color}">${fn.icon}</span>
                     <div>
@@ -1983,8 +2322,9 @@ const WF3 = {
                         <div class="wf-sidebar-fn-desc">${fn.description}</div>
                     </div>
                 </div>
-            `).join('')}
-        `).join('');
+            `).join('')
+            }
+`).join('');
     },
 
     addStepFromSidebar(functionId) {
@@ -2023,7 +2363,7 @@ const WF3 = {
             if (data.status === 'ok') {
                 this.currentRecipeId = data.id;
                 await this.fetchRecipes();
-                WfToast.show('s', 'Saved', `"${name}" ${data.action}`);
+                WfToast.show('s', 'Saved', `"${name}" ${data.action} `);
             }
         } catch (e) {
             WfToast.show('e', 'Error', 'Failed to save recipe');
@@ -2066,8 +2406,8 @@ const WF3 = {
         }
 
         list.innerHTML = Object.entries(categories).map(([cat, fns]) => `
-            <div class="wf-fn-category">${cat}</div>
-            ${fns.map(fn => `
+    <div class="wf-fn-category" > ${cat}</div>
+        ${fns.map(fn => `
                 <div class="wf-fn-item" onclick="WF3.addStepFromPicker('${fn.id}')">
                     <div class="wf-fn-icon" style="color:${fn.color}">${fn.icon}</div>
                     <div>
@@ -2075,8 +2415,9 @@ const WF3 = {
                         <div class="wf-fn-desc">${fn.description}</div>
                     </div>
                 </div>
-            `).join('')}
-        `).join('');
+            `).join('')
+            }
+`).join('');
     },
 
     addStepFromPicker(functionId) {
@@ -2137,13 +2478,13 @@ const WF3 = {
 
         if (this.steps.length === 0) {
             container.innerHTML = `
-                <div class="wf-empty-hint">
+    <div class="wf-empty-hint" >
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
                         <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
                     </svg>
                     <h3>No steps yet</h3>
                     <p>Pick a function from the left panel,<br>or click <strong>Add Step</strong> below.</p>
-                </div>`;
+                </div> `;
             return;
         }
 
@@ -2153,7 +2494,7 @@ const WF3 = {
             const configHtml = this.renderConfigFields(step, fn, index);
 
             html += `
-                <div class="wf-step-card" id="wf-step-${index}">
+    <div class="wf-step-card" id = "wf-step-${index}" >
                     <div class="wf-step-number">${index + 1}</div>
                     <div class="wf-step-body">
                         <div class="wf-step-header">
@@ -2174,10 +2515,10 @@ const WF3 = {
                     </div>
                 </div>
 
-                <button class="wf-insert-btn" onclick="WF3.openFunctionPicker(${index + 1})" title="Insert step here">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-            `;
+    <button class="wf-insert-btn" onclick="WF3.openFunctionPicker(${index + 1})" title="Insert step here">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+    </button>
+`;
         });
 
         container.innerHTML = html;
@@ -2191,28 +2532,28 @@ const WF3 = {
 
             if (p.type === 'select') {
                 const opts = (p.options || []).map(o =>
-                    `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`
+                    `<option value = "${o}" ${val === o ? 'selected' : ''}> ${o}</option> `
                 ).join('');
-                return `<div class="wf-cf-field">
+                return `<div class="wf-cf-field" >
                     <span class="wf-cf-label">${p.label}</span>
                     <select class="wf-cf-select" onchange="WF3.updateStepConfig(${index},'${p.key}',this.value)">${opts}</select>
-                </div>`;
+                </div> `;
             }
 
             if (p.type === 'number') {
-                return `<div class="wf-cf-field">
+                return `<div class="wf-cf-field" >
                     <span class="wf-cf-label">${p.label}</span>
                     <input class="wf-cf-input" type="number" value="${val}" ${p.min !== undefined ? `min="${p.min}"` : ''} ${p.max !== undefined ? `max="${p.max}"` : ''} onchange="WF3.updateStepConfig(${index},'${p.key}',+this.value)" style="width:80px;" />
-                </div>`;
+                </div> `;
             }
 
-            return `<div class="wf-cf-field">
+            return `<div class="wf-cf-field" >
                 <span class="wf-cf-label">${p.label}</span>
                 <input class="wf-cf-input" type="text" value="${val}" onchange="WF3.updateStepConfig(${index},'${p.key}',this.value)" />
-            </div>`;
+            </div> `;
         }).join('');
 
-        return `<div class="wf-step-configs">${fields}</div>`;
+        return `<div class="wf-step-configs" > ${fields}</div> `;
     },
 
     // ── WebSocket Log & Progress Receivers ──
@@ -2224,8 +2565,8 @@ const WF3 = {
             if (!logEl) return;
             const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
             const line = document.createElement('div');
-            line.className = `wf-log-line log-${data.log_type}`;
-            line.innerHTML = `<span class="log-time">${ts}</span><span>${data.message}</span>`;
+            line.className = `wf - log - line log - ${data.log_type} `;
+            line.innerHTML = `<span class="log-time" > ${ts}</span> <span>${data.message}</span>`;
             logEl.appendChild(line);
             logEl.scrollTop = logEl.scrollHeight;
 
@@ -2235,7 +2576,7 @@ const WF3 = {
                 const match = data.message.match(/\[(\d+)\//);
                 if (match) {
                     const idx = parseInt(match[1]) - 1;
-                    const card = document.getElementById(`wf-step-${idx}`);
+                    const card = document.getElementById(`wf - step - ${idx} `);
                     if (card) {
                         card.classList.add('running');
                         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2286,6 +2627,7 @@ const WF3 = {
                 is_running: data.is_running,
                 all_on_cooldown: data.is_running && allPending,
             });
+            WF3.isRunning = !!data.is_running;
 
             // Use loose equality to handle int/string mismatch
             // eslint-disable-next-line eqeqeq
@@ -2324,11 +2666,11 @@ const WF3 = {
         if (execPanel) execPanel.classList.add('visible');
         if (logEl) {
             logEl.innerHTML = `
-                <div class="wf-log-line log-info">
+    <div class="wf-log-line log-info" >
                     <span class="log-time">${new Date().toLocaleTimeString('en-GB', { hour12: false })}</span>
                     <span>▶ Sending execution request to backend...</span>
                 </div>
-            `;
+    `;
         }
 
         try {
@@ -2354,3 +2696,5 @@ const WF3 = {
 
     delay(ms) { return new Promise(r => setTimeout(r, ms)); },
 };
+
+

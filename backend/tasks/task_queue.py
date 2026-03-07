@@ -2,19 +2,22 @@
 Task Queue — Async task execution with emulator locking.
 Core requirement from LOGIC_BUSSINESS.txt Section 8.
 """
+
 import asyncio
 import uuid
-import time
 import threading
 from datetime import datetime
 from typing import Callable
 
-from backend.core.emulator import emulator_manager, EmulatorStatus
+from backend.core.emulator import emulator_manager
 from backend.core.ocr_engine import ocr_engine
 from backend.core.navigator import navigator
 from backend.core import validator
 from backend.models.scan_result import (
-    TaskStatus, TaskType, TaskResult, TaskQueueItem,
+    TaskStatus,
+    TaskType,
+    TaskResult,
+    TaskQueueItem,
 )
 
 
@@ -71,12 +74,13 @@ class TaskQueue:
         with self._lock:
             self._queue.append(item)
 
-        self._emit("task_queued", {"task_id": task_id, "serial": serial, "type": task_type.value})
+        self._emit(
+            "task_queued",
+            {"task_id": task_id, "serial": serial, "type": task_type.value},
+        )
 
         # Execute in background thread
-        thread = threading.Thread(
-            target=self._execute_task, args=(item,), daemon=True
-        )
+        thread = threading.Thread(target=self._execute_task, args=(item,), daemon=True)
         thread.start()
         return task_id
 
@@ -96,9 +100,8 @@ class TaskQueue:
         # ── Persist task start to DB ──
         try:
             from backend.storage.database import database
-            emu_id = _run_db_async(
-                database.upsert_emulator(-1, item.serial)
-            )
+
+            emu_id = _run_db_async(database.upsert_emulator(-1, item.serial))
             db_run_id = _run_db_async(
                 database.save_task_run(
                     emulator_id=emu_id,
@@ -114,10 +117,14 @@ class TaskQueue:
         try:
             # Step 1: Acquire emulator lock
             item.status = TaskStatus.NAVIGATING
-            self._emit("task_started", {
-                "task_id": item.task_id, "serial": item.serial,
-                "step": "Acquiring lock..."
-            })
+            self._emit(
+                "task_started",
+                {
+                    "task_id": item.task_id,
+                    "serial": item.serial,
+                    "step": "Acquiring lock...",
+                },
+            )
 
             if not emu.acquire(task_name=item.task_type.value):
                 result.status = TaskStatus.FAILED
@@ -127,10 +134,14 @@ class TaskQueue:
 
             # Step 2: Navigate to the correct screen
             item.progress_step = "Navigating..."
-            self._emit("task_progress", {
-                "task_id": item.task_id, "serial": item.serial,
-                "step": "Navigating to game screen..."
-            })
+            self._emit(
+                "task_progress",
+                {
+                    "task_id": item.task_id,
+                    "serial": item.serial,
+                    "step": "Navigating to game screen...",
+                },
+            )
 
             screen_map = {
                 TaskType.PROFILE: "profile",
@@ -147,10 +158,14 @@ class TaskQueue:
             # Step 3: Capture screenshot
             item.status = TaskStatus.CAPTURING
             item.progress_step = "Capturing..."
-            self._emit("task_progress", {
-                "task_id": item.task_id, "serial": item.serial,
-                "step": "Capturing screenshot..."
-            })
+            self._emit(
+                "task_progress",
+                {
+                    "task_id": item.task_id,
+                    "serial": item.serial,
+                    "step": "Capturing screenshot...",
+                },
+            )
 
             img_path = emu.capture()
             if not img_path:
@@ -162,10 +177,14 @@ class TaskQueue:
             # Step 4: Load and process image
             item.status = TaskStatus.PROCESSING
             item.progress_step = "OCR Processing..."
-            self._emit("task_progress", {
-                "task_id": item.task_id, "serial": item.serial,
-                "step": "Processing OCR..."
-            })
+            self._emit(
+                "task_progress",
+                {
+                    "task_id": item.task_id,
+                    "serial": item.serial,
+                    "step": "Processing OCR...",
+                },
+            )
 
             img = ocr_engine.load_image(img_path)
             if img is None:
@@ -185,7 +204,9 @@ class TaskQueue:
             if val_result and val_result.is_valid:
                 result.status = TaskStatus.SUCCESS
             else:
-                result.status = TaskStatus.SUCCESS  # Still success, but flagged unreliable
+                result.status = (
+                    TaskStatus.SUCCESS
+                )  # Still success, but flagged unreliable
                 if not val_result or not val_result.is_valid:
                     result.is_reliable = False
 
@@ -254,6 +275,7 @@ class TaskQueue:
         errors.extend(v2.errors)
 
         from backend.core.validator import ValidationResult
+
         combined = ValidationResult(
             is_valid=v1.is_valid and v2.is_valid,
             is_reliable=v1.is_reliable and v2.is_reliable,
@@ -276,22 +298,27 @@ class TaskQueue:
         # Add to history
         self._history.append(result)
         if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
+            self._history = self._history[-self._max_history :]
 
         # ── Persist to DB ──
-        db_run_id = getattr(item, '_db_run_id', None)
+        db_run_id = getattr(item, "_db_run_id", None)
         if db_run_id:
             try:
                 import json
                 from backend.storage.database import database
-                db_status = "success" if result.status == TaskStatus.SUCCESS else "failed"
+
+                db_status = (
+                    "success" if result.status == TaskStatus.SUCCESS else "failed"
+                )
                 _run_db_async(
                     database.update_task_run(
                         run_id=db_run_id,
                         status=db_status,
                         error=result.error or "",
                         duration_ms=result.duration_ms,
-                        result_json=json.dumps(result.data, default=str) if result.data else "",
+                        result_json=json.dumps(result.data, default=str)
+                        if result.data
+                        else "",
                         finished_at=result.finished_at.isoformat(),
                     )
                 )
@@ -299,7 +326,9 @@ class TaskQueue:
                 print(f"[TaskQueue] DB update warning: {db_err}")
 
         # Emit completion event
-        event = "task_completed" if result.status == TaskStatus.SUCCESS else "task_failed"
+        event = (
+            "task_completed" if result.status == TaskStatus.SUCCESS else "task_failed"
+        )
         self._emit(event, result.model_dump(mode="json"))
 
 

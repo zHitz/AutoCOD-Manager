@@ -26,7 +26,9 @@ for ep in endpoints:
             if isinstance(data, list):
                 print(f"[OK] {ep}: List with {len(data)} items")
             elif isinstance(data, dict):
-                print(f"[OK] {ep}: Dict with keys {list(data.keys())} | Status: {data.get('status')}")
+                print(
+                    f"[OK] {ep}: Dict with keys {list(data.keys())} | Status: {data.get('status')}"
+                )
             else:
                 print(f"[OK] {ep}: {type(data)}")
     except urllib.error.HTTPError as e:
@@ -37,4 +39,4 @@ for ep in endpoints:
         else:
             print(f"[ERROR] {ep}: {e.reason}")
     except Exception as e:
-         print(f"[ERROR] {ep}: {str(e)}")
+        print(f"[ERROR] {ep}: {str(e)}")

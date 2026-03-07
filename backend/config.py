@@ -2,6 +2,7 @@
 Configuration Manager
 Loads and validates config from config.yaml, exposes via singleton.
 """
+
 import os
 import yaml
 from pathlib import Path

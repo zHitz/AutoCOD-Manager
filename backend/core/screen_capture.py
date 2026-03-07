@@ -4,12 +4,11 @@ Screen Capture — ADB-based screenshot pipeline for game data extraction.
 Navigates through 5 game phases using robust state-based navigation via core_actions,
 captures screenshots, crops relevant regions, and combines them into a single PDF.
 """
+
 import os
-import time
 import cv2
 from PIL import Image, ImageOps
 
-from backend.config import config
 from backend.core.workflow import adb_helper
 from backend.core.workflow import core_actions
 from backend.core.workflow.state_detector import GameStateDetector
@@ -23,6 +22,7 @@ REGIONS_MAP = {
     "pet_token": {"pet_token_area": (875, 0, 950, 30)},
 }
 
+
 def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
     """Combine multiple images into a single-page PDF with OCR enhancements."""
     try:
@@ -30,10 +30,10 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
         for p in image_paths:
             if not os.path.exists(p):
                 continue
-            img = Image.open(p).convert("L") # grayscale for better OCR
-            img = ImageOps.autocontrast(img) # enhance contrast
+            img = Image.open(p).convert("L")  # grayscale for better OCR
+            img = ImageOps.autocontrast(img)  # enhance contrast
             images.append(img.convert("RGB"))
-            
+
         if not images:
             return False
 
@@ -49,8 +49,7 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
         # Upscale canvas for OCR
         SCALE = 4
         canvas = canvas.resize(
-            (canvas.width * SCALE, canvas.height * SCALE),
-            Image.Resampling.LANCZOS
+            (canvas.width * SCALE, canvas.height * SCALE), Image.Resampling.LANCZOS
         )
 
         canvas.save(output_path, "PDF", resolution=300.0)
@@ -59,6 +58,7 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
     except Exception as e:
         print(f"[Capture] PDF creation failed: {e}")
         return False
+
 
 def crop_regions(screenshot_path: str, phase: str, output_dir: str) -> list[str]:
     """Crop relevant regions from a screenshot."""
@@ -79,7 +79,10 @@ def crop_regions(screenshot_path: str, phase: str, output_dir: str) -> list[str]
             cropped.append(path)
     return cropped
 
-def run_full_capture_modern(serial: str, detector: GameStateDetector, work_dir: str, progress_callback=None) -> str | None:
+
+def run_full_capture_modern(
+    serial: str, detector: GameStateDetector, work_dir: str, progress_callback=None
+) -> str | None:
     """Run all 5 capture phases intelligently and combine into PDF."""
     safe_serial = serial.replace(":", "_").replace(".", "_")
     device_dir = os.path.join(work_dir, safe_serial)
@@ -93,8 +96,10 @@ def run_full_capture_modern(serial: str, detector: GameStateDetector, work_dir: 
         "profile": core_actions.go_to_profile_details,
         "resources": core_actions.go_to_resources,
         "hall": lambda s, d: core_actions.go_to_construction(serial, detector, "HALL"),
-        "market": lambda s, d: core_actions.go_to_construction(serial, detector, "MARKET"),
-        "pet_token": core_actions.go_to_pet_token
+        "market": lambda s, d: core_actions.go_to_construction(
+            serial, detector, "MARKET"
+        ),
+        "pet_token": core_actions.go_to_pet_token,
     }
 
     for idx, phase in enumerate(phases):
@@ -121,7 +126,7 @@ def run_full_capture_modern(serial: str, detector: GameStateDetector, work_dir: 
         # 3. Capture screenshot
         screenshot_path = os.path.join(device_dir, f"{phase}_full.png")
         success = adb_helper.screencap(serial, screenshot_path)
-        
+
         if success:
             # 4. Crop
             crops = crop_regions(screenshot_path, phase, device_dir)

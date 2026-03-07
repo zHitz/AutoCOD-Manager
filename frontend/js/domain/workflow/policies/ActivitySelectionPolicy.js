@@ -8,7 +8,7 @@ export class ActivitySelectionPolicy {
     static pickEnabled(systemActivities, groupConfig) {
         if (!groupConfig || !groupConfig.activities) return [];
 
-        return systemActivities
+        const mapped = systemActivities
             .map(sys => {
                 const actConf = groupConfig.activities[sys.id] || {};
                 return {
@@ -21,6 +21,22 @@ export class ActivitySelectionPolicy {
                 };
             })
             .filter(act => act.enabled);
+
+        // Sort explicitly based on stored activity_order array, if present
+        if (groupConfig.activity_order && Array.isArray(groupConfig.activity_order) && groupConfig.activity_order.length > 0) {
+            mapped.sort((a, b) => {
+                const idxA = groupConfig.activity_order.indexOf(a.id);
+                const idxB = groupConfig.activity_order.indexOf(b.id);
+
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1 && idxB === -1) return -1;
+                if (idxA === -1 && idxB !== -1) return 1;
+
+                return 0;
+            });
+        }
+
+        return mapped;
     }
 
     /**

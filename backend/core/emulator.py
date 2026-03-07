@@ -2,6 +2,7 @@
 Emulator State Machine & Manager
 Enhanced emulator management with status tracking, locking, and health checks.
 """
+
 import os
 import time
 import threading
@@ -113,7 +114,9 @@ class EmulatorManager:
 
     def get_online(self) -> list[Emulator]:
         """Get all ONLINE emulators."""
-        return [e for e in self._instances.values() if e.status == EmulatorStatus.ONLINE]
+        return [
+            e for e in self._instances.values() if e.status == EmulatorStatus.ONLINE
+        ]
 
     def discover(self) -> list[Emulator]:
         """Refresh device list from ADB and update registry."""

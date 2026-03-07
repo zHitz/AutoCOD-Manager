@@ -2,6 +2,7 @@
 ADB Helper — Low-level ADB command wrapper.
 Extracted and enhanced from cod_app_sync.py.
 """
+
 import subprocess
 import time
 from backend.config import config
@@ -87,25 +88,27 @@ def screencap(serial: str, local_path: str) -> bool:
         # Using exec-out to bypass the shell's CRLF line ending conversions
         # and avoid writing an intermediate file to /sdcard/
         cmd = [config.adb_path, "-s", serial, "exec-out", "screencap", "-p"]
-        
+
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             startupinfo=startupinfo,
             timeout=15,
         )
-        
+
         if result.returncode == 0 and len(result.stdout) > 0:
             with open(local_path, "wb") as f:
                 f.write(result.stdout)
             return True
         else:
-            print(f"[ADB] Screencap returned code {result.returncode}, len {len(result.stdout)}")
+            print(
+                f"[ADB] Screencap returned code {result.returncode}, len {len(result.stdout)}"
+            )
             return False
-            
+
     except Exception as e:
         print(f"[ADB] Screencap failed for {serial}: {e}")
         return False

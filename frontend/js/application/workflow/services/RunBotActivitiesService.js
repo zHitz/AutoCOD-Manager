@@ -37,24 +37,9 @@ export class RunBotActivitiesService {
                 return Result.fail(new Error('NO_ACTIVITIES')); // We'll map this error code in UI
             }
 
-            // 4. Domain Logic: Check Cooldowns and Filter
-            const readyActivities = [];
+            // 4. Domain Logic: No frontend cooldown check needed, backend orchestrator handles it per account
+            const readyActivities = enabledActivities;
             const skippedLogs = [];
-
-            for (const act of enabledActivities) {
-                const mergedCfg = ActivitySelectionPolicy.getMergedConfig(act, groupConfig);
-
-                if (CooldownPolicy.isOnCooldown(mergedCfg)) {
-                    const remaining = CooldownPolicy.formatRemaining(mergedCfg);
-                    skippedLogs.push(`⏳ Skipping '${act.name}' — on cooldown (${remaining})`);
-                } else {
-                    readyActivities.push(act);
-                }
-            }
-
-            if (readyActivities.length === 0) {
-                return Result.fail(new Error('ALL_ON_COOLDOWN'));
-            }
 
             // 5. Domain Logic: Build Payload
             const payload = BotPayloadBuilder.build(

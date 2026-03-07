@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!-- SEO Tags -->
+  <meta name="description"
+    content="COD Game Automation Manager - Manage workflows, emulators, and accounts securely." />
+  <meta property="og:title" content="COD Game Automation Manager" />
+  <meta property="og:description" content="Automate and manage multiple game emulators effectively with Antigravity." />
+  <meta property="og:type" content="website" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bot Mission Control</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #090b0f;
+      --s1: #0f1117;
+      --s2: #161a23;
+      --s3: #1c2130;
+      --border: rgba(255, 255, 255, 0.06);
+      --border2: rgba(255, 255, 255, 0.1);
+      --accent: #f97316;
+      --accent-d: #c2580d;
+      --gold: #f59e0b;
+      --green: #22c55e;
+      --green-d: #15803d;
+      --blue: #38bdf8;
+      --emerald: #10b981;
+      --red: #f87171;
+      --yellow: #fbbf24;
+      --text: #f1f5f9;
+      --sub: #94a3b8;
+      --muted: #4b5563;
+    }
+
+    html,
+    body {
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Noise & glow ─── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      z-index: 999;
+      opacity: .5;
+    }
+
+    /* ─── TOP NAV ─── */
+    .topnav {
+      height: 52px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--s1);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: .05em;
+    }
+
+    .brand-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 2px;
+    }
+
+    .ntab {
+      padding: 8px 18px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--sub);
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all .18s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ntab:hover {
+      color: var(--text);
+      background: var(--s2);
+    }
+
+    .ntab.active {
+      color: var(--accent);
+      background: rgba(249, 115, 22, .08);
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .04em;
+    }
+
+    .status-pill.idle {
+      color: var(--sub);
+    }
+
+    .status-pill.run {
+      color: var(--green);
+      border-color: rgba(34, 197, 94, .2);
+      background: rgba(34, 197, 94, .06);
+    }
+
+    .sdot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .sdot.idle {
+      background: var(--muted);
+    }
+
+    .sdot.run {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 1.4s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .3
+      }
+    }
+
+    /* ─── LAYOUT ─── */
+    .workspace {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 230px 1fr 360px;
+      overflow: hidden;
+    }
+
+    /* ─── PANEL shared ─── */
+    .panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .panel-head {
+      flex-shrink: 0;
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .panel-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    .panel-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, .07);
+      border-radius: 4px;
+    }
+
+    /* ─── LEFT: GROUPS ─── */
+    .group-card {
+      border-radius: 11px;
+      padding: 12px 13px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      transition: all .18s;
+      position: relative;
+    }
+
+    .group-card:hover {
+      background: var(--s2);
+      border-color: var(--border);
+    }
+
+    .group-card.active {
+      background: rgba(249, 115, 22, .07);
+      border-color: rgba(249, 115, 22, .22);
+    }
+
+    .group-card.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 60%;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent);
+    }
+
+    .g-avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .g-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .g-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .g-meta {
+      font-size: 10.5px;
+      color: var(--sub);
+      margin-top: 2px;
+    }
+
+    .g-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--s3);
+      color: var(--sub);
+      border: 1px solid var(--border);
+    }
+
+    .group-card.active .g-badge {
+      background: rgba(249, 115, 22, .15);
+      color: var(--accent);
+      border-color: rgba(249, 115, 22, .3);
+    }
+
+    .add-group-btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 10px;
+      margin-top: 8px;
+      border: 1px dashed rgba(255, 255, 255, .1);
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: 'Outfit', sans-serif;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all .18s;
+    }
+
+    .add-group-btn:hover {
+      border-color: rgba(249, 115, 22, .3);
+      color: var(--accent);
+    }
+
+    /* ─── CENTER: MISSION QUEUE ─── */
+    .mission-header {
+      flex-shrink: 0;
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--s1);
+    }
+
+    .mh-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .mh-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mh-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .mh-title {
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+
+    .mh-sub {
+      font-size: 11px;
+      color: var(--sub);
+      margin-top: 1px;
+    }
+
+    .mh-actions {
+      display: flex;
+      gap: 7px;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--s2);
+      border: 1px solid var(--border);
+      color: var(--sub);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all .18s;
+    }
+
+    .icon-btn:hover {
+      color: var(--text);
+      border-color: var(--border2);
+    }
+
+    /* Queue tabs */
+    .queue-tabs {
+      display: flex;
+      gap: 4px;
+    }
+
+    .qtab {
+      padding: 5px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--sub);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .qtab.active {
+      color: var(--accent);
+      background: rgba(249, 115, 22, .08);
+      border-color: rgba(249, 115, 22, .2);
+    }
+
+    .qtab:hover:not(.active) {
+      color: var(--text);
+    }
+
+    .qtab-count {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: rgba(249, 115, 22, .15);
+      color: var(--accent);
+    }
+
+    /* Activity Queue */
+    .queue-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px;
+    }
+
+    .queue-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    .queue-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, .06);
+      border-radius: 4px;
+    }
+
+    .queue-section-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 4px 2px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .queue-section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .act-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 14px;
+      border-radius: 12px;
+      margin-bottom: 7px;
+      border: 1px solid var(--border);
+      background: var(--s1);
+      cursor: pointer;
+      user-select: none;
+      transition: all .18s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .act-card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      border-radius: 3px 0 0 3px;
+      transition: background .2s;
+    }
+
+    .act-card.enabled::before {
+      background: var(--accent);
+    }
+
+    .act-card.disabled::before {
+      background: var(--muted);
+    }
+
+    .act-card.running::before {
+      background: var(--green);
+    }
+
+    .act-card:hover {
+      border-color: rgba(255, 255, 255, .1);
+      background: var(--s2);
+    }
+
+    .act-card.enabled {
+      background: rgba(249, 115, 22, .04);
+      border-color: rgba(249, 115, 22, .14);
+    }
+
+    .act-card.running {
+      background: rgba(34, 197, 94, .04);
+      border-color: rgba(34, 197, 94, .18);
+      animation: runPulse 2s infinite;
+    }
+
+    @keyframes runPulse {
+
+      0%,
+      100% {
+        box-shadow: none
+      }
+
+      50% {
+        box-shadow: 0 0 16px rgba(34, 197, 94, .1)
+      }
+    }
+
+    .act-order {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      min-width: 18px;
+      text-align: center;
+    }
+
+    .act-card.enabled .act-order {
+      color: var(--accent);
+    }
+
+    .act-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      background: var(--s2);
+    }
+
+    .act-card.enabled .act-icon {
+      background: rgba(249, 115, 22, .12);
+    }
+
+    .act-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .act-name {
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .act-card.disabled .act-name {
+      color: var(--sub);
+    }
+
+    .act-desc {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .act-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .status-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+
+    .sb-idle {
+      background: var(--s3);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .sb-queued {
+      background: rgba(249, 115, 22, .1);
+      color: var(--accent);
+      border: 1px solid rgba(249, 115, 22, .2);
+    }
+
+    .sb-running {
+      background: rgba(34, 197, 94, .1);
+      color: var(--green);
+      border: 1px solid rgba(34, 197, 94, .25);
+    }
+
+    .sb-success {
+      background: rgba(34, 197, 94, .08);
+      color: var(--green);
+      border: 1px solid rgba(34, 197, 94, .2);
+    }
+
+    .sb-skip {
+      background: rgba(251, 191, 36, .08);
+      color: var(--yellow);
+      border: 1px solid rgba(251, 191, 36, .2);
+    }
+
+    /* Toggle switch */
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 20px;
+      background: var(--s3);
+      border: 1px solid rgba(255, 255, 255, .1);
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .toggle input:checked+.toggle-track {
+      background: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(249, 115, 22, .3);
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .2s;
+      pointer-events: none;
+    }
+
+    .toggle input:checked~.toggle-thumb {
+      transform: translateX(16px);
+    }
+
+    /* ─── RIGHT: BOT CONSOLE ─── */
+    .console-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Run Control */
+    .run-ctrl {
+      flex-shrink: 0;
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--s1);
+    }
+
+    .run-target {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .run-target-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .run-target-info h4 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .run-target-info p {
+      font-size: 11px;
+      color: var(--sub);
+      margin-top: 2px;
+    }
+
+    /* Mode selector */
+    .mode-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      margin-bottom: 14px;
+    }
+
+    .mode-opt {
+      padding: 9px 10px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: var(--s2);
+      cursor: pointer;
+      text-align: center;
+      transition: all .18s;
+    }
+
+    .mode-opt.active {
+      border-color: rgba(249, 115, 22, .3);
+      background: rgba(249, 115, 22, .08);
+    }
+
+    .mode-opt-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--sub);
+    }
+
+    .mode-opt.active .mode-opt-label {
+      color: var(--accent);
+    }
+
+    .mode-opt-sub {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* Big run button */
+    .run-btn {
+      width: 100%;
+      padding: 13px;
+      border-radius: 11px;
+      border: none;
+      cursor: pointer;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all .2s;
+    }
+
+    .run-btn.start {
+      background: linear-gradient(135deg, var(--green), var(--green-d));
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(34, 197, 94, .3);
+    }
+
+    .run-btn.start:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 28px rgba(34, 197, 94, .4);
+    }
+
+    .run-btn.stop {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(239, 68, 68, .3);
+    }
+
+    .run-btn.stop:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 28px rgba(239, 68, 68, .4);
+    }
+
+    /* Progress */
+    .progress-section {
+      margin-top: 14px;
+      display: none;
+    }
+
+    .progress-section.show {
+      display: block;
+    }
+
+    .prog-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .prog-label {
+      font-size: 10.5px;
+      color: var(--sub);
+    }
+
+    .prog-pct {
+      font-size: 10.5px;
+      color: var(--green);
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .prog-bar {
+      height: 5px;
+      background: var(--s3);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .prog-fill {
+      height: 100%;
+      border-radius: 5px;
+      background: linear-gradient(90deg, var(--green), #4ade80);
+      transition: width .4s ease;
+      box-shadow: 0 0 8px rgba(34, 197, 94, .4);
+    }
+
+    .prog-steps {
+      display: flex;
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .prog-step {
+      flex: 1;
+      height: 3px;
+      border-radius: 3px;
+      background: var(--s3);
+      transition: background .3s;
+    }
+
+    .prog-step.done {
+      background: var(--green);
+    }
+
+    .prog-step.cur {
+      background: var(--green);
+      opacity: .5;
+      animation: stepBlink .8s infinite;
+    }
+
+    @keyframes stepBlink {
+
+      0%,
+      100% {
+        opacity: .5
+      }
+
+      50% {
+        opacity: 1
+      }
+    }
+
+    /* ─── LOG ─── */
+    .log-head {
+      flex-shrink: 0;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(9, 11, 15, .8);
+    }
+
+    .log-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .log-count {
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 8px;
+      background: rgba(249, 115, 22, .1);
+      color: var(--accent);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .log-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .log-btn {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--s2);
+      color: var(--sub);
+      cursor: pointer;
+      font-family: 'Outfit', sans-serif;
+      transition: all .15s;
+    }
+
+    .log-btn:hover {
+      color: var(--text);
+      border-color: var(--border2);
+    }
+
+    .log-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      line-height: 1.9;
+    }
+
+    .log-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    .log-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, .06);
+      border-radius: 4px;
+    }
+
+    .ll {
+      display: flex;
+      gap: 8px;
+      padding: 1px 3px;
+      border-radius: 4px;
+      animation: fadeInUp .2s ease both;
+    }
+
+    .ll:hover {
+      background: rgba(255, 255, 255, .02);
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(4px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .lt {
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .lm {
+      flex: 1;
+    }
+
+    .lm.c-info {
+      color: #64748b;
+    }
+
+    .lm.c-ok {
+      color: var(--green);
+    }
+
+    .lm.c-run {
+      color: var(--blue);
+    }
+
+    .lm.c-warn {
+      color: var(--yellow);
+    }
+
+    .lm.c-exec {
+      color: var(--emerald);
+    }
+
+    .lm.c-success {
+      color: #4ade80;
+      font-weight: 500;
+    }
+
+    .lm.c-sys {
+      color: var(--accent);
+    }
+
+    .ltag {
+      display: inline-block;
+      padding: 0 5px;
+      border-radius: 3px;
+      font-size: 9.5px;
+      font-weight: 600;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    .t1 {
+      background: rgba(56, 189, 248, .1);
+      color: var(--blue);
+    }
+
+    .t2 {
+      background: rgba(167, 139, 250, .1);
+      color: var(--emerald);
+    }
+
+    .ts {
+      background: rgba(249, 115, 22, .1);
+      color: var(--accent);
+    }
+
+    .cursor-blink {
+      display: inline-block;
+      width: 6px;
+      height: 12px;
+      background: var(--green);
+      margin-left: 3px;
+      vertical-align: middle;
+      animation: cBlink 1s step-end infinite;
+    }
+
+    @keyframes cBlink {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: 0
+      }
+    }
+
+    /* Animations */
+    .panel,
+    .console-panel {
+      animation: colIn .35s ease both;
+    }
+
+    .workspace .panel:nth-child(2) {
+      animation-delay: .05s;
+    }
+
+    .workspace>div:last-child {
+      animation-delay: .1s;
+    }
+
+    @keyframes colIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- TOP NAV -->
+  <div class="topnav">
+    <div class="brand">
+      <div class="brand-dot"></div>BOTCTL
+    </div>
+    <div class="nav-tabs">
+      <div class="ntab active" onclick="setTab(this)">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
+        </svg>Activity Bot
+      </div>
+      <div class="ntab" onclick="setTab(this)">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path
+            d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />
+        </svg>Recipe Builder
+      </div>
+      <div class="ntab" onclick="setTab(this)">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>Account Groups
+      </div>
+    </div>
+    <div class="nav-right">
+      <div class="status-pill idle" id="globalStatus">
+        <div class="sdot idle" id="sdot"></div>
+        <span id="statusText">IDLE</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKSPACE -->
+  <div class="workspace">
+
+    <!-- LEFT: GROUPS -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-label">
+          <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+          </svg>
+          Target Groups
+        </div>
+        <span style="font-size:11px;color:var(--muted)">3 groups</span>
+      </div>
+      <div class="panel-body">
+        <div class="group-card active"
+          onclick="selectGroup(this,'NEW','N','var(--accent)','rgba(249,115,22,.15)','2 accounts')">
+          <div class="g-avatar" style="background:rgba(249,115,22,.15);color:var(--accent)">N</div>
+          <div class="g-info">
+            <div class="g-name">NEW</div>
+            <div class="g-meta">2 accounts · Last run 2m ago</div>
+          </div>
+          <div class="g-badge">2</div>
+        </div>
+        <div class="group-card" onclick="selectGroup(this,'B','B','var(--blue)','rgba(56,189,248,.12)','12 accounts')">
+          <div class="g-avatar" style="background:rgba(56,189,248,.12);color:var(--blue)">B</div>
+          <div class="g-info">
+            <div class="g-name">B</div>
+            <div class="g-meta">12 accounts · Last run 1h ago</div>
+          </div>
+          <div class="g-badge">12</div>
+        </div>
+        <div class="group-card"
+          onclick="selectGroup(this,'Alpha Team','A','var(--emerald)','rgba(167,139,250,.12)','1 account')">
+          <div class="g-avatar" style="background:rgba(167,139,250,.12);color:var(--emerald)">A</div>
+          <div class="g-info">
+            <div class="g-name">Alpha Team</div>
+            <div class="g-meta">1 account · Never run</div>
+          </div>
+          <div class="g-badge">1</div>
+        </div>
+        <button class="add-group-btn" onclick="alert('Add group')">
+          <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          New Group
+        </button>
+      </div>
+    </div>
+
+    <!-- CENTER: MISSION QUEUE -->
+    <div class="panel" style="border-right:1px solid var(--border);">
+
+      <div class="mission-header">
+        <div class="mh-top">
+          <div class="mh-group">
+            <div class="mh-avatar" id="mhAvatar" style="background:rgba(249,115,22,.15);color:var(--accent)">N</div>
+            <div>
+              <div class="mh-title" id="mhTitle">NEW</div>
+              <div class="mh-sub" id="mhSub">2 accounts · 1 activity enabled</div>
+            </div>
+          </div>
+          <div class="mh-actions">
+            <div class="icon-btn" title="Select all" onclick="toggleAll(true)">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <div class="icon-btn" title="Deselect all" onclick="toggleAll(false)">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </div>
+            <div class="icon-btn" title="Add activity">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="queue-tabs">
+          <div class="qtab active" onclick="switchQTab(this,'activities')">
+            <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <polyline points="9 11 12 14 22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            Activities <span class="qtab-count" id="enabledCount">1</span>
+          </div>
+          <div class="qtab" onclick="switchQTab(this,'misc')">
+            <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
+            </svg>
+            Misc
+          </div>
+        </div>
+      </div>
+
+      <div class="queue-body" id="actQueue">
+        <div class="queue-section-label">Enabled · Execution order</div>
+
+        <!-- Activity: Catch Pet (enabled) -->
+        <div class="act-card enabled" id="act-catch" data-id="catch">
+          <span class="act-order">01</span>
+          <div class="act-icon">🐾</div>
+          <div class="act-info">
+            <div class="act-name">Catch Pet</div>
+            <div class="act-desc">Navigates & captures available pets</div>
+          </div>
+          <div class="act-right">
+            <span class="status-badge sb-queued" id="sb-catch">QUEUED</span>
+            <label class="toggle">
+              <input type="checkbox" checked onchange="toggleAct('catch',this.checked)" />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+
+        <div class="queue-section-label" style="margin-top:6px">Disabled</div>
+
+        <!-- Activity: Gather Resource Center (disabled) -->
+        <div class="act-card disabled" id="act-grc" data-id="grc">
+          <span class="act-order">—</span>
+          <div class="act-icon" style="opacity:.4">🏗️</div>
+          <div class="act-info">
+            <div class="act-name">Gather Resource Center</div>
+            <div class="act-desc">Collects from resource center nodes</div>
+          </div>
+          <div class="act-right">
+            <span class="status-badge sb-idle" id="sb-grc">N/A</span>
+            <label class="toggle">
+              <input type="checkbox" onchange="toggleAct('grc',this.checked)" />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Activity: Gather Resource (disabled) -->
+        <div class="act-card disabled" id="act-gr" data-id="gr">
+          <span class="act-order">—</span>
+          <div class="act-icon" style="opacity:.4">⚒️</div>
+          <div class="act-info">
+            <div class="act-name">Gather Resource</div>
+            <div class="act-desc">Auto-farms resource tiles on map</div>
+          </div>
+          <div class="act-right">
+            <span class="status-badge sb-idle" id="sb-gr">N/A</span>
+            <label class="toggle">
+              <input type="checkbox" onchange="toggleAct('gr',this.checked)" />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Activity: Full Scan (disabled) -->
+        <div class="act-card disabled" id="act-scan" data-id="scan">
+          <span class="act-order">—</span>
+          <div class="act-icon" style="opacity:.4">🔍</div>
+          <div class="act-info">
+            <div class="act-name">Full Scan</div>
+            <div class="act-desc">Deep scan of map for activities</div>
+          </div>
+          <div class="act-right">
+            <span class="status-badge sb-idle" id="sb-scan">N/A</span>
+            <label class="toggle">
+              <input type="checkbox" onchange="toggleAct('scan',this.checked)" />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: BOT CONSOLE -->
+    <div class="console-panel">
+
+      <!-- Run Control -->
+      <div class="run-ctrl">
+        <div class="run-target">
+          <div class="run-target-avatar" id="rtAvatar" style="background:rgba(249,115,22,.15);color:var(--accent)">N
+          </div>
+          <div class="run-target-info">
+            <h4 id="rtTitle">Group: NEW</h4>
+            <p id="rtSub">2 accounts · Sequential mode</p>
+          </div>
+        </div>
+
+        <div class="mode-row">
+          <div class="mode-opt active" id="mode-seq" onclick="setMode('seq')">
+            <div class="mode-opt-label">Sequential</div>
+            <div class="mode-opt-sub">One by one</div>
+          </div>
+          <div class="mode-opt" id="mode-par" onclick="setMode('par')">
+            <div class="mode-opt-label">Parallel</div>
+            <div class="mode-opt-sub">All at once</div>
+          </div>
+        </div>
+
+        <button class="run-btn start" id="runBtn" onclick="toggleRun()">
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          START MISSION
+        </button>
+
+        <div class="progress-section" id="progSection">
+          <div class="prog-labels">
+            <span class="prog-label" id="progLabel">Running EMU-1...</span>
+            <span class="prog-pct" id="progPct">0%</span>
+          </div>
+          <div class="prog-bar">
+            <div class="prog-fill" id="progFill" style="width:0%"></div>
+          </div>
+          <div class="prog-steps" id="progSteps"></div>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="log-head">
+        <div class="log-title">
+          <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+          Console <span class="log-count" id="logCount">0</span>
+        </div>
+        <div class="log-actions">
+          <button class="log-btn" onclick="clearLog()">Clear</button>
+          <button class="log-btn" id="autoScrollBtn" onclick="toggleAutoScroll()" style="color:var(--green)">↓
+            Auto</button>
+        </div>
+      </div>
+      <div class="log-body" id="logBody">
+        <div class="ll"><span class="lt">[--:--:--]</span><span class="lm c-info">Console ready. Select a group and
+            start mission.<span class="cursor-blink"></span></span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ── State ──
+    let running = false;
+    let autoScroll = true;
+    let logLines = 1;
+    let runInterval = null;
+    let mode = 'seq';
+    let selectedGroup = { name: 'NEW', avatar: 'N', color: 'var(--accent)', bg: 'rgba(249,115,22,.15)', accounts: '2 accounts' };
+
+    const acts = { catch: { enabled: true }, grc: { enabled: false }, gr: { enabled: false }, scan: { enabled: false } };
+    const actLabels = { catch: 'Catch Pet', grc: 'Gather Resource Center', gr: 'Gather Resource', scan: 'Full Scan' };
+
+    // ── Tabs ──
+    function setTab(el) { document.querySelectorAll('.ntab').forEach(t => t.classList.remove('active')); el.classList.add('active'); }
+    function switchQTab(el, tab) { document.querySelectorAll('.qtab').forEach(t => t.classList.remove('active')); el.classList.add('active'); }
+
+    // ── Groups ──
+    function selectGroup(el, name, avatar, color, bg, accounts) {
+      document.querySelectorAll('.group-card').forEach(c => c.classList.remove('active'));
+      el.classList.add('active');
+      selectedGroup = { name, avatar, color, bg, accounts };
+      // Update mission header
+      document.getElementById('mhAvatar').textContent = avatar;
+      document.getElementById('mhAvatar').style.background = bg;
+      document.getElementById('mhAvatar').style.color = color;
+      document.getElementById('mhTitle').textContent = name;
+      updateSubtitle();
+      // Update run target
+      document.getElementById('rtAvatar').textContent = avatar;
+      document.getElementById('rtAvatar').style.background = bg;
+      document.getElementById('rtAvatar').style.color = color;
+      document.getElementById('rtTitle').textContent = 'Group: ' + name;
+      updateRtSub();
+    }
+
+    function countEnabled() { return Object.values(acts).filter(a => a.enabled).length; }
+
+    function updateSubtitle() {
+      const n = countEnabled();
+      document.getElementById('mhSub').textContent = selectedGroup.accounts + ' · ' + n + ' activit' + (n === 1 ? 'y' : 'ies') + ' enabled';
+      document.getElementById('enabledCount').textContent = n;
+    }
+    function updateRtSub() {
+      document.getElementById('rtSub').textContent = selectedGroup.accounts + ' · ' + (mode === 'seq' ? 'Sequential' : 'Parallel') + ' mode';
+    }
+
+    // ── Activities toggle ──
+    function toggleAct(id, enabled) {
+      acts[id].enabled = enabled;
+      const card = document.getElementById('act-' + id);
+      const sb = document.getElementById('sb-' + id);
+      if (enabled) {
+        card.className = 'act-card enabled';
+        sb.className = 'status-badge sb-queued'; sb.textContent = 'QUEUED';
+      } else {
+        card.className = 'act-card disabled';
+        sb.className = 'status-badge sb-idle'; sb.textContent = 'N/A';
+      }
+      reorderCards();
+      updateSubtitle();
+    }
+
+    function reorderCards() {
+      const body = document.getElementById('actQueue');
+      body.innerHTML = '';
+      const sectionEnabled = document.createElement('div');
+      sectionEnabled.className = 'queue-section-label'; sectionEnabled.textContent = 'Enabled · Execution order';
+      body.appendChild(sectionEnabled);
+      let order = 1;
+      for (const [id, act] of Object.entries(acts)) {
+        if (act.enabled) { body.appendChild(buildCard(id, order++, true)); }
+      }
+      const sectionDisabled = document.createElement('div');
+      sectionDisabled.className = 'queue-section-label'; sectionDisabled.style.marginTop = '6px'; sectionDisabled.textContent = 'Disabled';
+      body.appendChild(sectionDisabled);
+      for (const [id, act] of Object.entries(acts)) {
+        if (!act.enabled) { body.appendChild(buildCard(id, 0, false)); }
+      }
+    }
+
+    const actIcons = { catch: '🐾', grc: '🏗️', gr: '⚒️', scan: '🔍' };
+    const actDescs = { catch: 'Navigates & captures available pets', grc: 'Collects from resource center nodes', gr: 'Auto-farms resource tiles on map', scan: 'Deep scan of map for activities' };
+    const actStatuses = { catch: 'QUEUED', grc: 'N/A', gr: 'N/A', scan: 'N/A' };
+
+    function buildCard(id, order, enabled) {
+      const div = document.createElement('div');
+      div.className = 'act-card ' + (enabled ? 'enabled' : 'disabled');
+      div.id = 'act-' + id;
+      div.dataset.id = id;
+      const sbClass = enabled ? 'sb-queued' : 'sb-idle';
+      const sbText = enabled ? 'QUEUED' : 'N/A';
+      div.innerHTML = `
+    <span class="act-order">${enabled ? String(order).padStart(2, '0') : '—'}</span>
+    <div class="act-icon" ${enabled ? '' : 'style="opacity:.4"'}>${actIcons[id]}</div>
+    <div class="act-info">
+      <div class="act-name">${actLabels[id]}</div>
+      <div class="act-desc">${actDescs[id]}</div>
+    </div>
+    <div class="act-right">
+      <span class="status-badge ${sbClass}" id="sb-${id}">${sbText}</span>
+      <label class="toggle">
+        <input type="checkbox" ${enabled ? 'checked' : ''} onchange="toggleAct('${id}',this.checked)"/>
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>`;
+      return div;
+    }
+
+    function toggleAll(enable) {
+      for (const id in acts) acts[id].enabled = enable;
+      reorderCards(); updateSubtitle();
+    }
+
+    // ── Mode ──
+    function setMode(m) {
+      mode = m;
+      document.getElementById('mode-seq').classList.toggle('active', m === 'seq');
+      document.getElementById('mode-par').classList.toggle('active', m === 'par');
+      updateRtSub();
+    }
+
+    // ── Run ──
+    function toggleRun() {
+      if (!running) startRun(); else stopRun();
+    }
+
+    let simStep = 0;
+    const simLogs = [
+      [0, 'sys', null, 'Starting mission for group \'{G}\'...'],
+      [200, 'sys', null, 'Sequential bot initialised · {N} accounts queued'],
+      [600, 'run', 't1', '▶ EMU-1 RUNNING'],
+      [900, 'info', 't1', 'Workflow started on BotInstance1'],
+      [1200, 'exec', 't1', '[1/1] Executing nav_to_capture_pet...'],
+      [3500, 'ok', 't1', '✓ nav_to_capture_pet complete'],
+      [3700, 'exec', 't1', '[1/1] Executing capture_pet...'],
+      [4200, 'warn', 't1', "⚠ 'capture_pet' not implemented · Skipping"],
+      [4400, 'ok', 't1', '✓ capture_pet marked complete'],
+      [4600, 'success', 't1', '✅ Workflow completed successfully'],
+      [4800, 'success', 't1', '✅ EMU-1: SUCCESS'],
+      [5200, 'run', 't2', '▶ EMU-2 RUNNING'],
+      [5500, 'info', 't2', 'Workflow started on BotInstance2'],
+      [5800, 'exec', 't2', '[1/1] Executing nav_to_capture_pet...'],
+      [7800, 'ok', 't2', '✓ nav_to_capture_pet complete'],
+      [8000, 'exec', 't2', '[1/1] Executing capture_pet...'],
+      [8500, 'warn', 't2', "⚠ 'capture_pet' not implemented · Skipping"],
+      [8700, 'ok', 't2', '✓ capture_pet marked complete'],
+      [8900, 'success', 't2', '✅ Workflow completed successfully'],
+      [9100, 'success', 't2', '✅ EMU-2: SUCCESS'],
+      [9500, 'sys', null, '🏁 Mission complete · All accounts processed'],
+    ];
+
+    function startRun() {
+      if (countEnabled() === 0) { addLog('warn', null, '⚠ No activities enabled. Enable at least one activity.'); return; }
+      running = true;
+      const btn = document.getElementById('runBtn');
+      btn.className = 'run-btn stop';
+      btn.innerHTML = `<svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> STOP`;
+      // Status
+      document.getElementById('globalStatus').className = 'status-pill run';
+      document.getElementById('sdot').className = 'sdot run';
+      document.getElementById('statusText').textContent = 'RUNNING';
+      // Progress
+      document.getElementById('progSection').classList.add('show');
+      setupProgSteps();
+      simStep = 0;
+      const accounts = parseInt(selectedGroup.accounts) || 2;
+      runSim(accounts);
+    }
+
+    function stopRun() {
+      running = false; clearTimeout(runInterval);
+      const btn = document.getElementById('runBtn');
+      btn.className = 'run-btn start';
+      btn.innerHTML = `<svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg> START MISSION`;
+      document.getElementById('globalStatus').className = 'status-pill idle';
+      document.getElementById('sdot').className = 'sdot idle';
+      document.getElementById('statusText').textContent = 'IDLE';
+      document.getElementById('progSection').classList.remove('show');
+      addLog('warn', null, '⛔ Mission aborted by user');
+      resetActivityStatuses();
+    }
+
+    function setupProgSteps() {
+      const steps = document.getElementById('progSteps');
+      steps.innerHTML = '';
+      const n = parseInt(selectedGroup.accounts) || 2;
+      for (let i = 0; i < n; i++) {
+        const s = document.createElement('div'); s.className = 'prog-step'; s.id = 'pstep-' + i;
+        steps.appendChild(s);
+      }
+    }
+
+    function runSim(accounts) {
+      const logs = simLogs.map(l => [...l]);
+      // Inject group name & account count
+      logs.forEach(l => {
+        l[3] = l[3].replace('{G}', selectedGroup.name).replace('{N}', accounts);
+      });
+
+      let i = 0;
+      function next() {
+        if (!running || i >= logs.length) {
+          if (running && i >= logs.length) finishRun(accounts);
+          return;
+        }
+        const [delay, type, tag, msg] = logs[i++];
+        runInterval = setTimeout(() => {
+          addLog(type, tag, msg);
+          updateProgress(i, logs.length, accounts);
+          next();
+        }, i === 1 ? 100 : delay / 8);
+      }
+      next();
+    }
+
+    function addLog(type, tag, msg) {
+      const body = document.getElementById('logBody');
+      const now = new Date();
+      const ts = `[${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}]`;
+      const tagMap = { t1: 't1', t2: 't2', null: '' };
+      const tagHTML = tag ? `<span class="ltag ${tag}">${tag === 't1' ? 'EMU-1' : 'EMU-2'}</span>` : '';
+      const line = document.createElement('div'); line.className = 'll';
+      line.innerHTML = `<span class="lt">${ts}</span><span class="lm c-${type}">${tagHTML}${msg}</span>`;
+      body.appendChild(line);
+      logLines++;
+      document.getElementById('logCount').textContent = logLines;
+      if (autoScroll) body.scrollTop = body.scrollHeight;
+    }
+
+    function updateProgress(i, total, accounts) {
+      const pct = Math.round((i / total) * 100);
+      document.getElementById('progFill').style.width = pct + '%';
+      document.getElementById('progPct').textContent = pct + '%';
+      // Steps
+      const stepsEl = document.getElementById('progSteps');
+      const stepSize = Math.ceil(total / accounts);
+      for (let s = 0; s < accounts; s++) {
+        const el = document.getElementById('pstep-' + s);
+        if (!el) continue;
+        const stepEnd = (s + 1) * stepSize;
+        const stepStart = s * stepSize;
+        if (i >= stepEnd) el.className = 'prog-step done';
+        else if (i >= stepStart) el.className = 'prog-step cur';
+      }
+      // Label
+      const emu = Math.min(Math.ceil(i / Math.ceil(total / accounts)), accounts);
+      document.getElementById('progLabel').textContent = i < total ? `Running EMU-${emu}...` : 'Finishing...';
+    }
+
+    function finishRun(accounts) {
+      running = false;
+      const btn = document.getElementById('runBtn');
+      btn.className = 'run-btn start';
+      btn.innerHTML = `<svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg> START MISSION`;
+      document.getElementById('globalStatus').className = 'status-pill idle';
+      document.getElementById('sdot').className = 'sdot idle';
+      document.getElementById('statusText').textContent = 'IDLE';
+      document.getElementById('progFill').style.width = '100%';
+      document.getElementById('progPct').textContent = '100%';
+      document.getElementById('progLabel').textContent = 'Complete ✓';
+      for (let s = 0; s < accounts; s++) {
+        const el = document.getElementById('pstep-' + s);
+        if (el) el.className = 'prog-step done';
+      }
+    }
+
+    function resetActivityStatuses() {
+      for (const id in acts) {
+        const sb = document.getElementById('sb-' + id);
+        if (sb) { sb.className = acts[id].enabled ? 'status-badge sb-queued' : 'status-badge sb-idle'; sb.textContent = acts[id].enabled ? 'QUEUED' : 'N/A'; }
+      }
+    }
+
+    // ── Log controls ──
+    function clearLog() {
+      document.getElementById('logBody').innerHTML = '';
+      logLines = 0;
+      document.getElementById('logCount').textContent = '0';
+    }
+    function toggleAutoScroll() {
+      autoScroll = !autoScroll;
+      const btn = document.getElementById('autoScrollBtn');
+      btn.style.color = autoScroll ? 'var(--green)' : 'var(--muted)';
+    }
+  </script>
+</body>
+
+</html>

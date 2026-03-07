@@ -2,6 +2,7 @@
 COD Game Automation Manager — Desktop App Entry Point
 Launches FastAPI backend + pywebview window.
 """
+
 import sys
 import os
 import threading
@@ -13,6 +14,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 # Load config before anything else
 from backend.config import config
+
 config.load()
 
 
@@ -50,8 +52,8 @@ def main():
     try:
         import webview
 
-        print(f"[Desktop] Opening loading screen...")
-        window = webview.create_window(
+        print("[Desktop] Opening loading screen...")
+        webview.create_window(
             title="COD Game Automation Manager",
             html=loading_html,
             width=1400,
@@ -64,7 +66,9 @@ def main():
     except ImportError:
         # Fallback: open in default browser
         print(f"[Desktop] pywebview not installed. Opening in browser: {url}")
-        print("[Desktop] Install pywebview for native desktop window: pip install pywebview")
+        print(
+            "[Desktop] Install pywebview for native desktop window: pip install pywebview"
+        )
         import webbrowser
 
         # Wait for server in browser mode

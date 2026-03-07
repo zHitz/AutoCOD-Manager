@@ -4,16 +4,18 @@ APK Manager — Download and install APK files on emulators via ADB.
 Provides a registry of known apps, download management, and ADB install commands.
 APK files are stored in data/apks/.
 """
+
 import os
 import subprocess
 import urllib.request
-import threading
 from pathlib import Path
 
 from backend.config import config
 
 # APK storage directory
-APK_DIR = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent / "data" / "apks"
+APK_DIR = (
+    Path(os.path.dirname(os.path.abspath(__file__))).parent.parent / "data" / "apks"
+)
 APK_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── App Registry ──
@@ -28,7 +30,12 @@ APK_REGISTRY = {
         "note": "Clipboard access helper — required for ID extraction workflow",
         "download_url": "https://github.com/majido/clipper/releases/download/v1.2.1/clipper.apk",
         "filename": "clipper.apk",
-        "post_install": ["shell", "am", "startservice", "ca.zgrs.clipper/.ClipboardService"],
+        "post_install": [
+            "shell",
+            "am",
+            "startservice",
+            "ca.zgrs.clipper/.ClipboardService",
+        ],
     },
     "zarchiver": {
         "id": "zarchiver",
@@ -71,11 +78,13 @@ def get_apk_list() -> list[dict]:
     result = []
     for app_id, app in APK_REGISTRY.items():
         apk_path = APK_DIR / app["filename"]
-        result.append({
-            **app,
-            "downloaded": apk_path.exists(),
-            "has_url": app["download_url"] is not None,
-        })
+        result.append(
+            {
+                **app,
+                "downloaded": apk_path.exists(),
+                "has_url": app["download_url"] is not None,
+            }
+        )
     return result
 
 
@@ -100,7 +109,10 @@ def download_apk(app_id: str, progress_callback=None) -> dict:
         return {"success": False, "error": f"Unknown app: {app_id}"}
 
     if not app["download_url"]:
-        return {"success": False, "error": f"No download URL for {app['name']}. Place APK manually in data/apks/"}
+        return {
+            "success": False,
+            "error": f"No download URL for {app['name']}. Place APK manually in data/apks/",
+        }
 
     apk_path = APK_DIR / app["filename"]
 
@@ -113,9 +125,13 @@ def download_apk(app_id: str, progress_callback=None) -> dict:
 
         def _report(block_num, block_size, total_size):
             if progress_callback and total_size > 0:
-                progress_callback(min(100, int(block_num * block_size / total_size * 100)))
+                progress_callback(
+                    min(100, int(block_num * block_size / total_size * 100))
+                )
 
-        urllib.request.urlretrieve(app["download_url"], str(apk_path), reporthook=_report)
+        urllib.request.urlretrieve(
+            app["download_url"], str(apk_path), reporthook=_report
+        )
         print(f"[APK] Downloaded: {apk_path}")
         return {"success": True, "message": "Download complete", "path": str(apk_path)}
     except Exception as e:
@@ -144,7 +160,9 @@ def install_apk(app_id: str, serial: str) -> dict:
         # Install with -r (replace existing)
         print(f"[APK] Installing {app['name']} on {serial}...")
         cmd = [adb_path, "-s", serial, "install", "-r", str(apk_path)]
-        result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo, timeout=120)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, startupinfo=startupinfo, timeout=120
+        )
 
         if "Success" in result.stdout:
             print(f"[APK] {app['name']} installed on {serial}")
@@ -152,12 +170,16 @@ def install_apk(app_id: str, serial: str) -> dict:
             # Run post-install command if defined
             if app.get("post_install"):
                 post_cmd = [adb_path, "-s", serial] + app["post_install"]
-                subprocess.run(post_cmd, capture_output=True, startupinfo=startupinfo, timeout=10)
+                subprocess.run(
+                    post_cmd, capture_output=True, startupinfo=startupinfo, timeout=10
+                )
                 print(f"[APK] Post-install command executed on {serial}")
 
             return {"success": True, "message": f"Installed on {serial}"}
         else:
-            error_msg = result.stdout.strip() or result.stderr.strip() or "Unknown error"
+            error_msg = (
+                result.stdout.strip() or result.stderr.strip() or "Unknown error"
+            )
             print(f"[APK] Install failed on {serial}: {error_msg}")
             return {"success": False, "error": error_msg}
 
@@ -176,13 +198,16 @@ def install_apk_on_multiple(app_id: str, serials: list[str], ws_callback=None) -
         results.append(result)
 
         if ws_callback:
-            ws_callback("apk_install_progress", {
-                "app_id": app_id,
-                "serial": serial,
-                "step": i + 1,
-                "total": len(serials),
-                "success": result["success"],
-            })
+            ws_callback(
+                "apk_install_progress",
+                {
+                    "app_id": app_id,
+                    "serial": serial,
+                    "step": i + 1,
+                    "total": len(serials),
+                    "success": result["success"],
+                },
+            )
 
     success_count = sum(1 for r in results if r["success"])
     return {
