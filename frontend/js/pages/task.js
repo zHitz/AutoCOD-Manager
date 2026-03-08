@@ -18,15 +18,21 @@ const TaskPage = {
     _checklistTemplates: [],
     _summary: {},
     _showSettingsPanel: false,
+    _page: 1,
+    _pageSize: 50,
+    _pagination: { page: 1, page_size: 50, total_accounts: 0, total_pages: 0 },
+    _wsPatchQueue: new Map(),
+    _wsPatchTimer: null,
 
     async _loadRealData() {
         this._isLoading = true;
         try {
             const dateStr = this._selectedDate;
             const groupParam = this._selectedGroupId ? `&group_id=${this._selectedGroupId}` : '';
+            const pagingParam = `&page=${this._page}&page_size=${this._pageSize}`;
 
             const [checklistRes, registryRes, allAccounts, groupsRes, templatesRes] = await Promise.all([
-                fetch(`/api/task/checklist?date=${dateStr}${groupParam}`).then((res) => (res.ok ? res.json() : {})),
+                fetch(`/api/task/checklist?date=${dateStr}${groupParam}${pagingParam}`).then((res) => (res.ok ? res.json() : {})),
                 fetch('/api/workflow/activity-registry').then((res) => (res.ok ? res.json() : {})),
                 fetch('/api/accounts').then((res) => (res.ok ? res.json() : [])),
                 fetch('/api/groups').then((res) => (res.ok ? res.json() : {})),
@@ -58,27 +64,30 @@ const TaskPage = {
             }
 
             const accountsArray = Array.isArray(allAccounts) ? allAccounts : [];
-            if (this._selectedGroupId) {
-                const group = this._groups.find(g => String(g.id) === String(this._selectedGroupId));
-                if (group && group.account_ids) {
-                    const validIds = new Set(JSON.parse(group.account_ids).map(Number));
-                    accountsArray.forEach(acc => acc._valid = validIds.has(acc.account_id || acc.id));
-                }
-            }
+            const accountMetaMap = new Map(accountsArray.map(a => [Number(a.account_id || a.id), a]));
 
             const checklistMap = new Map(
                 (checklistRes.accounts || []).map(a => [a.account_id, a])
             );
 
-            this._accounts = accountsArray
-                .filter(acc => !this._selectedGroupId || acc._valid)
-                .map((acc, index) => this._mapFromChecklist(acc, checklistMap.get(acc.account_id || acc.id), index));
+            const pagedAccountIds = (checklistRes.accounts || []).map(a => Number(a.account_id));
+
+            this._accounts = pagedAccountIds
+                .map((id, index) => {
+                    const checklistAcc = checklistMap.get(id) || {};
+                    const metaAcc = accountMetaMap.get(id) || {};
+                    return this._mapFromChecklist({ ...metaAcc, ...checklistAcc, account_id: id }, checklistAcc, index);
+                });
 
             this._summary = checklistRes.summary || {};
+            this._pagination = checklistRes.pagination || this._pagination;
+            this._page = Number(this._pagination.page || this._page);
+            this._pageSize = Number(this._pagination.page_size || this._pageSize);
             this._hasLoadedRealData = true;
         } catch (error) {
             console.warn('[TaskPage] Failed to load data:', error);
             this._accounts = [];
+            this._pagination = { page: this._page, page_size: this._pageSize, total_accounts: 0, total_pages: 0 };
             this._hasLoadedRealData = true;
         } finally {
             this._isLoading = false;
@@ -301,6 +310,11 @@ const TaskPage = {
                     
                     <button class="btn btn-sm btn-ghost" id="task-settings-toggle" title="Configure Columns">⚙️</button>
                     <button class="btn btn-sm btn-outline" id="task-reset-view">Clear filters</button>
+                    <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+                        <button class="btn btn-sm btn-ghost" id="task-prev-page" ${this._page <= 1 ? 'disabled' : ''}>← Prev</button>
+                        <span style="font-size:12px;color:var(--muted-foreground);">Page ${this._page}/${Math.max(this._pagination.total_pages || 1, 1)}</span>
+                        <button class="btn btn-sm btn-ghost" id="task-next-page" ${this._page >= (this._pagination.total_pages || 1) ? 'disabled' : ''}>Next →</button>
+                    </div>
                 </div>
 
                 ${this._renderSettingsPanel()}
@@ -319,7 +333,7 @@ const TaskPage = {
                                         <th><span class="th-content">Note</span></th>
                                     </tr>
                                 </thead>
-                                <tbody id="task-tbody">${this._renderRows()}</tbody>
+                                <tbody id="task-tbody">${this._renderGrid()}</tbody>
                             </table>
                         </div>
                         <div class="task-scroll-hint" id="task-scroll-hint">← Scroll horizontally to see more columns →</div>
@@ -329,39 +343,64 @@ const TaskPage = {
         `;
     },
 
-    _renderRows() {
+    _normalizeDomPart(value) {
+        return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+    },
+
+    _rowId(accountId) {
+        return `row-account-${this._normalizeDomPart(accountId)}`;
+    },
+
+    _cellId(accountId, activityId) {
+        return `cell-${this._normalizeDomPart(accountId)}-${this._normalizeDomPart(activityId)}`;
+    },
+
+    _renderCell(accountId, activityId, state = '') {
+        return `
+            <td
+                id="${this._cellId(accountId, activityId)}"
+                class="task-clickable-cell"
+                data-acc-id="${accountId}"
+                data-act-id="${activityId}"
+                data-status="${state}"
+                title="Click to mark done/undo"
+            >
+                ${this._renderCellStatus(state)}
+            </td>`;
+    },
+
+    _renderRow(acc, index) {
+        const progress = acc.progress;
+        const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+        const statusLabel = acc.status === 'on-track' ? 'On track' : acc.status === 'at-risk' ? 'At risk' : 'Overdue';
+
+        return `
+            <tr id="${this._rowId(acc.id)}" class="task-row ${index === this._selectedIndex ? 'selected' : ''}" data-id="${acc.id}">
+                <td class="task-sticky-col">
+                    <div class="task-account-name">${acc.accountName}</div>
+                    <div class="task-account-meta">${acc.emulator} · ${acc.owner} · ${acc.region}</div>
+                </td>
+                <td><span id="row-status-${this._normalizeDomPart(acc.id)}" class="task-pill task-status-pill ${acc.status}">${statusLabel}</span></td>
+                <td id="row-priority-${this._normalizeDomPart(acc.id)}">${this._renderPriorityBadge(acc.priority)}</td>
+                ${this._checklistTemplates.map((item) => {
+                    const actStatus = acc.activities[item.key]?.status || '';
+                    return this._renderCell(acc.id, item.key, actStatus);
+                }).join('')}
+                <td id="row-progress-${this._normalizeDomPart(acc.id)}" class="task-progress-wrap" style="text-align:left;">
+                    <div style="height:6px;background:var(--muted);border-radius:99px;margin-bottom:4px;"><div style="height:100%;background:var(--primary);border-radius:99px;width:${percent}%"></div></div>
+                    <div style="font-size:11px;color:var(--muted-foreground);">${progress.done}/${progress.total} tasks · ${percent}%</div>
+                </td>
+                <td style="text-align:left;">${acc.note}</td>
+            </tr>
+        `;
+    },
+
+    _renderGrid() {
         if (!this._filteredAccounts.length) {
             return '<tr><td colspan="15" style="text-align:center;color:var(--muted-foreground);padding:16px">No accounts match the current filters.</td></tr>';
         }
 
-        return this._filteredAccounts.map((acc, index) => {
-            const progress = acc.progress;
-            const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
-            const statusLabel = acc.status === 'on-track' ? 'On track' : acc.status === 'at-risk' ? 'At risk' : 'Overdue';
-
-            return `
-                <tr class="task-row ${index === this._selectedIndex ? 'selected' : ''}" data-id="${acc.id}">
-                    <td class="task-sticky-col">
-                        <div class="task-account-name">${acc.accountName}</div>
-                        <div class="task-account-meta">${acc.emulator} · ${acc.owner} · ${acc.region}</div>
-                    </td>
-                    <td><span class="task-pill task-status-pill ${acc.status}">${statusLabel}</span></td>
-                    <td>${this._renderPriorityBadge(acc.priority)}</td>
-                    ${this._checklistTemplates.map((item) => {
-                const actStatus = acc.activities[item.key]?.status || '';
-                return `
-                        <td class="task-clickable-cell" data-acc-id="${acc.id}" data-act-id="${item.key}" data-status="${actStatus}" data-game-id="${acc.gameId}" title="Click to mark done/undo">
-                            ${this._renderCellStatus(actStatus)}
-                        </td>`;
-            }).join('')}
-                    <td class="task-progress-wrap" style="text-align:left;">
-                        <div style="height:6px;background:var(--muted);border-radius:99px;margin-bottom:4px;"><div style="height:100%;background:var(--primary);border-radius:99px;width:${percent}%"></div></div>
-                        <div style="font-size:11px;color:var(--muted-foreground);">${progress.done}/${progress.total} tasks · ${percent}%</div>
-                    </td>
-                    <td style="text-align:left;">${acc.note}</td>
-                </tr>
-            `;
-        }).join('');
+        return this._filteredAccounts.map((acc, index) => this._renderRow(acc, index)).join('');
     },
 
     _syncScrollHint() {
@@ -383,12 +422,113 @@ const TaskPage = {
     _renderBodyOnly() {
         this._applyFilters();
         const tbody = document.getElementById('task-tbody');
-        if (tbody) tbody.innerHTML = this._renderRows();
+        const t0 = performance.now();
+        const html = this._renderGrid();
+        if (tbody) tbody.innerHTML = html;
+        console.log('TASK_GRID_RENDER ms=', Math.round((performance.now() - t0) * 100) / 100);
         setTimeout(() => this._syncScrollHint(), 50);
+    },
+
+    _patchCell(accId, actId, newState) {
+        const cell = document.getElementById(this._cellId(accId, actId));
+        if (!cell) return false;
+        const normalized = newState || '';
+        if ((cell.dataset.status || '') === normalized) return false;
+        cell.dataset.status = normalized;
+        cell.innerHTML = this._renderCellStatus(normalized);
+        return true;
+    },
+
+    _updateRowStats(accId) {
+        const acc = this._accounts.find(a => a.id === accId);
+        if (!acc) return;
+
+        const total = this._checklistTemplates.length;
+        let done = 0;
+        let failed = 0;
+
+        this._checklistTemplates.forEach(t => {
+            const s = acc.activities[t.key]?.status || '';
+            if (s === 'SUCCESS') done += 1;
+            if (s === 'FAILED') failed += 1;
+        });
+
+        acc.progress = { done, total };
+        acc.failed = failed;
+
+        let status = 'on-track';
+        if (done === 0 && total > 0) status = 'overdue';
+        else if (done < total) status = 'at-risk';
+        acc.status = status;
+
+        let priority = 'low';
+        if (status === 'overdue') priority = 'high';
+        else if (status === 'at-risk') priority = 'medium';
+        acc.priority = priority;
+
+        const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+        const statusEl = document.getElementById(`row-status-${this._normalizeDomPart(accId)}`);
+        if (statusEl) {
+            const statusLabel = status === 'on-track' ? 'On track' : status === 'at-risk' ? 'At risk' : 'Overdue';
+            statusEl.className = `task-pill task-status-pill ${status}`;
+            statusEl.textContent = statusLabel;
+        }
+
+        const priorityEl = document.getElementById(`row-priority-${this._normalizeDomPart(accId)}`);
+        if (priorityEl) priorityEl.innerHTML = this._renderPriorityBadge(priority);
+
+        const progressEl = document.getElementById(`row-progress-${this._normalizeDomPart(accId)}`);
+        if (progressEl) {
+            progressEl.innerHTML = `
+                <div style="height:6px;background:var(--muted);border-radius:99px;margin-bottom:4px;"><div style="height:100%;background:var(--primary);border-radius:99px;width:${percent}%"></div></div>
+                <div style="font-size:11px;color:var(--muted-foreground);">${done}/${total} tasks · ${percent}%</div>
+            `;
+        }
+    },
+
+    _enqueuePatch(payload) {
+        if (!payload || !payload.account_id || !payload.activity_id) return;
+        const key = `${payload.account_id}::${payload.activity_id}`;
+        this._wsPatchQueue.set(key, payload);
+
+        if (this._wsPatchTimer) return;
+        this._wsPatchTimer = setTimeout(() => this._flushPatchQueue(), 100);
+    },
+
+    _flushPatchQueue() {
+        const pending = Array.from(this._wsPatchQueue.values());
+        this._wsPatchQueue.clear();
+        this._wsPatchTimer = null;
+        if (!pending.length) return;
+
+        console.log(`TASK_GRID_PATCH batch=${pending.length}`);
+
+        pending.forEach((p) => {
+            const accId = Number(p.account_id);
+            const actId = p.activity_id;
+            const status = p.status || '';
+
+            const acc = this._accounts.find(a => a.id === accId);
+            if (acc) {
+                if (!acc.activities[actId]) acc.activities[actId] = {};
+                acc.activities[actId].status = status;
+                if (typeof p.runs_today !== 'undefined') acc.activities[actId].runs_today = p.runs_today;
+                if (typeof p.last_run !== 'undefined') acc.activities[actId].last_run = p.last_run;
+                if (typeof p.error !== 'undefined') acc.activities[actId].error = p.error || '';
+            }
+
+            const changed = this._patchCell(accId, actId, status);
+            if (changed) this._updateRowStats(accId);
+        });
     },
 
     _setupWebSockets() {
         if (this._wsSetup || !window.EventBus) return;
+
+        window.EventBus.on('task_state_update', (data) => {
+            if (router._currentPage !== 'task') return;
+            this._enqueuePatch(data);
+        });
 
         ['activity_started', 'activity_completed', 'activity_failed'].forEach(evt => {
             window.EventBus.on(evt, (data) => {
@@ -401,12 +541,14 @@ const TaskPage = {
                 const actId = data.activity_id;
 
                 if (accId && actId) {
-                    const acc = this._accounts.find(a => a.id === accId);
-                    if (acc) {
-                        if (!acc.activities[actId]) acc.activities[actId] = {};
-                        acc.activities[actId].status = mappedStatus;
-                        this._renderBodyOnly(); // Optimistic lightweight refresh
-                    }
+                    this._enqueuePatch({
+                        account_id: accId,
+                        activity_id: actId,
+                        status: mappedStatus,
+                        runs_today: data.runs_today,
+                        last_run: data.last_run,
+                        error: data.error
+                    });
                 }
             });
         });
@@ -486,14 +628,16 @@ const TaskPage = {
 
         addListener('task-date-picker', 'change', async (e) => {
             this._selectedDate = e.target.value;
+            this._page = 1;
             await this._loadRealData();
-            this._renderBodyOnly();
+            router.navigate('task');
         });
 
         addListener('task-group-filter', 'change', async (e) => {
             this._selectedGroupId = e.target.value;
+            this._page = 1;
             await this._loadRealData();
-            this._renderBodyOnly();
+            router.navigate('task');
         });
 
         addListener('task-search', 'input', (e) => {
@@ -527,6 +671,21 @@ const TaskPage = {
             this._renderBodyOnly();
         });
 
+        addListener('task-prev-page', 'click', async () => {
+            if (this._page <= 1) return;
+            this._page -= 1;
+            await this._loadRealData();
+            router.navigate('task');
+        });
+
+        addListener('task-next-page', 'click', async () => {
+            const totalPages = this._pagination?.total_pages || 1;
+            if (this._page >= totalPages) return;
+            this._page += 1;
+            await this._loadRealData();
+            router.navigate('task');
+        });
+
         addListener('task-settings-toggle', 'click', () => {
             this._showSettingsPanel = !this._showSettingsPanel;
             router.navigate('task');
@@ -549,7 +708,7 @@ const TaskPage = {
                     const accId = Number(cell.dataset.accId);
                     const actId = cell.dataset.actId;
                     const status = cell.dataset.status;
-                    const gameId = cell.dataset.gameId;
+                    const gameId = (this._accounts.find(a => a.id === accId) || {}).gameId;
                     if (accId && actId) {
                         this._toggleActivityStatus(accId, actId, status, gameId);
                     }
