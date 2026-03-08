@@ -3,6 +3,7 @@ OCR API Client — ocrapi.cloud integration with key rotation.
 
 Pipeline: upload PDF -> poll job status -> download markdown result -> parse.
 """
+
 import re
 import time
 import itertools
@@ -17,6 +18,7 @@ MAX_POLL_ATTEMPTS = 60
 
 
 # ── API Key Gateway ──
+
 
 def load_api_keys() -> list[str]:
     """Load API keys from config file (one per line, # = comment)."""
@@ -62,10 +64,15 @@ class KeyGateway:
 
 # ── HTTP Session ──
 
+
 def build_session() -> requests.Session:
-    retry = Retry(total=3, backoff_factor=2,
-                  status_forcelist=[500, 502, 503, 504],
-                  allowed_methods=["POST", "GET"], raise_on_status=False)
+    retry = Retry(
+        total=3,
+        backoff_factor=2,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["POST", "GET"],
+        raise_on_status=False,
+    )
     adapter = HTTPAdapter(max_retries=retry)
     session = requests.Session()
     session.mount("https://", adapter)
@@ -75,8 +82,10 @@ def build_session() -> requests.Session:
 
 # ── Core API Operations ──
 
-def submit_job(session: requests.Session, gateway: KeyGateway,
-               file_path: str) -> str | None:
+
+def submit_job(
+    session: requests.Session, gateway: KeyGateway, file_path: str
+) -> str | None:
     """Upload file and create OCR job. Returns job_id."""
     url = f"{BASE_URL}/jobs"
     data = {
@@ -88,8 +97,13 @@ def submit_job(session: requests.Session, gateway: KeyGateway,
 
     for _ in range(10):
         with open(file_path, "rb") as fobj:
-            resp = session.post(url, headers=gateway.auth_headers(),
-                                files={"file_upload": fobj}, data=data, timeout=60)
+            resp = session.post(
+                url,
+                headers=gateway.auth_headers(),
+                files={"file_upload": fobj},
+                data=data,
+                timeout=60,
+            )
         if resp.status_code == 429:
             gateway.rotate()
             time.sleep(1)
@@ -105,8 +119,9 @@ def submit_job(session: requests.Session, gateway: KeyGateway,
     return None
 
 
-def poll_job(session: requests.Session, gateway: KeyGateway,
-             job_id: str) -> dict | None:
+def poll_job(
+    session: requests.Session, gateway: KeyGateway, job_id: str
+) -> dict | None:
     """Poll until job completes. Returns job dict or None."""
     url = f"{BASE_URL}/jobs/{job_id}"
 
@@ -150,6 +165,7 @@ def extract_text(job: dict) -> str:
 
 
 # ── Markdown Parser ──
+
 
 def _parse_resource_value(text: str) -> int:
     """Parse values like '589.7M', '1.2B', '500K', '13,572' to int."""
@@ -263,6 +279,7 @@ def parse_scan_markdown(md_text: str) -> dict:
 
 # ── High-level OCR Function ──
 
+
 def run_ocr(pdf_path: str) -> dict:
     """Run full OCR pipeline on a PDF file.
 
@@ -270,7 +287,12 @@ def run_ocr(pdf_path: str) -> dict:
     """
     keys = load_api_keys()
     if not keys:
-        return {"success": False, "error": "No API keys configured", "text": "", "parsed": {}}
+        return {
+            "success": False,
+            "error": "No API keys configured",
+            "text": "",
+            "parsed": {},
+        }
 
     gateway = KeyGateway(keys)
     session = build_session()
@@ -280,13 +302,23 @@ def run_ocr(pdf_path: str) -> dict:
         print(f"[OCR] Submitting: {pdf_path}")
         job_id = submit_job(session, gateway, pdf_path)
         if not job_id:
-            return {"success": False, "error": "Failed to submit OCR job", "text": "", "parsed": {}}
+            return {
+                "success": False,
+                "error": "Failed to submit OCR job",
+                "text": "",
+                "parsed": {},
+            }
 
         # Poll
         print(f"[OCR] Polling job {job_id}...")
         completed = poll_job(session, gateway, job_id)
         if not completed:
-            return {"success": False, "error": "OCR job failed or timed out", "text": "", "parsed": {}}
+            return {
+                "success": False,
+                "error": "OCR job failed or timed out",
+                "text": "",
+                "parsed": {},
+            }
 
         # Extract + Parse
         text = extract_text(completed)

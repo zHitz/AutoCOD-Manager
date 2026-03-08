@@ -1,6 +1,7 @@
 """
 WebSocket Manager — Real-time event broadcasting.
 """
+
 import json
 import asyncio
 from fastapi import WebSocket
@@ -36,9 +37,7 @@ class WebSocketManager:
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self.broadcast(event, data), loop
-                )
+                asyncio.run_coroutine_threadsafe(self.broadcast(event, data), loop)
             else:
                 loop.run_until_complete(self.broadcast(event, data))
         except RuntimeError:

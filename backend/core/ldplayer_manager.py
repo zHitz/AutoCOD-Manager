@@ -2,10 +2,12 @@
 LDPlayer Manager — CLI wrapper for ldconsole.exe.
 Provides full instance discovery, start/stop, and macro operations.
 """
+
 import subprocess
 import json
 import os
 from backend.config import config
+
 
 def _get_ldconsole_path():
     return os.path.join(os.path.dirname(config.adb_path), "ldconsole.exe")
@@ -13,7 +15,6 @@ def _get_ldconsole_path():
 
 def _get_operations_dir():
     return os.path.join(os.path.dirname(config.adb_path), "vms", "operationRecords")
-
 
 
 def _run(args: list, timeout: int = 15) -> str:
@@ -53,14 +54,16 @@ def list_all_instances() -> list[dict]:
             pid = int(parts[5]) if parts[5] != "-1" else None
             w, h, dpi = int(parts[7]), int(parts[8]), int(parts[9])
 
-            instances.append({
-                "index": idx,
-                "name": name,
-                "running": running,
-                "pid": pid,
-                "resolution": f"{w}x{h}",
-                "dpi": dpi,
-            })
+            instances.append(
+                {
+                    "index": idx,
+                    "name": name,
+                    "running": running,
+                    "pid": pid,
+                    "resolution": f"{w}x{h}",
+                    "dpi": dpi,
+                }
+            )
         except (ValueError, IndexError):
             continue
 
@@ -69,7 +72,7 @@ def list_all_instances() -> list[dict]:
 
 def launch_instance(index: int) -> bool:
     """Start an emulator by index."""
-    output = _run(["launch", "--index", str(index)], timeout=30)
+    _run(["launch", "--index", str(index)], timeout=30)
     # ldconsole launch doesn't return useful output, but doesn't error
     return True
 
@@ -95,7 +98,7 @@ def get_operations(index: int) -> list[dict]:
 
 
 def get_operation_info(index: int, filename: str) -> dict:
-    """"Get detailed info about a macro script.
+    """ "Get detailed info about a macro script.
 
     Uses `ldconsole operateinfo --index N --file <name>`.
     """
@@ -119,12 +122,14 @@ def list_record_files() -> list[dict]:
         if fname.endswith(".record"):
             fpath = os.path.join(op_dir, fname)
             stat = os.stat(fpath)
-            records.append({
-                "filename": fname,
-                "name": fname.replace(".record", ""),
-                "size_bytes": stat.st_size,
-                "modified": stat.st_mtime,
-            })
+            records.append(
+                {
+                    "filename": fname,
+                    "name": fname.replace(".record", ""),
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                }
+            )
 
     return sorted(records, key=lambda r: r["modified"], reverse=True)
 
@@ -162,6 +167,7 @@ def run_operation(index: int, filename: str) -> dict:
 
     # Use a temp file to pass large JSON to ldconsole
     import tempfile
+
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", delete=False, encoding="utf-8"
     )
@@ -177,10 +183,11 @@ def run_operation(index: int, filename: str) -> dict:
         if len(content) < 8000:
             # Direct pass — fits in CLI
             result = subprocess.run(
-                [ld_path, "operaterecord",
-                 "--index", str(index),
-                 "--content", content],
-                capture_output=True, text=True, timeout=15, encoding="utf-8",
+                [ld_path, "operaterecord", "--index", str(index), "--content", content],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                encoding="utf-8",
             )
             output = result.stdout.strip()
         else:
@@ -188,11 +195,14 @@ def run_operation(index: int, filename: str) -> dict:
             ps_cmd = (
                 f'$c = Get-Content -Raw -Path "{tmp.name}"; '
                 f'& "{ld_path}" operaterecord '
-                f'--index {index} --content $c'
+                f"--index {index} --content $c"
             )
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True, text=True, timeout=30, encoding="utf-8",
+                capture_output=True,
+                text=True,
+                timeout=30,
+                encoding="utf-8",
             )
             output = result.stdout.strip()
     finally:
@@ -214,4 +224,3 @@ def run_operation(index: int, filename: str) -> dict:
         "output": output,
         "duration_ms": duration_ms,
     }
-

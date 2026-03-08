@@ -2,6 +2,7 @@
 Data Models — Pydantic models for scan results and task execution.
 Normalized data structures per LOGIC_BUSSINESS.txt Section 4.
 """
+
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
@@ -11,6 +12,7 @@ from enum import Enum
 # ──────────────────────────────────────────────
 # Enums
 # ──────────────────────────────────────────────
+
 
 class TaskType(str, Enum):
     PROFILE = "profile"
@@ -37,6 +39,7 @@ class TaskStatus(str, Enum):
 # Scan Data Models
 # ──────────────────────────────────────────────
 
+
 class ProfileData(BaseModel):
     name: str = ""
     power: int = 0
@@ -60,6 +63,7 @@ class ResourceData(BaseModel):
 
 class ScanReport(BaseModel):
     """Complete scan report for a single device."""
+
     serial: str
     timestamp: datetime = Field(default_factory=datetime.now)
     profile: Optional[ProfileData] = None
@@ -75,14 +79,17 @@ class ScanReport(BaseModel):
 # Task Execution Models
 # ──────────────────────────────────────────────
 
+
 class TaskRequest(BaseModel):
     """API request to run a task."""
+
     serial: str
     task_type: TaskType
 
 
 class TaskResult(BaseModel):
     """Result of a single task execution."""
+
     task_id: str
     task_type: TaskType
     serial: str
@@ -101,6 +108,7 @@ class TaskResult(BaseModel):
 
 class TaskQueueItem(BaseModel):
     """Item in the task queue."""
+
     task_id: str
     task_type: TaskType
     serial: str
@@ -112,6 +120,7 @@ class TaskQueueItem(BaseModel):
 # ──────────────────────────────────────────────
 # API Response Models
 # ──────────────────────────────────────────────
+
 
 class DeviceInfo(BaseModel):
     serial: str

@@ -159,23 +159,6 @@ ocr_key_2"></textarea>
                         </div>
                     </div>
 
-
-                    <!-- Task Activities -->
-                    <div class="settings-card">
-                        <div class="settings-card-header">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                            <h3>Task Activities</h3>
-                        </div>
-                        <div class="settings-card-body">
-                            <p class="form-desc" style="margin-bottom:10px">Select workflow activities that should appear as tasks on the Task page.</p>
-                            <div id="cfg-task-activities-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px"></div>
-                            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:10px;flex-wrap:wrap">
-                                <p class="form-desc" id="cfg-task-activities-summary" style="margin:0">0 activities selected</p>
-                                <button class="btn btn-outline btn-sm" id="cfg-task-activities-apply">Apply to Task Page</button>
-                            </div>
-                        </div>
-                    </div>
-
                     <div style="display:flex;justify-content:flex-end;padding-top:8px">
                         <button class="btn btn-default btn-md" style="gap:8px" id="cfg-save-btn">
                             <svg style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -197,12 +180,8 @@ ocr_key_2"></textarea>
         const releaseNotesBtn = document.getElementById('cfg-release-notes-btn');
         if (releaseNotesBtn) releaseNotesBtn.addEventListener('click', () => this.toggleReleaseNotes());
 
-        const applyActivitiesBtn = document.getElementById('cfg-task-activities-apply');
-        if (applyActivitiesBtn) applyActivitiesBtn.addEventListener('click', () => this.saveTaskActivitiesSelection());
-
         await this.loadConfig();
         await this.loadOcrKeys();
-        await this.loadTaskActivitiesSettings();
         this.setOcrEditorVisible(false);
     },
     destroy() { },
@@ -289,81 +268,6 @@ ocr_key_2"></textarea>
         } catch (e) {
             Toast.error('Error', e.message || 'Failed to save settings');
         }
-    },
-
-    _getSelectedTaskActivityIds() {
-        try {
-            const raw = localStorage.getItem(this._taskActivitySelectionKey);
-            const parsed = raw ? JSON.parse(raw) : [];
-            return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
-        } catch (_) {
-            return [];
-        }
-    },
-
-    _updateTaskActivitiesSummary(selectedCount) {
-        const summary = document.getElementById('cfg-task-activities-summary');
-        if (!summary) return;
-        summary.textContent = `${selectedCount} activit${selectedCount === 1 ? 'y' : 'ies'} selected`;
-    },
-
-    async loadTaskActivitiesSettings() {
-        const listEl = document.getElementById('cfg-task-activities-list');
-        if (!listEl) return;
-
-        let activities = [];
-        try {
-            const res = await fetch('/api/workflow/activity-registry');
-            if (res.ok) {
-                const payload = await res.json();
-                activities = Array.isArray(payload?.data) ? payload.data : [];
-            }
-        } catch (_) {}
-
-        if (!activities.length) {
-            activities = [
-                { id: 'login', name: 'Daily login' },
-                { id: 'collect', name: 'Collect resources' },
-                { id: 'alliance', name: 'Alliance donation' },
-                { id: 'patrol', name: 'Patrol / Daily missions' },
-                { id: 'shop', name: 'Refresh shop' },
-                { id: 'event', name: 'Claim event rewards' },
-                { id: 'full_scan', name: 'Full Scan' },
-            ];
-        }
-
-        this._taskActivityRegistry = activities.map((item) => ({ id: String(item.id), name: item.name || item.id }));
-        localStorage.setItem(this._taskActivityRegistryKey, JSON.stringify(this._taskActivityRegistry));
-
-        const selected = new Set(this._getSelectedTaskActivityIds());
-        listEl.innerHTML = this._taskActivityRegistry.map((item) => `
-            <label class="setting-row" style="margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:10px;cursor:pointer">
-                <div class="setting-info" style="display:flex;align-items:center;gap:8px">
-                    <input type="checkbox" class="cfg-task-activity-checkbox" value="${item.id}" ${selected.has(item.id) ? 'checked' : ''}/>
-                    <span class="form-label" style="margin:0;text-transform:none;letter-spacing:0">${item.name}</span>
-                </div>
-            </label>
-        `).join('');
-
-        listEl.querySelectorAll('.cfg-task-activity-checkbox').forEach((el) => {
-            el.addEventListener('change', () => {
-                const count = listEl.querySelectorAll('.cfg-task-activity-checkbox:checked').length;
-                this._updateTaskActivitiesSummary(count);
-            });
-        });
-
-        this._updateTaskActivitiesSummary(selected.size);
-    },
-
-    saveTaskActivitiesSelection() {
-        const selectedIds = Array.from(document.querySelectorAll('.cfg-task-activity-checkbox:checked'))
-            .map((el) => el.value)
-            .filter(Boolean);
-
-        localStorage.setItem(this._taskActivitySelectionKey, JSON.stringify(selectedIds));
-        this._updateTaskActivitiesSummary(selectedIds.length);
-        Toast.success('Saved', 'Task activities updated. Open Task page to see the new checklist.');
-    },
-
+    }
 
 };

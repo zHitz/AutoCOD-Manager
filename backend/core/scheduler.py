@@ -2,10 +2,10 @@
 Scheduler Engine — Background scheduler for macro jobs.
 Checks schedules every 30s and executes due macros on target emulators.
 """
+
 import asyncio
 import json
 import threading
-import time
 from datetime import datetime, timedelta
 
 from backend.storage.database import database
@@ -13,7 +13,9 @@ from backend.core import macro_replay, ldplayer_manager
 from backend.core.emulator import emulator_manager
 
 
-def _calc_next_run(schedule_type: str, schedule_value: str, from_time: datetime = None) -> str:
+def _calc_next_run(
+    schedule_type: str, schedule_value: str, from_time: datetime = None
+) -> str:
     """Calculate next_run_at based on schedule type and value."""
     now = from_time or datetime.now()
 
@@ -112,12 +114,16 @@ async def execute_schedule(schedule: dict, ws_callback=None):
         print(f"[Scheduler] No targets available for schedule '{schedule['name']}'")
         return
 
-    print(f"[Scheduler] Executing '{schedule['name']}' → {macro_filename} on {len(targets)} emulator(s)")
+    print(
+        f"[Scheduler] Executing '{schedule['name']}' → {macro_filename} on {len(targets)} emulator(s)"
+    )
 
     for emu in targets:
         try:
             macro_replay.start_replay(
-                emu["index"], filepath, macro_filename,
+                emu["index"],
+                filepath,
+                macro_filename,
                 ws_callback=ws_callback,
             )
         except Exception as e:

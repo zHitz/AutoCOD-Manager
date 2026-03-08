@@ -28,7 +28,11 @@ export class BotRepository {
         const response = await this.http.post('/api/bot/stop', { group_id: groupId });
         if (!response.ok) return Result.fail(response.error);
 
-        if (response.data?.status === 'ok') {
+        if (
+            response.data?.status === 'ok'
+            || response.data?.status === 'stopping'
+            || response.data?.status === 'not_running'
+        ) {
             return Result.ok(response.data);
         }
 

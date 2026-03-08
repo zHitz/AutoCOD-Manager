@@ -2450,3 +2450,11 @@
  . a c v - q - n a m e   {   f l e x :   1 ;   w h i t e - s p a c e :   n o w r a p ;   o v e r f l o w :   h i d d e n ;   t e x t - o v e r f l o w :   e l l i p s i s ;   } 
   
  
+/* Drag and Drop visually */
+.acv-activity-row.dragging {
+    opacity: 0.5;
+    background: var(--muted);
+    box-shadow: var(--shadow-sm);
+    z-index: 10;
+}
+

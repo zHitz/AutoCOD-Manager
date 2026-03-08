@@ -14,9 +14,7 @@ export class BotPayloadBuilder {
 
             // Strip out cooldown meta-fields when sending to executor payload
             const executorCfg = { ...perCfg };
-            delete executorCfg.cooldown_enabled;
-            delete executorCfg.cooldown_minutes;
-            delete executorCfg.last_run;
+            delete executorCfg.last_run; // Backend will query DB for this
 
             return {
                 id: act.id,

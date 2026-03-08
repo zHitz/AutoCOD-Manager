@@ -1,0 +1,231 @@
+# 🧠 Brainstorm: Workflow UI V3 — Core Function Composable Builder
+
+## Context
+
+Hệ thống hiện có **4 backend module** trong `backend/core/workflow/`:
+
+| Module | Chức năng | Hàm chính |
+|--------|-----------|-----------|
+| **adb_helper** | ADB low-level | `tap`, `swipe`, `press_back`, `screencap`, `list_devices`, `ping_device` |
+| **clipper_helper** | Clipboard & App | `get_clipper_data`, `is_app_foreground`, `open_app` |
+| **state_detector** | OpenCV State AI | `check_state` (8 game states), `screencap_memory` |
+| **core_actions** | High-level Actions | `startup_to_lobby`, `wait_for_state`, `go_to_profile`, `extract_player_id`, `back_to_lobby` |
+
+**Mục tiêu:** User trên UI có thể **ghép nối** các core function này thành workflow hoàn chỉnh — không cần code, chỉ cần kéo/chọn/sắp xếp.
+
+**Vấn đề với Workflow V2 hiện tại:**
+- Palette actions (`WF_ACTIONS`) là **hardcoded frontend** — không map trực tiếp với backend functions
+- Chạy workflow chỉ là **demo simulation** (setTimeout), không gọi API thật
+- Không có khái niệm **conditions / branching** (nếu state = X thì làm Y)
+- Thiếu **feedback real-time** từ emulator (live state, screenshot)
+
+---
+
+## Option A: **Pipeline Builder** — Vertical Step Cards + Live Preview
+
+> Giao diện dạng **vertical pipeline**, mỗi step là 1 card có config form inline. Bên phải có **Live Preview panel** hiển thị screenshot + state detection real-time.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ [Toolbar: Name / Save / Load / Run]                      │
+├──────────────┬──────────────────────┬───────────────────┤
+│ Function     │ Pipeline             │ Live Preview      │
+│ Library      │                      │                   │
+│ ┌──────────┐ │ ┌──────────────────┐ │ ┌───────────────┐ │
+│ │ 🚀 Start │ │ │ 1. startup_to_   │ │ │ [Screenshot]  │ │
+│ │  to Lobby│ │ │    lobby          │ │ │               │ │
+│ ├──────────┤ │ │  Target: All     │ │ │ State: IN_CITY│ │
+│ │ 👤 Go to │ │ │  Timeout: 120s   │ │ │ Confidence:98%│ │
+│ │  Profile │ │ ├──────────────────┤ │ └───────────────┘ │
+│ ├──────────┤ │ │ 2. go_to_profile │ │                   │
+│ │ 🆔 Extract│ │ │                  │ │ [Execution Log]   │
+│ │  PlayerID│ │ ├──────────────────┤ │ > Step 1: ✅ Done │
+│ ├──────────┤ │ │ 3. extract_id    │ │ > Step 2: ▶ Run.. │
+│ │ ↩️ Back  │ │ │  Save to: DB     │ │ > Step 3: ⏳ Wait │
+│ │  to Lobby│ │ ├──────────────────┤ │                   │
+│ ├──────────┤ │ │ 4. back_to_lobby │ │                   │
+│ │ ⏳ Delay │ │ └──────────────────┘ │                   │
+│ └──────────┘ │                      │                   │
+└──────────────┴──────────────────────┴───────────────────┘
+```
+
+### Đặc điểm chính
+- **Function Library** bên trái: auto-generate từ backend module registry (API `/api/workflow/functions`)
+- **Pipeline** ở giữa: vertical cards, mỗi card = 1 function call + config params
+- **Live Preview** bên phải: real-time screenshot + detected state khi chạy
+- Click function → thêm vào pipeline → configure params inline
+
+✅ **Pros:**
+- Trực quan, dễ hiểu — giống CI/CD pipeline (GitHub Actions, n8n)
+- Map 1:1 với backend functions — không còn hardcoded palette
+- Live preview giúp debug workflow real-time
+- Dễ extend: thêm function mới ở backend → tự hiện trên UI
+
+❌ **Cons:**
+- Không hỗ trợ branching/conditions (chỉ linear)
+- Với workflow phức tạp (50+ steps) sẽ dài và khó overview
+- Live preview panel chiếm không gian
+
+📊 **Effort:** Medium
+
+---
+
+## Option B: **Block Programming** — Scratch-style Visual Block Snapping
+
+> Giao diện dạng **block programming** kiểu Scratch/Blockly. Mỗi core function là 1 block có hình dáng riêng có thể snap vào nhau. Hỗ trợ **loops, conditions, parallel execution**.
+
+```
+┌──────────────────────────────────────────────────────┐
+│ [Toolbar]                                             │
+├──────────────┬───────────────────────────────────────┤
+│ Blocks       │ Canvas                                │
+│ ┌──────────┐ │                                       │
+│ │🟦 Actions│ │   ┌─────────────────────────┐         │
+│ │🟩 Control│ │   │ 🟦 startup_to_lobby     │         │
+│ │🟨 Scan   │ │   │    timeout: [120]       │         │
+│ │🟪 Logic  │ │   └────────┬────────────────┘         │
+│ └──────────┘ │            │                          │
+│              │   ┌────────▼────────────────┐         │
+│              │   │ 🟩 REPEAT 3 times       │         │
+│              │   │ ┌─────────────────────┐ │         │
+│              │   │ │ 🟦 go_to_profile    │ │         │
+│              │   │ ├─────────────────────┤ │         │
+│              │   │ │ 🟨 extract_id       │ │         │
+│              │   │ ├─────────────────────┤ │         │
+│              │   │ │ 🟦 back_to_lobby    │ │         │
+│              │   │ └─────────────────────┘ │         │
+│              │   └────────┬────────────────┘         │
+│              │            │                          │
+│              │   ┌────────▼────────────────┐         │
+│              │   │ 🟪 IF state == IN_CITY  │         │
+│              │   │   THEN: scan_full       │         │
+│              │   │   ELSE: startup_to_lobby│         │
+│              │   └─────────────────────────┘         │
+└──────────────┴───────────────────────────────────────┘
+```
+
+### Đặc điểm chính
+- Sử dụng **Google Blockly** (hoặc custom) để render visual blocks
+- Blocks tự động generate từ backend function registry
+- Hỗ trợ **REPEAT**, **IF/ELSE**, **WAIT_UNTIL** control blocks
+- Export workflow thành JSON schema
+
+✅ **Pros:**
+- Hỗ trợ **branching** và **loops** — workflow phức tạp hơn
+- Rất intuitive cho non-developer — kéo thả block
+- Google Blockly là mature library, nhiều tài liệu
+- Visual nesting thể hiện logic flow rõ ràng
+
+❌ **Cons:**
+- **Effort cao** — tích hợp Blockly + custom block definitions
+- Overkill nếu 90% workflow chỉ là linear sequence
+- Blockly có style riêng, khó match với dark theme hiện tại
+- Mobile/responsive kém
+
+📊 **Effort:** High
+
+---
+
+## Option C: **Recipe Builder** — Template-first + Custom Compose ⭐
+
+> Kết hợp **pre-built recipe templates** với khả năng **custom compose**. User chọn template sẵn (Farm Loop, Full Scan, ID Extraction) rồi customize, hoặc build from scratch.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Workflow Builder                              [▶ Run]   │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ 📋 TEMPLATES              🔧 MY WORKFLOWS               │
+│ ┌───────────┐ ┌──────────┐ ┌───────────┐               │
+│ │ 🔄 Farm   │ │ 🆔 ID    │ │ ⚡ Custom │               │
+│ │   Loop    │ │ Extract  │ │   #1      │               │
+│ │ 5 steps   │ │ 4 steps  │ │ 12 steps  │               │
+│ └───────────┘ └──────────┘ └───────────┘               │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│ EDITING: Farm Loop                    [Save] [Delete]   │
+│                                                         │
+│ Target │ 🎯 Emulator Group: [All Farming ▼]             │
+│ ───────┼───────────────────────────────────────────     │
+│   1.   │ 🚀 Boot to Lobby         timeout: [120s]      │
+│        │    startup_to_lobby                            │
+│ ── + ──┼─────────────────────────────────────────       │
+│   2.   │ ⚡ Run Macro              file: [FARM +4 ▼]   │
+│        │    script-run              loop: [1]           │
+│ ── + ──┼─────────────────────────────────────────       │
+│   3.   │ ⏳ Wait                   seconds: [30]       │
+│        │    flow-delay                                  │
+│ ── + ──┼─────────────────────────────────────────       │
+│   4.   │ 🔍 Full Scan              save: [✓ DB]        │
+│        │    full_scan                                   │
+│ ── + ──┼─────────────────────────────────────────       │
+│   5.   │ ↩️ Back to Lobby                               │
+│        │    back_to_lobby                               │
+│ ───────┴─────────────────────────────────────────       │
+│                                                         │
+│ [+ Add Step]         Estimated run time: ~3 min         │
+│                                                         │
+│ 📊 EXECUTION                                            │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ Step 1/5: startup_to_lobby ▶ Running...   [00:45]  │ │
+│ │ [████████████░░░░░░░░]  60%                        │ │
+│ │ Current State: LOADING SCREEN                       │ │
+│ │ Last Screenshot: [thumbnail]                        │ │
+│ └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Đặc điểm chính
+- **Template Gallery** ở trên: pre-built recipes cho use cases phổ biến
+- **Step Editor** ở giữa: linear nhưng với **[+ Add Step]** button giữa mỗi step
+- **Function picker** dạng dropdown/modal khi thêm step — categories giống current palette
+- **Execution panel** ở dưới: progress bar + current state + mini screenshot
+- Templates lưu dạng JSON, có thể share/import/export
+
+### Khác biệt với V2 hiện tại
+| V2 Hiện tại | Recipe Builder V3 |
+|-------------|-------------------|
+| Hardcoded palette actions | API-driven function registry |
+| setTimeout demo only | Real API execution + WebSocket progress |
+| No save/load | JSON persistence + named workflows |
+| No templates | Pre-built recipe templates |
+| No execution feedback | Real-time state + screenshot thumbnail |
+
+✅ **Pros:**
+- **Dễ tiếp cận** — template-first approach, user không cần biết functions
+- **Flexible** — vẫn có thể build from scratch nếu muốn
+- Execution panel hiển thị **real-time feedback** (state detection + screenshot)
+- **Moderate effort** — evolution of V2, không cần rewrite từ đầu
+- Save/Load/Share workflows dễ dàng
+- Mobile-friendly layout (vertical stack)
+
+❌ **Cons:**
+- Vẫn **linear only** — không hỗ trợ branching phức tạp
+- Templates cần maintain — thêm function mới cần update templates
+- Với power users muốn conditional logic sẽ thiếu
+
+📊 **Effort:** Medium
+
+---
+
+## 💡 Recommendation
+
+**Option C: Recipe Builder** là lựa chọn tối ưu nhất vì:
+
+1. **Phù hợp use case thực tế** — đa số workflow game bot là linear sequence (boot → farm → scan → back). Branching hiếm khi cần.
+2. **Low barrier** — Templates cho phép user mới bắt đầu ngay mà không cần hiểu từng function.
+3. **Buildable** — Là evolution tự nhiên từ V2 hiện tại. Không cần thêm library ngoài (Blockly).
+4. **Real-time feedback** — WebSocket + State Detection tạo trải nghiệm "sống" khi chạy workflow.
+
+### Phasing khuyến nghị
+
+| Phase | Nội dung | Effort |
+|-------|----------|--------|
+| **Phase 1** | Backend Function Registry API + Step Editor UI | 1-2 ngày |
+| **Phase 2** | Real execution via API + WebSocket progress | 1-2 ngày |
+| **Phase 3** | Template gallery + Save/Load | 1 ngày |
+| **Phase 4** | Live preview (screenshot thumbnail) | 1 ngày |
+
+---
+
+> **Bạn muốn explore hướng nào? Hoặc có ý tưởng nào khác muốn kết hợp?**

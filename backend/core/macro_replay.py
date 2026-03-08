@@ -13,12 +13,12 @@ Coordinate System:
     When replaying on a different resolution, coordinates are
     proportionally scaled.
 """
+
 import json
 import time
 import asyncio
 import threading
 import subprocess
-import os
 from datetime import datetime
 from backend.config import config
 
@@ -46,7 +46,10 @@ def _get_target_resolution(serial: str) -> tuple:
     try:
         result = subprocess.run(
             [config.adb_path, "-s", serial, "shell", "wm", "size"],
-            capture_output=True, text=True, timeout=5, encoding="utf-8",
+            capture_output=True,
+            text=True,
+            timeout=5,
+            encoding="utf-8",
         )
         # Output: "Physical size: 960x540"
         for line in result.stdout.strip().splitlines():
@@ -61,20 +64,30 @@ def _get_target_resolution(serial: str) -> tuple:
 def _adb_tap(serial: str, x: int, y: int):
     """Send a tap event via ADB."""
     subprocess.run(
-        [config.adb_path, "-s", serial, "shell",
-         "input", "tap", str(x), str(y)],
-        capture_output=True, timeout=5,
+        [config.adb_path, "-s", serial, "shell", "input", "tap", str(x), str(y)],
+        capture_output=True,
+        timeout=5,
     )
 
 
-def _adb_swipe(serial: str, x1: int, y1: int, x2: int, y2: int,
-               duration_ms: int = 200):
+def _adb_swipe(serial: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 200):
     """Send a swipe event via ADB."""
     subprocess.run(
-        [config.adb_path, "-s", serial, "shell",
-         "input", "swipe",
-         str(x1), str(y1), str(x2), str(y2), str(duration_ms)],
-        capture_output=True, timeout=10,
+        [
+            config.adb_path,
+            "-s",
+            serial,
+            "shell",
+            "input",
+            "swipe",
+            str(x1),
+            str(y1),
+            str(x2),
+            str(y2),
+            str(duration_ms),
+        ],
+        capture_output=True,
+        timeout=10,
     )
 
 
@@ -96,9 +109,7 @@ def parse_record(filepath: str) -> dict:
     }
 
 
-def _convert_coord(record_x, record_y,
-                    record_w, record_h,
-                    target_w, target_h):
+def _convert_coord(record_x, record_y, record_w, record_h, target_w, target_h):
     """Convert .record coordinates to ADB pixel coordinates.
 
     .record coords = pixel * 12 (in the recording resolution).
@@ -128,8 +139,9 @@ def _run_db_async(coro):
         return asyncio.run(coro)
 
 
-def _replay_worker(serial: str, filepath: str, filename: str,
-                    emu_index: int = -1, ws_callback=None):
+def _replay_worker(
+    serial: str, filepath: str, filename: str, emu_index: int = -1, ws_callback=None
+):
     """Background thread that replays a macro on one emulator.
 
     Processes operations sequentially with proper timing:
@@ -164,20 +176,23 @@ def _replay_worker(serial: str, filepath: str, filename: str,
         # ── Persist to DB ──
         try:
             from backend.storage.database import database
+
             resolution = f"{rec_w}x{rec_h}"
             macro_id = _run_db_async(
                 database.upsert_macro(
-                    filename=filename, resolution=resolution,
-                    duration_ms=duration_ms, file_path=filepath,
+                    filename=filename,
+                    resolution=resolution,
+                    duration_ms=duration_ms,
+                    file_path=filepath,
                 )
             )
-            emu_id = _run_db_async(
-                database.upsert_emulator(emu_index, serial)
-            )
+            emu_id = _run_db_async(database.upsert_emulator(emu_index, serial))
             db_run_id = _run_db_async(
                 database.save_macro_run(
-                    macro_id=macro_id, emulator_id=emu_id,
-                    status="running", ops_total=touch_count,
+                    macro_id=macro_id,
+                    emulator_id=emu_id,
+                    status="running",
+                    ops_total=touch_count,
                 )
             )
         except Exception as db_err:
@@ -198,12 +213,15 @@ def _replay_worker(serial: str, filepath: str, filename: str,
             }
 
         if ws_callback:
-            ws_callback("macro_started", {
-                "serial": serial,
-                "filename": filename,
-                "total_ops": touch_count,
-                "duration_ms": duration_ms,
-            })
+            ws_callback(
+                "macro_started",
+                {
+                    "serial": serial,
+                    "filename": filename,
+                    "total_ops": touch_count,
+                    "duration_ms": duration_ms,
+                },
+            )
 
         last_ws_time = 0
         for loop in range(loop_times):
@@ -242,8 +260,12 @@ def _replay_worker(serial: str, filepath: str, filename: str,
                     p = points[0]
                     state = p.get("state", 0)
                     ax, ay = _convert_coord(
-                        p["x"], p["y"],
-                        rec_w, rec_h, tgt_w, tgt_h,
+                        p["x"],
+                        p["y"],
+                        rec_w,
+                        rec_h,
+                        tgt_w,
+                        tgt_h,
                     )
 
                     if state == 1:
@@ -260,10 +282,12 @@ def _replay_worker(serial: str, filepath: str, filename: str,
                         if dx > 10 or dy > 10:
                             # Significant movement → swipe
                             swipe_dur = max(50, dt)
-                            _adb_swipe(serial,
-                                       down_pos[0], down_pos[1],
-                                       ax, ay, swipe_dur)
-                            print(f"[MacroReplay] swipe ({down_pos[0]},{down_pos[1]}) → ({ax},{ay}) {swipe_dur}ms")
+                            _adb_swipe(
+                                serial, down_pos[0], down_pos[1], ax, ay, swipe_dur
+                            )
+                            print(
+                                f"[MacroReplay] swipe ({down_pos[0]},{down_pos[1]}) → ({ax},{ay}) {swipe_dur}ms"
+                            )
                         else:
                             # Tap at down position
                             _adb_tap(serial, down_pos[0], down_pos[1])
@@ -279,12 +303,15 @@ def _replay_worker(serial: str, filepath: str, filename: str,
                         if ws_callback:
                             now = time.time()
                             if completed == touch_count or (now - last_ws_time) >= 1.0:
-                                ws_callback("macro_progress", {
-                                    "serial": serial,
-                                    "filename": filename,
-                                    "completed": completed,
-                                    "total": touch_count,
-                                })
+                                ws_callback(
+                                    "macro_progress",
+                                    {
+                                        "serial": serial,
+                                        "filename": filename,
+                                        "completed": completed,
+                                        "total": touch_count,
+                                    },
+                                )
                                 last_ws_time = now
 
         # Done
@@ -300,9 +327,11 @@ def _replay_worker(serial: str, filepath: str, filename: str,
         if db_run_id:
             try:
                 from backend.storage.database import database
+
                 _run_db_async(
                     database.update_macro_run(
-                        run_id=db_run_id, status="completed",
+                        run_id=db_run_id,
+                        status="completed",
                         ops_completed=touch_count,
                         finished_at=datetime.now().isoformat(),
                     )
@@ -311,14 +340,18 @@ def _replay_worker(serial: str, filepath: str, filename: str,
                 print(f"[MacroReplay] DB update warning: {db_err}")
 
         if ws_callback:
-            ws_callback("macro_completed", {
-                "serial": serial,
-                "filename": filename,
-                "elapsed_ms": int(elapsed * 1000),
-            })
+            ws_callback(
+                "macro_completed",
+                {
+                    "serial": serial,
+                    "filename": filename,
+                    "elapsed_ms": int(elapsed * 1000),
+                },
+            )
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         with _lock:
             if key in _running_macros:
@@ -329,9 +362,11 @@ def _replay_worker(serial: str, filepath: str, filename: str,
         if db_run_id:
             try:
                 from backend.storage.database import database
+
                 _run_db_async(
                     database.update_macro_run(
-                        run_id=db_run_id, status="failed",
+                        run_id=db_run_id,
+                        status="failed",
                         error=str(e),
                         finished_at=datetime.now().isoformat(),
                     )
@@ -340,21 +375,23 @@ def _replay_worker(serial: str, filepath: str, filename: str,
                 pass
 
         if ws_callback:
-            ws_callback("macro_failed", {
-                "serial": serial,
-                "filename": filename,
-                "error": str(e),
-            })
+            ws_callback(
+                "macro_failed",
+                {
+                    "serial": serial,
+                    "filename": filename,
+                    "error": str(e),
+                },
+            )
 
 
-def start_replay(index: int, filepath: str, filename: str,
-                  ws_callback=None) -> dict:
+def start_replay(index: int, filepath: str, filename: str, ws_callback=None) -> dict:
     """Start replaying a macro in a background thread."""
     serial = _get_adb_serial(index)
     key = f"{serial}:{filename}"
 
     with _lock:
-        existing = _running_macros.get(key) 
+        existing = _running_macros.get(key)
         if existing and existing.get("status") == "running":
             return {"success": False, "error": "Macro already running"}
 

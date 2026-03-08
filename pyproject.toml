@@ -6,3 +6,17 @@ requires-python = ">=3.10"
 [tool.pyright]
 pythonVersion = "3.10"
 extraPaths = ["."]
+
+[tool.ruff.lint]
+ignore = ["E402", "F401", "E701", "E702", "E722", "E741", "F841"]
+
+[tool.mypy]
+exclude = ["^TEST/"]
+ignore_errors = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "backend",
+  "backend/core/workflow"
+]

@@ -2,6 +2,7 @@
 OCR Engine — Image processing and text extraction pipeline.
 Enhanced from cod_app_sync.py with dual-strategy OCR.
 """
+
 import cv2
 import numpy as np
 import pytesseract
@@ -63,18 +64,24 @@ class OCREngine:
             return None
         return roi
 
-    def preprocess(self, roi: np.ndarray, scale: float = 2.0, invert: bool = True) -> np.ndarray:
+    def preprocess(
+        self, roi: np.ndarray, scale: float = 2.0, invert: bool = True
+    ) -> np.ndarray:
         """Standard preprocessing: scale up, grayscale, threshold, border."""
         if roi is None or roi.size == 0:
             return roi
-        scaled = cv2.resize(roi, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        scaled = cv2.resize(
+            roi, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
+        )
         gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         if invert:
             final = cv2.bitwise_not(thresh)
         else:
             final = thresh
-        final = cv2.copyMakeBorder(final, 10, 10, 15, 15, cv2.BORDER_CONSTANT, value=255)
+        final = cv2.copyMakeBorder(
+            final, 10, 10, 15, 15, cv2.BORDER_CONSTANT, value=255
+        )
         return final
 
     def ocr_text(self, img: np.ndarray, whitelist: str = None) -> str:
@@ -92,7 +99,7 @@ class OCREngine:
 
     def ocr_pet_token(self, roi: np.ndarray) -> str:
         """Dual-strategy OCR for pet token (small, tricky region).
-        
+
         Pipeline A: Standard scale x4
         Pipeline B: Erode + threshold
         Picks the longer result.
@@ -103,14 +110,22 @@ class OCREngine:
         # Pipeline A: Standard
         scaled = cv2.resize(roi, None, fx=4.0, fy=4.0, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
-        _, thresh_a = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        img_a = cv2.copyMakeBorder(thresh_a, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+        _, thresh_a = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        img_a = cv2.copyMakeBorder(
+            thresh_a, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255
+        )
 
         # Pipeline B: Erode
         kernel = np.ones((2, 2), np.uint8)
         gray_b = cv2.erode(gray, kernel, iterations=1)
-        _, thresh_b = cv2.threshold(gray_b, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        img_b = cv2.copyMakeBorder(thresh_b, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+        _, thresh_b = cv2.threshold(
+            gray_b, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+        img_b = cv2.copyMakeBorder(
+            thresh_b, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255
+        )
 
         cfg = "--psm 7 -c tessedit_char_whitelist=0123456789"
         text_a = pytesseract.image_to_string(img_a, config=cfg).strip()
@@ -191,6 +206,7 @@ class OCREngine:
 # Lazy singleton — defer creation until config is loaded
 _ocr_engine = None
 
+
 def get_ocr_engine():
     """Return the OCR engine singleton, creating it lazily."""
     global _ocr_engine
@@ -198,10 +214,13 @@ def get_ocr_engine():
         _ocr_engine = OCREngine()
     return _ocr_engine
 
+
 # Alias for backward compatibility
 class _LazyOCRProxy:
     """Proxy that defers OCREngine creation until first attribute access."""
+
     def __getattr__(self, name):
         return getattr(get_ocr_engine(), name)
+
 
 ocr_engine = _LazyOCRProxy()
