@@ -766,9 +766,13 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     """
     Go to Capture Pet Full Phase
     """
-    capture_pet(serial, detector)
-    go_to_pet_sanctuary(serial, detector)
-    release_pet(serial, detector)
+    print(f"[{serial}] Starting Capture Pet Full Phase...")
+    if not capture_pet(serial, detector):
+        return False
+    if not go_to_pet_sanctuary(serial, detector):
+        return False
+    if not release_pet(serial, detector):
+        return False
     return True
 
 
@@ -819,15 +823,23 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     # 7. Tap Start
     print(f"[{serial}] Starting Capture (501, 466)...")
     adb_helper.tap(serial, 501, 466)
-    time.sleep(2)
+    time.sleep(5)  # Wait for UI to react
 
-    print(f"[{serial}] Checking for AUTO_CAPTURE_PET state...")
+    print(f"[{serial}] Checking whether capture started...")
+    # If we are STILL in AUTO_CAPTURE_PET state after tapping Start (and waiting 5s), it means we failed to start
+    # Usually because we don't have enough warrants.
     state = wait_for_state(
         serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=5, check_mode="special"
     )
     if state == "AUTO_CAPTURE_PET":
-        print(f"[{serial}] Not engough warrants to capture pet.")
+        print(f"[{serial}] Not enough warrants to capture pet, or start failed.")
         adb_helper.press_back(serial)
+        time.sleep(2)
+        return False
+        
+    print(f"[{serial}] Capture started successfully. Waiting 600s for completion...")
+    time.sleep(600)
+
     return True
 
 

@@ -402,7 +402,6 @@ ACTIVITY_REGISTRY = [
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_capture_pet", "config": {}},
-            {"function_id": "capture_pet", "config": {}},
         ],
         "config_fields": [],
         "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
