@@ -1014,6 +1014,11 @@ const WF3 = {
         const conf = this._groupConfigs[groupId];
         if (conf && conf.activities && conf.activities[activityId]) {
             const actNode = conf.activities[activityId];
+            // Backward/forward compatibility: trust the metric directly
+            // Backend now computes this exclusively based on server-time YYYY-MM-DD
+            if (actNode.runs_today !== undefined) {
+                return actNode.runs_today || 0;
+            }
             const todayStr = new Date().toLocaleDateString();
             if (actNode.runs_today_date === todayStr) {
                 return actNode.runs_today || 0;

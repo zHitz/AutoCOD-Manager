@@ -425,6 +425,34 @@ async def execute_recipe(
                     resource_type=resource_type,
                 )
 
+            elif fn_id == "check_mail":
+                mail_type = (config or {}).get("mail_type", "all")
+                ok = await asyncio.to_thread(
+                    core_actions.check_mail, serial, detector, mail_type=mail_type
+                )
+
+            elif fn_id == "claim_city_resources":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_city_resources, serial, detector
+                )
+
+            elif fn_id == "train_troops":
+                training_list = []
+                for house in ["infantry", "cavalry", "archer", "mage", "siege"]:
+                    val = str((config or {}).get(f"tier_{house}", "default"))
+                    if val != "skip":
+                        tier = val if val == "default" else int(val)
+                        training_list.append((house, tier))
+
+                ok = await asyncio.to_thread(
+                    core_actions.train_troops, serial, detector, training_list=training_list
+                )
+
+            elif fn_id == "claim_alliance_resource":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_alliance_resource, serial, detector
+                )
+
             elif fn_id == "flow_delay":
                 delay_sec = (config or {}).get("seconds", 10)
                 await log(f"  Waiting {delay_sec}s...", "info")

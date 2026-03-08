@@ -39,7 +39,10 @@ def farm_barbarians(serial: str, detector: GameStateDetector) -> bool:
     # Always return True if successful, False if something broke
     return True
 ```
-*Tip: Always use [wait_for_state](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#191-258) or `detector.check_activity` to verify the screen state instead of relying purely on blindly tapping and sleeping.*
+*Tip: Always use `wait_for_state` or `detector.check_activity` to verify the screen state instead of relying purely on blindly tapping and sleeping.*
+
+> [!IMPORTANT]
+> **Why `return True` matters:** The UI relies on the `account_activity_logs` SQLite database to calculate "Last Run" and UI cooldowns. If your function returns `False` or throws an unhandled error, the backend logs it as `FAILED`, and the UI cooldown will **not** trigger. By returning `True`, you tell the backend the activity succeeded, which enables the `cooldown_minutes` lock in the UI for the next run.
 
 ---
 
@@ -104,10 +107,28 @@ Combine your new function with basic startup functions to create a full end-to-e
             {"function_id": "startup_to_lobby", "config": {}}, # Step A: Boot game
             {"function_id": "nav_to_farm_barbs", "config": {}}, # Step B: Run your logic
         ],
-        "config_fields": [],
+        "config_fields": [
+            {
+                "key": "farm_level",
+                "label": "Barbarian Level",
+                "type": "number",
+                "default": 1,
+            }
+        ],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 120},
     },
 ```
+
+### Passing User Configuration (config_fields)
+If you want to allow users to pass dynamic parameters to your function from the UI, define them in the `config_fields` array.
+The `config_fields` uses a simple layout schema:
+- `key`: The parameter name that will be passed to the executor inside the `config` dict (e.g., `config.get("farm_level")`).
+- `label`: What the user sees in the UI.
+- `type`: Can be `"text"`, `"number"`, or `"select"`.
+- `default`: The default value populated in the UI.
+- `options`: (For `"select"` type only) A list of strings for dropdowns, e.g., `["wood", "stone"]`.
+
+If your activity does not need user input, just leave `"config_fields": []`.
 
 ---
 

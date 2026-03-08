@@ -272,6 +272,77 @@ FUNCTION_REGISTRY = [
             }
         ],
     },
+    {
+        "id": "check_mail",
+        "label": "Check Mail",
+        "category": "Core Actions",
+        "icon": "✉️",
+        "color": "#6366f1",
+        "description": "Checks and claims mail in the game",
+        "params": [
+            {
+                "key": "mail_type",
+                "label": "Mail Type",
+                "type": "select",
+                "default": "all",
+                "options": ["all", "events", "system", "alliance"],
+            }
+        ],
+    },
+    {
+        "id": "claim_city_resources",
+        "label": "Claim City Resources",
+        "category": "Core Actions",
+        "icon": "💰",
+        "color": "#6366f1",
+        "description": "Claims all available resources (Gold, Wood, Ore, Mana) in the city",
+        "params": [],
+    },
+    {
+        "id": "train_troops",
+        "label": "Train Troops",
+        "category": "Core Actions",
+        "icon": "⚔️",
+        "color": "#6366f1",
+        "description": "Trains troops at the specified training houses and tiers",
+        "params": [
+            {
+                "key": "tier_infantry",
+                "label": "Infantry Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default",
+            },
+            {
+                "key": "tier_cavalry",
+                "label": "Cavalry Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default",
+            },
+            {
+                "key": "tier_archer",
+                "label": "Archer Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default",
+            },
+            {
+                "key": "tier_mage",
+                "label": "Mage Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default",
+            },
+            {
+                "key": "tier_siege",
+                "label": "Siege Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default",
+            },
+        ],
+    },
 ]
 
 
@@ -406,6 +477,98 @@ ACTIVITY_REGISTRY = [
         "config_fields": [],
         "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
     },
+    {
+        "id": "claim_mail_reward",
+        "name": "Claim Mail Reward",
+        "icon": "✉️",
+        "description": "Automatically check and claim mail rewards",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "check_mail", "config": {"mail_type": "all"}},
+        ],
+        "config_fields": [
+            {
+                "key": "mail_type",
+                "label": "Mail Type",
+                "type": "select",
+                "options": ["all", "events", "system", "alliance"],
+                "default": "all",
+            },
+        ],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    },
+    {
+        "id": "claim_resources",
+        "name": "Claim Resources",
+        "icon": "💰",
+        "description": "Claim resources in your city",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "claim_city_resources", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    },
+    {
+        "id": "train_troops",
+        "name": "Train Troops",
+        "icon": "⚔️",
+        "description": "Train troops in your city",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "train_troops", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "tier_infantry",
+                "label": "Infantry Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default"
+            },
+            {
+                "key": "tier_cavalry",
+                "label": "Cavalry Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default"
+            },
+            {
+                "key": "tier_archer",
+                "label": "Archer Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default"
+            },
+            {
+                "key": "tier_mage",
+                "label": "Mage Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default"
+            },
+            {
+                "key": "tier_siege",
+                "label": "Siege Tier",
+                "type": "select",
+                "options": ["skip", "default", "1", "2", "3", "4", "5"],
+                "default": "default"
+            }
+        ],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    },
+    {
+        "id": "claim_alliance_resource",
+        "name": "Claim Alliance Resource",
+        "icon": "💎",
+        "description": "Claim alliance territory resources",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "claim_alliance_resource", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    }
 ]
 
 

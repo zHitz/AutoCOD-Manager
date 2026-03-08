@@ -565,21 +565,20 @@ In `backend/core/workflow/workflow_registry.py`, add to `ACTIVITY_REGISTRY`:
 
 ### Step 2: Implement the executor function
 
-In `backend/core/workflow/executor.py` (or the appropriate `core_actions.py`), implement the function referenced by `function_id`:
+In `backend/core/workflow/core_actions.py` (or a dedicated activity script), implement the function referenced by `function_id`:
 
 ```python
-async def nav_to_daily_quest(emulator_index, emulator_name, config, ws_callback):
-    quest_count = config.get("quest_count", 5)
+def nav_to_daily_quest(serial: str, detector: GameStateDetector) -> bool:
     # ... ADB actions here ...
     return True
 ```
 
-Register it in the executor dispatch table:
+Register the routing in `backend/core/workflow/executor.py` inside the dispatch table or `if/elif` block:
 ```python
-FUNCTION_MAP = {
-    ...
-    "nav_to_daily_quest": nav_to_daily_quest,
-}
+        elif fn_id == "nav_to_daily_quest":
+            ok = await asyncio.to_thread(
+                core_actions.nav_to_daily_quest, serial, detector
+            )
 ```
 
 ### Step 3: Done ✅
@@ -650,8 +649,6 @@ UI_MANAGER/
 | Issue | Workaround / Notes |
 |-------|-------------------|
 | **Cross-emulator swap** is a stub | `_handle_cross_emu_swap()` only logs; real LDPlayer kill/launch not yet implemented |
-| **Cooldown enforcement** is frontend-only for now | `last_run` timestamps are saved to the JSON config file, but the backend doesn't validate them before starting |
 | **No retry logic** | If an activity fails mid-execution, the orchestrator marks it as `error` and moves on |
 | **No parallel execution** per group | `run-sequential` is the primary path; `/api/bot/run` (parallel) still exists but uses a different flow |
-| **Recipe Builder drag-and-drop** | Not yet implemented; steps reordered via up/down buttons only |
 | **`ruff` / `mypy` not installed** | Lint checker will fail on Windows without these; safe to ignore for now |

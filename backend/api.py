@@ -1250,6 +1250,41 @@ async def get_activity_config(group_id: int):
                 json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
             )
 
+        # Enrich with live DB metrics (last_run, runs_today) since we do per-account tracking now
+        import aiosqlite
+        from backend.config import config as app_config
+        from datetime import datetime
+        try:
+            today_prefix = datetime.now().strftime('%Y-%m-%d')
+            async with aiosqlite.connect(app_config.db_path) as db:
+                for act_id, act_node in data.get("activities", {}).items():
+                    # Get Last Run
+                    async with db.execute(
+                        """SELECT started_at FROM account_activity_logs 
+                           WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
+                           ORDER BY started_at DESC LIMIT 1""", 
+                        (group_id, act_id)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if row and row[0]:
+                            act_node["last_run"] = row[0]
+                            # Get Runs Today
+                            async with db.execute(
+                                """SELECT COUNT(*) FROM account_activity_logs 
+                                   WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
+                                   AND started_at LIKE ?""", 
+                                (group_id, act_id, f"{today_prefix}%")
+                            ) as cursor2:
+                                count_row = await cursor2.fetchone()
+                                act_node["runs_today"] = count_row[0] if count_row else 0
+                                # Force JS date string match
+                                import time
+                                # In JS, toLocaleDateString() on windows is typically M/D/YYYY
+                                d = datetime.now()
+                                act_node["runs_today_date"] = f"{d.month}/{d.day}/{d.year}"
+        except Exception as db_err:
+            print(f"Error enriching activity config: {db_err}")
+
         return {"status": "ok", "config": data}
     except Exception as e:
         return {"status": "error", "error": str(e)}
