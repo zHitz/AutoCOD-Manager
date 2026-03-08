@@ -1,0 +1,80 @@
+# Detailed Analysis of "Activity Catch Pet"
+
+Based on the codebase analysis, here is a complete breakdown of how **Catch Pet** is currently implemented, and the issues that need to be fixed for it to work reliably.
+
+## 1. Workflow Registration ([workflow_registry.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/workflow_registry.py))
+In [backend/core/workflow/workflow_registry.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/workflow_registry.py) (lines 398-409), the activity is registered as:
+```python
+    {
+        "id": "catch_pet",
+        "name": "Catch Pet",
+        "icon": "🐾",
+        "description": "Capture pet on the world map",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_capture_pet", "config": {}},
+            {"function_id": "capture_pet", "config": {}}, # ❌ BUG 1: Redundant and unhandled
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    },
+```
+
+## 2. Executor Mapping ([executor.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/executor.py))
+In [backend/core/workflow/executor.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/executor.py) (lines 396-398), there is a handler for `nav_to_capture_pet`:
+```python
+            elif fn_id == "nav_to_capture_pet":
+                ok = await asyncio.to_thread(
+                    core_actions.go_to_capture_pet, serial, detector
+                )
+```
+**❌ BUG 2: No handler for [capture_pet](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#775-832) step.** Because [capture_pet](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#775-832) isn't handled in [executor.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/executor.py), the third step of the `catch_pet` activity in [workflow_registry.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/workflow_registry.py) will trigger the fallback warning: `[Warning] Function 'capture_pet' is not implemented yet. Skipping.`
+
+## 3. Core Logic ([core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py))
+The actual logic resides in [backend/core/workflow/core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py). The [go_to_capture_pet](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#765-773) function is actually a wrapper that sequentially executes 3 phases:
+
+```python
+def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Go to Capture Pet Full Phase
+    """
+    capture_pet(serial, detector)
+    go_to_pet_sanctuary(serial, detector)
+    release_pet(serial, detector)
+    return True # ❌ BUG 3: Ignores whether previous steps succeeded.
+```
+
+### ❌ BUG 4: Missing Return Value Checks
+[go_to_capture_pet](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#765-773) completely ignores the return values of its sub-functions. If [capture_pet()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#775-832) fails to find the menu and returns `False`, the script blindly proceeds to [go_to_pet_sanctuary()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#834-864) anyway, causing unexpected clicking/issues.
+
+### Breakdown of the 3 phases:
+1. **[capture_pet()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#775-832)**: 
+    - Navigates from `OUT_CITY` -> Opens Menu Search -> Taps "Darklink Legions" -> Taps "Auto Capture".
+    - Waives to reach `AUTO_CAPTURE_PET` state.
+    - Sets config (taps x5) and taps Start.
+    - **Note:** It has a hardcoded wait of **600 seconds** (`time.sleep(600)`) to let the capture finish. Afterwards, if the state is still `AUTO_CAPTURE_PET`, it assumes "Not engough warrants to capture pet." (typo exists on line 829).
+2. **[go_to_pet_sanctuary()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#834-864)**: 
+    - Goes back to lobby, opens Sanctuary menu. Ensures `PET_SANCTUARY` state is reached.
+3. **[release_pet()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#866-920)**: 
+    - Opens Pet Enclosure, navigates the release tabs, and loops through a sequence of hardcoded coordinates to release 10 pets in total (x5, x3, x2).
+
+## Summary of Fixes Needed
+
+1. **In [workflow_registry.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/workflow_registry.py)**:
+   Remove `{"function_id": "capture_pet", "config": {}}` from the `catch_pet` steps array. `nav_to_capture_pet` already does everything.
+2. **In [core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py)**:
+   Update [go_to_capture_pet](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#765-773) to check return values and abort if something fails:
+   ```python
+   def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
+       print(f"[{serial}] Starting Capture Pet Full Phase...")
+       if not capture_pet(serial, detector):
+           return False
+       if not go_to_pet_sanctuary(serial, detector):
+           return False
+       if not release_pet(serial, detector):
+           return False
+       return True
+   ```
+3. **In [core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py) (Line 829)**: Fix the typo `engough` -> `enough`. All these functions should be closely monitored because there is a 10-minute blocking `sleep(600)` which might timeout the workflow depending on your executor's timeout config.
+
+Let me know if you would like me to apply these fixes for you!
