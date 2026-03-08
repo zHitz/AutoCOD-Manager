@@ -222,6 +222,30 @@ CREATE INDEX IF NOT EXISTS idx_aal_activity_started ON account_activity_logs(act
 CREATE INDEX IF NOT EXISTS idx_aal_status_started   ON account_activity_logs(status, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aal_run              ON account_activity_logs(run_id);
 
+-- Read model for Task page daily grid (account x activity)
+CREATE TABLE IF NOT EXISTS task_daily_state (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                DATE NOT NULL,
+    account_id          INTEGER NOT NULL,
+    game_id             TEXT DEFAULT '',
+    group_id            INTEGER,
+    emulator_id         INTEGER,
+    emulator_name       TEXT DEFAULT '',
+    activity_id         TEXT NOT NULL,
+    activity_name       TEXT DEFAULT '',
+    status              TEXT NOT NULL,
+    last_run            TEXT,
+    runs_today          INTEGER DEFAULT 0,
+    total_duration_ms   INTEGER DEFAULT 0,
+    last_error          TEXT DEFAULT '',
+    UNIQUE(date, account_id, activity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_daily_state_date ON task_daily_state(date);
+CREATE INDEX IF NOT EXISTS idx_task_daily_state_account ON task_daily_state(account_id, date);
+CREATE INDEX IF NOT EXISTS idx_task_daily_state_group ON task_daily_state(date, group_id);
+CREATE INDEX IF NOT EXISTS idx_task_daily_state_activity ON task_daily_state(activity_id, date);
+
 -- Task checklist templates
 CREATE TABLE IF NOT EXISTS task_templates (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1254,6 +1278,129 @@ class Database:
             # Sort all by started_at descending
             results.sort(key=lambda x: x.get("started_at", "") or "", reverse=True)
             return results[:limit]
+
+    async def rebuild_task_daily_state(self, target_date: str) -> int:
+        """Rebuild task_daily_state read model for a specific YYYY-MM-DD date."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
+            # Full rebuild for the requested date to avoid stale rows.
+            await db.execute("DELETE FROM task_daily_state WHERE date = ?", (target_date,))
+
+            # Build daily account x activity state from immutable activity logs.
+            cursor = await db.execute(
+                """
+                WITH daily_logs AS (
+                    SELECT
+                        aal.account_id,
+                        aal.game_id,
+                        aal.group_id,
+                        aal.emulator_id,
+                        aal.activity_id,
+                        aal.activity_name,
+                        aal.status,
+                        aal.started_at,
+                        aal.duration_ms,
+                        aal.error_message,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY aal.account_id, aal.activity_id
+                            ORDER BY aal.started_at DESC, aal.id DESC
+                        ) AS rn
+                    FROM account_activity_logs aal
+                    WHERE date(aal.started_at) = ?
+                ),
+                latest AS (
+                    SELECT
+                        account_id,
+                        game_id,
+                        group_id,
+                        emulator_id,
+                        activity_id,
+                        activity_name,
+                        status,
+                        started_at AS last_run,
+                        error_message
+                    FROM daily_logs
+                    WHERE rn = 1
+                ),
+                agg AS (
+                    SELECT
+                        account_id,
+                        activity_id,
+                        COUNT(*) AS runs_today,
+                        COALESCE(SUM(duration_ms), 0) AS total_duration_ms
+                    FROM daily_logs
+                    GROUP BY account_id, activity_id
+                )
+                SELECT
+                    ? AS date,
+                    l.account_id,
+                    l.game_id,
+                    l.group_id,
+                    l.emulator_id,
+                    COALESCE(e.name, '') AS emulator_name,
+                    l.activity_id,
+                    l.activity_name,
+                    l.status,
+                    l.last_run,
+                    a.runs_today,
+                    a.total_duration_ms,
+                    COALESCE(l.error_message, '') AS last_error
+                FROM latest l
+                JOIN agg a
+                  ON a.account_id = l.account_id
+                 AND a.activity_id = l.activity_id
+                LEFT JOIN emulators e ON l.emulator_id = e.emu_index
+                """,
+                (target_date, target_date),
+            )
+            rows = [dict(r) for r in await cursor.fetchall()]
+
+            for row in rows:
+                await db.execute(
+                    """
+                    INSERT INTO task_daily_state (
+                        date, account_id, game_id, group_id,
+                        emulator_id, emulator_name,
+                        activity_id, activity_name, status,
+                        last_run, runs_today, total_duration_ms, last_error
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(date, account_id, activity_id) DO UPDATE SET
+                        game_id = excluded.game_id,
+                        group_id = excluded.group_id,
+                        emulator_id = excluded.emulator_id,
+                        emulator_name = excluded.emulator_name,
+                        activity_name = excluded.activity_name,
+                        status = excluded.status,
+                        last_run = excluded.last_run,
+                        runs_today = excluded.runs_today,
+                        total_duration_ms = excluded.total_duration_ms,
+                        last_error = excluded.last_error
+                    """,
+                    (
+                        row["date"],
+                        row["account_id"],
+                        row.get("game_id", ""),
+                        row.get("group_id"),
+                        row.get("emulator_id"),
+                        row.get("emulator_name", ""),
+                        row["activity_id"],
+                        row.get("activity_name", row["activity_id"]),
+                        row.get("status", "PENDING"),
+                        row.get("last_run"),
+                        row.get("runs_today", 0),
+                        row.get("total_duration_ms", 0),
+                        row.get("last_error", ""),
+                    ),
+                )
+
+            await db.commit()
+            return len(rows)
+
+    async def rebuild_task_daily_state_for_today(self) -> int:
+        """Convenience utility to rebuild task_daily_state for today's date."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        return await self.rebuild_task_daily_state(today)
 
     async def get_task_runs(
         self, emulator_index: int | None = None, limit: int = 50

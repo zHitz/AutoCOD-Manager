@@ -1461,47 +1461,114 @@ async def get_execution_run_detail(run_id: str):
 # ── Task Checklist API (for Task Monitoring page) ──
 
 
+def _build_task_state_update_payload(
+    account_id: int,
+    activity_id: str,
+    status: str,
+    runs_today: int,
+    last_run: str,
+    error: str = "",
+):
+    """Prepare normalized task_state_update payload for optional WS patch mode."""
+    return {
+        "account_id": account_id,
+        "activity_id": activity_id,
+        "status": status,
+        "runs_today": runs_today,
+        "last_run": last_run,
+        "error": error or None,
+    }
+
+
 @app.get("/api/task/checklist")
-async def get_task_checklist(date: str = None, group_id: int = None):
+async def get_task_checklist(
+    date: str = None,
+    group_id: int = None,
+    page: int = 1,
+    page_size: int = 50,
+):
     """
     Returns activity execution history grouped by account for the Task page.
     Query params: ?date=YYYY-MM-DD&group_id=X
     If date is omitted, defaults to today.
     """
     import aiosqlite
+    import time
     from datetime import datetime as dt_cls
 
     target_date = date or dt_cls.now().strftime("%Y-%m-%d")
+    page = max(int(page or 1), 1)
+    page_size = max(1, min(int(page_size or 50), 200))
+    offset = (page - 1) * page_size
 
     try:
+        t0 = time.perf_counter()
         async with aiosqlite.connect(config.db_path) as db:
             db.row_factory = aiosqlite.Row
 
-            where_parts = ["date(aal.started_at) = ?"]
+            where_parts = ["date = ?"]
             params = [target_date]
 
             if group_id:
-                where_parts.append("aal.group_id = ?")
+                where_parts.append("group_id = ?")
                 params.append(group_id)
 
             where_clause = " AND ".join(where_parts)
 
+            count_query = f"SELECT COUNT(DISTINCT account_id) AS total_accounts FROM task_daily_state WHERE {where_clause}"
+            count_cursor = await db.execute(count_query, params)
+            count_row = await count_cursor.fetchone()
+            total_accounts = int(count_row["total_accounts"] or 0)
+
+            ids_query = f"""
+                SELECT DISTINCT account_id
+                FROM task_daily_state
+                WHERE {where_clause}
+                ORDER BY account_id
+                LIMIT ? OFFSET ?
+            """
+            ids_cursor = await db.execute(ids_query, (*params, page_size, offset))
+            page_account_ids = [r["account_id"] for r in await ids_cursor.fetchall()]
+
+            if not page_account_ids:
+                total_pages = (total_accounts + page_size - 1) // page_size if total_accounts > 0 else 0
+                print(
+                    f"CHECKLIST_API date={target_date} accounts=0 rows=0 query_ms={int((time.perf_counter() - t0) * 1000)}"
+                )
+                return {
+                    "status": "success",
+                    "date": target_date,
+                    "accounts": [],
+                    "summary": {
+                        "total_accounts": 0,
+                        "avg_coverage": 0,
+                    },
+                    "pagination": {
+                        "page": page,
+                        "page_size": page_size,
+                        "total_accounts": total_accounts,
+                        "total_pages": total_pages,
+                    },
+                }
+
+            placeholders = ",".join("?" for _ in page_account_ids)
+
             query = f"""
                 SELECT 
-                    aal.account_id, aal.game_id, aal.emulator_id, aal.group_id,
-                    aal.activity_id, aal.activity_name, aal.status,
-                    aal.error_message, aal.started_at, aal.finished_at,
-                    aal.duration_ms, aal.run_id,
+                    tds.account_id, tds.game_id, tds.emulator_id, tds.group_id,
+                    tds.activity_id, tds.activity_name, tds.status,
+                    tds.last_error, tds.last_run,
+                    tds.runs_today, tds.total_duration_ms,
                     a.lord_name,
-                    e.name AS emulator_name, e.emu_index
-                FROM account_activity_logs aal
-                LEFT JOIN accounts a ON aal.account_id = a.id
-                LEFT JOIN emulators e ON aal.emulator_id = e.emu_index
-                WHERE {where_clause}
-                ORDER BY aal.account_id, aal.started_at DESC
+                    tds.emulator_name
+                FROM task_daily_state tds
+                LEFT JOIN accounts a ON tds.account_id = a.id
+                WHERE tds.date = ?
+                  AND tds.account_id IN ({placeholders})
+                ORDER BY tds.account_id, tds.last_run DESC
             """
 
-            cursor = await db.execute(query, params)
+            cursor = await db.execute(query, (target_date, *page_account_ids))
             rows = [dict(r) for r in await cursor.fetchall()]
 
             accounts_map = {}
@@ -1513,7 +1580,7 @@ async def get_task_checklist(date: str = None, group_id: int = None):
                         "game_id": row["game_id"],
                         "lord_name": row.get("lord_name") or row["game_id"],
                         "emulator_name": row.get("emulator_name")
-                        or f"Emu-{row.get('emu_index', '?')}",
+                        or f"Emu-{row.get('emulator_id', '?')}",
                         "emulator_id": row.get("emulator_id"),
                         "group_id": row.get("group_id"),
                         "activities": {},
@@ -1526,17 +1593,11 @@ async def get_task_checklist(date: str = None, group_id: int = None):
                     act_entry[act_id] = {
                         "activity_name": row["activity_name"],
                         "status": row["status"],
-                        "last_run": row["started_at"],
-                        "runs_today": 0,
-                        "total_duration_ms": 0,
-                        "error": "",
+                        "last_run": row.get("last_run"),
+                        "runs_today": row.get("runs_today") or 0,
+                        "total_duration_ms": row.get("total_duration_ms") or 0,
+                        "error": row.get("last_error") or "",
                     }
-                act_entry[act_id]["runs_today"] += 1
-                act_entry[act_id]["total_duration_ms"] += row.get("duration_ms") or 0
-                if row["started_at"] >= act_entry[act_id]["last_run"]:
-                    act_entry[act_id]["status"] = row["status"]
-                    act_entry[act_id]["last_run"] = row["started_at"]
-                    act_entry[act_id]["error"] = row.get("error_message") or ""
 
             for acc in accounts_map.values():
                 activities = acc["activities"]
@@ -1551,13 +1612,20 @@ async def get_task_checklist(date: str = None, group_id: int = None):
                 }
 
             accounts_list = list(accounts_map.values())
-            total_accounts = len(accounts_list)
+            returned_accounts = len(accounts_list)
             avg_coverage = (
                 round(
-                    sum(a["stats"]["coverage"] for a in accounts_list) / total_accounts
+                    sum(a["stats"]["coverage"] for a in accounts_list)
+                    / returned_accounts
                 )
-                if total_accounts > 0
+                if returned_accounts > 0
                 else 0
+            )
+            total_pages = (total_accounts + page_size - 1) // page_size if total_accounts > 0 else 0
+
+            query_ms = int((time.perf_counter() - t0) * 1000)
+            print(
+                f"CHECKLIST_API date={target_date} accounts={returned_accounts} rows={len(rows)} query_ms={query_ms}"
             )
 
             return {
@@ -1565,11 +1633,27 @@ async def get_task_checklist(date: str = None, group_id: int = None):
                 "date": target_date,
                 "accounts": accounts_list,
                 "summary": {
-                    "total_accounts": total_accounts,
+                    "total_accounts": returned_accounts,
                     "avg_coverage": avg_coverage,
+                },
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_accounts": total_accounts,
+                    "total_pages": total_pages,
                 },
             }
 
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@app.post("/api/task/checklist/rebuild-today")
+async def rebuild_task_checklist_today():
+    """Utility endpoint to rebuild task_daily_state for today."""
+    try:
+        rebuilt = await database.rebuild_task_daily_state_for_today()
+        return {"status": "ok", "rebuilt_rows": rebuilt}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
