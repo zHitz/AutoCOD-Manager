@@ -77,6 +77,36 @@ def launch_instance(index: int) -> bool:
     return True
 
 
+def wait_for_device(index: int, timeout: int = 120) -> bool:
+    """Wait for an emulator to fully boot by checking sys.boot_completed via ADB."""
+    import time
+    from backend.core.workflow import adb_helper
+    
+    serial = f"emulator-{5554 + index * 2}"
+    start_time = time.time()
+    
+    print(f"[{serial}] Waiting for Android to boot completely (timeout: {timeout}s)...")
+    
+    # Wait for adb connection
+    while time.time() - start_time < timeout:
+        out = adb_helper._run_adb(["devices"])
+        device_ready = False
+        for line in out.splitlines():
+            if serial in line and "offline" not in line and "unauthorized" not in line:
+                device_ready = True
+                break
+                
+        if device_ready:
+            # Device attached, check boot_completed
+            prop = adb_helper._run_adb(["-s", serial, "shell", "getprop", "sys.boot_completed"])
+            if prop and prop.strip() == "1":
+                print(f"[{serial}] Android boot completed.")
+                return True
+        time.sleep(2)
+        
+    print(f"[{serial}] Timeout waiting for Android boot.")
+    return False
+
 def quit_instance(index: int) -> bool:
     """Stop an emulator by index."""
     _run(["quit", "--index", str(index)], timeout=15)

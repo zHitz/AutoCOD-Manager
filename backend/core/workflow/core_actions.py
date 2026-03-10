@@ -27,6 +27,7 @@ def ensure_app_running(serial: str, package_name: str, adb_path: str = config.ad
     """Checks if the app is active, and boots it if it's not. Returns True if it was already running."""
     if not clipper_helper.is_app_foreground(adb_path, serial, package_name):
         clipper_helper.open_app(adb_path, serial, package_name)
+        time.sleep(10)
         return False
     return True
 
@@ -212,7 +213,7 @@ def extract_player_id(serial: str, detector: GameStateDetector, adb_path: str = 
     
     return None
 
-def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 15, target_lobby: str = None) -> bool:
+def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 5, target_lobby: str = None) -> bool:
     """
     Intelligently navigates back to the main Lobby from ANY state.
     Handles edge cases:
@@ -229,6 +230,28 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
     
     print(f"[{serial}] === BACK TO LOBBY ===")
     
+    # 0. Validator: Ensure emulator is online and game is running
+    # If the app crashed or emulator disconnected, we catch it early here
+    was_running = ensure_app_running(serial, "com.farlightgames.samo.gp.vn", config.adb_path)
+    if not was_running:
+        print(f"[{serial}] [WARNING] Game was not running during back_to_lobby! Attempting to wait for lobby...")
+        # Since it wasn't running, it was just booted. Wait for it to hit lobby.
+        lobby_ok = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
+        if not lobby_ok:
+            print(f"[{serial}] [FAILED] Game did not load into Lobby after booting.")
+            return False
+        # If it reached lobby, we can proceed with swap check
+        current_state = detector.check_state(serial)
+        if target_lobby and current_state != target_lobby:
+            print(f"[{serial}] -> Swapping to {target_lobby}...")
+            adb_helper.tap(serial, 50, 500)
+            swapped = wait_for_state(serial, detector, [target_lobby], timeout_sec=10)
+            if not swapped:
+                print(f"[{serial}] [WARNING] Could not swap to {target_lobby}.")
+                return False
+            print(f"[{serial}] -> Swapped to {target_lobby}.")
+        return True
+
     known_state_back_count = 0   # How many times we pressed back on the same known state
     last_known_state = None      # Track the last known state to count consecutive backs
     unknown_start_time = None    # Timer for UNKNOWN grace period
@@ -454,6 +477,15 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> b
 
 def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     """
+    Go to Capture Pet Full Phase
+    """
+    capture_pet(serial, detector)
+    go_to_pet_sanctuary(serial, detector)
+    release_pet(serial, detector)
+    return True
+    
+def capture_pet(serial: str, detector: GameStateDetector) -> bool:
+    """
     Navigates from OUT_CITY to Auto Capture Pet screen and starts capture.
     Returns True if capture was started successfully.
     """
@@ -463,21 +495,21 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return False
-        
+
     # 2. Tap Menu search
     print(f"[{serial}] Opening Search Menu (42, 422)...")
     adb_helper.tap(serial, 42, 422)
     time.sleep(3)
     
     # 3. Tap Menu search Pet
-    print(f"[{serial}] Selecting Pet Search (304, 209)...")
-    adb_helper.tap(serial, 304, 209)
-    time.sleep(3)
+    print(f"[{serial}] Selecting Darklink Legions (158, 486)...")
+    adb_helper.tap(serial, 158, 486)
+    time.sleep(2)
 
     # 4. Tap Auto Capture submenu
     print(f"[{serial}] Selecting Auto Capture (285, 400)...")
     adb_helper.tap(serial, 285, 400)
-    time.sleep(3)
+    time.sleep(2)
 
     # 5. Verify state AUTO_CAPTURE_PET
     print(f"[{serial}] Waiting for AUTO_CAPTURE_PET state...")
@@ -491,13 +523,19 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] Configuring Pet Capture (284, 398) x5...")
     for _ in range(5):
         adb_helper.tap(serial, 284, 398)
-        time.sleep(1)
-    time.sleep(3)
+        time.sleep(0.05)
+    time.sleep(2)
     
     # 7. Tap Start
     print(f"[{serial}] Starting Capture (501, 466)...")
     adb_helper.tap(serial, 501, 466)
     time.sleep(2)
+
+    print(f"[{serial}] Checking for AUTO_CAPTURE_PET state...")
+    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=5, check_mode="special")
+    if state == "AUTO_CAPTURE_PET":
+        print(f"[{serial}] Not engough warrants to capture pet.")
+        adb_helper.press_back(serial)
     return True
 
 def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
@@ -1238,13 +1276,10 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     print(f"[{serial}] === SWAP ACCOUNT: {target_account} ===")
 
-    # 1. Ensure we're in LOBBY first
-    current = detector.check_state(serial)
-    if current not in LOBBY_STATES:
-        print(f"[{serial}] Not in Lobby ({current}). Navigating back...")
-        if not back_to_lobby(serial, detector):
-            print(f"[{serial}] swap_account failed: Could not reach lobby.")
-            return False
+    # 1. Ensure we're in LOBBY first (and game is running)
+    if not startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp.vn", load_timeout=120):
+        print(f"[{serial}] swap_account failed: Could not reach lobby.")
+        return False
 
     # 2. Navigate to Profile
     print(f"[{serial}] Step 1/6: Opening Profile...")

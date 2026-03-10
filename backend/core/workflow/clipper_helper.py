@@ -91,4 +91,16 @@ def open_app(adb_path: str, serial: str, package_name: str):
     ]
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    subprocess.run(cmd, startupinfo=startupinfo, capture_output=True)
+    
+    import time
+    for attempt in range(3):
+        res = subprocess.run(cmd, startupinfo=startupinfo, capture_output=True, text=True)
+        if "No activities found to run" in res.stdout or "Error:" in res.stdout or "Error:" in res.stderr:
+            print(f"[WARNING] App launch attempt {attempt+1} failed. Output: {res.stdout.strip()} {res.stderr.strip()}")
+            time.sleep(3)
+        else:
+            if attempt > 0:
+                print(f"[INFO] App launched successfully on attempt {attempt+1}.")
+            return
+            
+    print(f"[ERROR] Failed to launch app {package_name} after 3 attempts.")
