@@ -1538,6 +1538,7 @@ async def get_task_checklist(
 
     try:
         t0 = time.perf_counter()
+        await database.rebuild_task_daily_state(target_date)
         async with aiosqlite.connect(config.db_path) as db:
             db.row_factory = aiosqlite.Row
 
@@ -1786,6 +1787,9 @@ async def mark_task_checklist(body: dict):
                 }
 
             await db.commit()
+
+            target_date = dt_cls.now().strftime("%Y-%m-%d")
+            await database.rebuild_task_daily_state(target_date)
             return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "error": str(e)}

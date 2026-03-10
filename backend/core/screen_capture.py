@@ -1,11 +1,12 @@
 """
-Screen Capture — ADB-based screenshot pipeline for game data extraction.
+Screen Capture - ADB-based screenshot pipeline for game data extraction.
 
 Navigates through 5 game phases using robust state-based navigation via core_actions,
 captures screenshots, crops relevant regions, and combines them into a single PDF.
 """
 
 import os
+import time
 import cv2
 from PIL import Image, ImageOps
 
@@ -23,6 +24,25 @@ REGIONS_MAP = {
 }
 
 
+def _log_capture(
+    serial: str,
+    level: str,
+    message: str,
+    *,
+    phase: str | None = None,
+    step: int | None = None,
+    total: int | None = None,
+):
+    timestamp = time.strftime("%H:%M:%S")
+    parts = [f"[{timestamp}]", "[Capture]", f"[{serial}]"]
+    if phase:
+        parts.append(f"[phase={phase}]")
+    if step is not None and total is not None:
+        parts.append(f"[step={step}/{total}]")
+    parts.append(f"[{level}]")
+    print(" ".join(parts + [message]))
+
+
 def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
     """Combine multiple images into a single-page PDF with OCR enhancements."""
     try:
@@ -30,8 +50,8 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
         for p in image_paths:
             if not os.path.exists(p):
                 continue
-            img = Image.open(p).convert("L")  # grayscale for better OCR
-            img = ImageOps.autocontrast(img)  # enhance contrast
+            img = Image.open(p).convert("L")
+            img = ImageOps.autocontrast(img)
             images.append(img.convert("RGB"))
 
         if not images:
@@ -46,17 +66,15 @@ def combine_to_pdf(image_paths: list[str], output_path: str) -> bool:
             canvas.paste(img, (0, y_offset))
             y_offset += img.height
 
-        # Upscale canvas for OCR
-        SCALE = 4
+        scale = 4
         canvas = canvas.resize(
-            (canvas.width * SCALE, canvas.height * SCALE), Image.Resampling.LANCZOS
+            (canvas.width * scale, canvas.height * scale), Image.Resampling.LANCZOS
         )
 
         canvas.save(output_path, "PDF", resolution=300.0)
-        print(f"[Capture] PDF created successfully at: {output_path}")
         return True
     except Exception as e:
-        print(f"[Capture] PDF creation failed: {e}")
+        _log_capture("N/A", "ERROR", f"PDF creation failed: {e}")
         return False
 
 
@@ -91,7 +109,6 @@ def run_full_capture_modern(
     phases = ["profile", "resources", "hall", "market", "pet_token"]
     all_crops = []
 
-    # Map phases to navigation actions
     nav_actions = {
         "profile": core_actions.go_to_profile_details,
         "resources": core_actions.go_to_resources,
@@ -109,39 +126,87 @@ def run_full_capture_modern(
         if progress_callback:
             progress_callback(phase, step, total)
 
-        print(f"[Capture] Phase {step}/{total}: {phase} on {serial}")
+        _log_capture(serial, "INFO", "Phase started.", phase=phase, step=step, total=total)
 
-        # 1. Enforce Lobby starting state for each phase
         if not core_actions.back_to_lobby(serial, detector):
-            print(f"[Capture] Failed to reach Lobby before {phase}. Aborting capture.")
+            _log_capture(
+                serial,
+                "ERROR",
+                "Failed to reach Lobby before navigation. Aborting capture.",
+                phase=phase,
+                step=step,
+                total=total,
+            )
             return None
 
-        # 2. Navigate to target screen
         nav_func = nav_actions.get(phase)
         if nav_func:
-            nav_func(serial, detector)
+            _log_capture(
+                serial,
+                "INFO",
+                "Navigation to target screen started.",
+                phase=phase,
+                step=step,
+                total=total,
+            )
+            nav_ok = nav_func(serial, detector)
+            if nav_ok is False:
+                _log_capture(
+                    serial,
+                    "WARNING",
+                    "Navigation function reported failure. Continuing to attempt screenshot for diagnostics.",
+                    phase=phase,
+                    step=step,
+                    total=total,
+                )
         else:
-            print(f"[Capture] No navigation defined for {phase}.")
+            _log_capture(
+                serial,
+                "WARNING",
+                "No navigation defined for phase.",
+                phase=phase,
+                step=step,
+                total=total,
+            )
 
-        # 3. Capture screenshot
         screenshot_path = os.path.join(device_dir, f"{phase}_full.png")
+        _log_capture(
+            serial,
+            "INFO",
+            f"Capturing screenshot to: {screenshot_path}",
+            phase=phase,
+            step=step,
+            total=total,
+        )
         success = adb_helper.screencap(serial, screenshot_path)
 
         if success:
-            # 4. Crop
             crops = crop_regions(screenshot_path, phase, device_dir)
             all_crops.extend(crops)
+            _log_capture(
+                serial,
+                "INFO",
+                f"Screenshot captured. Generated {len(crops)} crop(s).",
+                phase=phase,
+                step=step,
+                total=total,
+            )
         else:
-            print(f"[Capture] Failed to capture screenshot for {phase}")
+            _log_capture(
+                serial,
+                "ERROR",
+                "ADB screencap failed for phase.",
+                phase=phase,
+                step=step,
+                total=total,
+            )
 
-    # Return to lobby at the end of the full capture
     core_actions.back_to_lobby(serial, detector)
 
     if not all_crops:
-        print(f"[Capture] No images captured for {serial}")
+        _log_capture(serial, "ERROR", "No cropped images were generated for this scan.")
         return None
 
-    # 5. Combine to PDF in expected order
     expected_order = [
         os.path.join(device_dir, "resources_resources_area.png"),
         os.path.join(device_dir, "profile_profile_area.png"),
@@ -150,9 +215,16 @@ def run_full_capture_modern(
         os.path.join(device_dir, "pet_token_pet_token_area.png"),
     ]
     ordered_crops = [p for p in expected_order if os.path.exists(p)]
+    _log_capture(
+        serial,
+        "INFO",
+        f"Combining {len(ordered_crops)} ordered crop(s) into a single PDF.",
+    )
 
     pdf_path = os.path.join(device_dir, "COMBINED_OCR.pdf")
     if combine_to_pdf(ordered_crops, pdf_path):
+        _log_capture(serial, "SUCCESS", f"PDF created successfully at: {pdf_path}")
         return pdf_path
 
+    _log_capture(serial, "ERROR", "PDF combination failed.")
     return None

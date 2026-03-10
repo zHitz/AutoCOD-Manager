@@ -1,3 +1,8 @@
+function getLocalDateInputValue(date = new Date()) {
+    const offsetMs = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
 const TaskPage = {
     _accounts: [],
     _filteredAccounts: [],
@@ -10,8 +15,9 @@ const TaskPage = {
     _isLoading: false,
     _hasLoadedRealData: false,
     _wsSetup: false,
+    _loadError: '',
 
-    _selectedDate: new Date().toISOString().slice(0, 10),
+    _selectedDate: getLocalDateInputValue(),
     _selectedGroupId: '',
     _groups: [],
     _activityRegistry: [],
@@ -24,25 +30,65 @@ const TaskPage = {
     _wsPatchQueue: new Map(),
     _wsPatchTimer: null,
 
+    async _safeFetchJson(url, fallbackValue) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return { ok: true, data: await response.json() };
+        } catch (error) {
+            console.warn(`[TaskPage] Request failed for ${url}:`, error);
+            return { ok: false, data: fallbackValue, error };
+        }
+    },
+
+    _getGroupAccountIds(group) {
+        const raw = group?.account_ids;
+        if (Array.isArray(raw)) return raw.map(Number).filter(Boolean);
+        if (typeof raw === 'string' && raw.trim()) {
+            try {
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed.map(Number).filter(Boolean) : [];
+            } catch (error) {
+                console.warn('[TaskPage] Failed to parse group account_ids:', error);
+            }
+        }
+        return [];
+    },
+
     async _loadRealData() {
         this._isLoading = true;
+        this._loadError = '';
         try {
             const dateStr = this._selectedDate;
             const groupParam = this._selectedGroupId ? `&group_id=${this._selectedGroupId}` : '';
             const pagingParam = `&page=${this._page}&page_size=${this._pageSize}`;
 
-            const [checklistRes, registryRes, allAccounts, groupsRes, templatesRes] = await Promise.all([
-                fetch(`/api/task/checklist?date=${dateStr}${groupParam}${pagingParam}`).then((res) => (res.ok ? res.json() : {})),
-                fetch('/api/workflow/activity-registry').then((res) => (res.ok ? res.json() : {})),
-                fetch('/api/accounts').then((res) => (res.ok ? res.json() : [])),
-                fetch('/api/groups').then((res) => (res.ok ? res.json() : {})),
-                fetch('/api/task/checklist/templates').then((res) => (res.ok ? res.json() : {}))
+            const [checklistResult, registryResult, accountsResult, groupsResult, templatesResult] = await Promise.all([
+                this._safeFetchJson(`/api/task/checklist?date=${dateStr}${groupParam}${pagingParam}`, {}),
+                this._safeFetchJson('/api/workflow/activity-registry', {}),
+                this._safeFetchJson('/api/accounts', []),
+                this._safeFetchJson('/api/groups', []),
+                this._safeFetchJson('/api/task/checklist/templates', {})
             ]);
 
-            this._activityRegistry = Array.isArray(registryRes.data) ? registryRes.data : [];
-            this._groups = Array.isArray(groupsRes.data) ? groupsRes.data : [];
+            const checklistRes = checklistResult.data || {};
+            const registryRes = registryResult.data || {};
+            const allAccounts = accountsResult.data || [];
+            const groupsRes = groupsResult.data || [];
+            const templatesRes = templatesResult.data || {};
 
-            // Extract templates
+            if (checklistRes.status === 'error') {
+                throw new Error(checklistRes.error || 'Checklist API returned an error');
+            }
+            if (registryRes.status === 'error') {
+                throw new Error(registryRes.error || 'Activity registry API returned an error');
+            }
+
+            this._activityRegistry = Array.isArray(registryRes.data) ? registryRes.data : [];
+            this._groups = Array.isArray(groupsRes) ? groupsRes : Array.isArray(groupsRes.data) ? groupsRes.data : [];
+
             const items = templatesRes.items || [];
             if (items.length > 0) {
                 const regMap = new Map(this._activityRegistry.map(a => [a.id, a.name]));
@@ -53,26 +99,31 @@ const TaskPage = {
                     critical: t.is_critical === 1
                 }));
             } else {
-                // Fallback default
-                this._checklistTemplates = [
-                    { key: 'login', label: 'Daily login', shortLabel: 'Daily login', critical: true },
-                    { key: 'collect', label: 'Collect resources', shortLabel: 'Collect resources', critical: true },
-                    { key: 'alliance', label: 'Alliance donation', shortLabel: 'Alliance', critical: false },
-                    { key: 'patrol', label: 'Patrol', shortLabel: 'Patrol', critical: false },
-                    { key: 'full_scan', label: 'Full Scan', shortLabel: 'Full Scan', critical: true },
-                ];
+                this._checklistTemplates = this._activityRegistry.map(act => ({
+                    key: act.id,
+                    label: act.name || act.id,
+                    shortLabel: act.name || act.id,
+                    critical: !!act.is_critical
+                }));
             }
 
             const accountsArray = Array.isArray(allAccounts) ? allAccounts : [];
+            const accountIds = accountsArray.map(a => Number(a.account_id || a.id)).filter(Boolean);
             const accountMetaMap = new Map(accountsArray.map(a => [Number(a.account_id || a.id), a]));
+            const checklistAccounts = Array.isArray(checklistRes.accounts) ? checklistRes.accounts : [];
+            const checklistIds = checklistAccounts.map(a => Number(a.account_id)).filter(Boolean);
+            const checklistMap = new Map(checklistAccounts.map(a => [Number(a.account_id), a]));
+            const allKnownIds = Array.from(new Set([...accountIds, ...checklistIds]));
 
-            const checklistMap = new Map(
-                (checklistRes.accounts || []).map(a => [a.account_id, a])
-            );
+            let visibleIds = allKnownIds;
+            if (this._selectedGroupId) {
+                const selectedGroup = this._groups.find(g => String(g.id) === String(this._selectedGroupId));
+                const groupAccountIds = new Set(this._getGroupAccountIds(selectedGroup));
+                visibleIds = allKnownIds.filter(id => groupAccountIds.has(id));
+            }
 
-            const pagedAccountIds = (checklistRes.accounts || []).map(a => Number(a.account_id));
-
-            this._accounts = pagedAccountIds
+            this._accounts = visibleIds
+                .sort((a, b) => a - b)
                 .map((id, index) => {
                     const checklistAcc = checklistMap.get(id) || {};
                     const metaAcc = accountMetaMap.get(id) || {};
@@ -87,6 +138,7 @@ const TaskPage = {
         } catch (error) {
             console.warn('[TaskPage] Failed to load data:', error);
             this._accounts = [];
+            this._loadError = error?.message || 'Failed to load task checklist data';
             this._pagination = { page: this._page, page_size: this._pageSize, total_accounts: 0, total_pages: 0 };
             this._hasLoadedRealData = true;
         } finally {
@@ -97,20 +149,30 @@ const TaskPage = {
     _mapFromChecklist(account, checklistData, index) {
         const gameId = account?.game_id || '';
         const activities = checklistData?.activities || {};
+        const backendStats = checklistData?.stats || null;
 
-        // Derive progress from template items only
-        let doneCount = 0;
-        let totalCount = this._checklistTemplates.length;
+        let doneCount = Number(backendStats?.done ?? 0);
+        let totalCount = Number(backendStats?.total ?? this._checklistTemplates.length);
+        let failedCount = Number(backendStats?.failed ?? 0);
 
-        this._checklistTemplates.forEach(t => {
-            const act = activities[t.key];
-            if (act && act.status === 'SUCCESS') doneCount++;
-        });
+        if (!backendStats) {
+            doneCount = 0;
+            totalCount = this._checklistTemplates.length;
+            failedCount = 0;
 
-        // Derive generic status
+            this._checklistTemplates.forEach(t => {
+                const act = activities[t.key];
+                if (!act) return;
+                if (act.status === 'SUCCESS') doneCount++;
+                if (act.status === 'FAILED') failedCount++;
+            });
+        }
+
         let status = 'on-track';
-        if (doneCount === 0 && totalCount > 0) status = 'overdue';
-        else if (doneCount < totalCount) status = 'at-risk';
+        if (totalCount > 0) {
+            if (doneCount === 0) status = 'overdue';
+            else if (doneCount < totalCount || failedCount > 0) status = 'at-risk';
+        }
 
         let priority = 'low';
         if (status === 'overdue') priority = 'high';
@@ -120,7 +182,7 @@ const TaskPage = {
             id: Number(account?.account_id || account?.id || index + 1),
             accountName: account?.lord_name || gameId || `Account-${index + 1}`,
             gameId: gameId,
-            emulator: account?.emu_name || account?.serial || '--',
+            emulator: account?.emulator_name || account?.emu_name || account?.serial || '--',
             owner: account?.alliance || 'Unassigned team',
             region: account?.provider || 'Global',
             priority,
@@ -396,8 +458,18 @@ const TaskPage = {
     },
 
     _renderGrid() {
+        const totalColumns = this._checklistTemplates.length + 5;
+
+        if (this._isLoading) {
+            return `<tr><td colspan="${totalColumns}" style="text-align:center;color:var(--muted-foreground);padding:16px">Loading task checklist...</td></tr>`;
+        }
+
+        if (this._loadError && !this._filteredAccounts.length) {
+            return `<tr><td colspan="${totalColumns}" style="text-align:center;color:#b91c1c;padding:16px">${this._loadError}</td></tr>`;
+        }
+
         if (!this._filteredAccounts.length) {
-            return '<tr><td colspan="15" style="text-align:center;color:var(--muted-foreground);padding:16px">No accounts match the current filters.</td></tr>';
+            return `<tr><td colspan="${totalColumns}" style="text-align:center;color:var(--muted-foreground);padding:16px">No accounts match the current filters.</td></tr>`;
         }
 
         return this._filteredAccounts.map((acc, index) => this._renderRow(acc, index)).join('');
@@ -617,9 +689,11 @@ const TaskPage = {
         this._setupWebSockets();
 
         if (!this._hasLoadedRealData) {
-            router.navigate('task');
             return;
         }
+
+        const root = document.getElementById('page-root');
+        if (root) root.innerHTML = this.render();
 
         const addListener = (id, event, handler) => {
             const el = document.getElementById(id);

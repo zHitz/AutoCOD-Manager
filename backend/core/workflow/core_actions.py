@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import builtins
 
 # Root directory (Part3_Control_EMU)
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -22,6 +23,52 @@ import cv2
 
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
+
+_KNOWN_LOG_LEVELS = {
+    "ERROR",
+    "WARNING",
+    "FAILED",
+    "TIMEOUT",
+    "FATAL",
+    "CRASH DETECTED",
+}
+
+
+def _format_output_message(message: str) -> str:
+    raw_message = str(message)
+    content = raw_message.lstrip("\n").strip()
+    if not content:
+        return f"[{time.strftime('%H:%M:%S')}] [GENERAL] [INFO]"
+
+    serial = "GENERAL"
+    if content.startswith("[") and "]" in content:
+        first_end = content.find("]")
+        serial = content[1:first_end].strip() or "GENERAL"
+        content = content[first_end + 1 :].strip()
+
+    level = "INFO"
+    if content.startswith("[") and "]" in content:
+        second_end = content.find("]")
+        candidate_level = content[1:second_end].strip().upper()
+        if candidate_level in _KNOWN_LOG_LEVELS:
+            level = candidate_level
+            content = content[second_end + 1 :].strip()
+
+    if content.startswith("->"):
+        content = content[2:].strip()
+
+    content = " ".join(content.split())
+    timestamp = time.strftime("%H:%M:%S")
+    return f"[{timestamp}] [{serial}] [{level}] {content}"
+
+
+def print(*args, sep=" ", end="\n", file=None, flush=False):
+    message = sep.join(str(arg) for arg in args)
+    builtins.print(_format_output_message(message), end=end, file=file, flush=flush)
+
+
+def _exit_with_log(serial: str, level: str, message: str):
+    raise SystemExit(_format_output_message(f"[{serial}] [{level}] {message}"))
 
 def ensure_app_running(serial: str, package_name: str, adb_path: str = config.adb_path):
     """Checks if the app is active, and boots it if it's not.
@@ -295,7 +342,7 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
                 special_state = detector.check_special_state(serial, target="SERVER_MAINTENANCE")
                 if special_state == "SERVER_MAINTENANCE":
                     print(f"[{serial}] [FATAL] Server Maintenance detected! Aborting script.")
-                    sys.exit(f"[{serial}] Server Maintenance - Script Terminated")
+                    _exit_with_log(serial, "FATAL", "Server Maintenance - Script Terminated")
 
             print(f"[{serial}] -> Loading detected. Waiting 20s before next check...")
             unknown_start_time = None  # Reset unknown timer
@@ -1097,14 +1144,16 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
         hx, hy = HOUSE_TAPS[h_type]
         print(f"[{serial}] Tapping {h_type.upper()} House at ({hx}, {hy})...")
         adb_helper.tap(serial, hx, hy)
-        time.sleep(3)
+        time.sleep(1)
+        adb_helper.tap(serial, hx, hy)
+        time.sleep(2)
         
         # 3. Tap training icon relative to house (+90, +20)
         icon_x = hx + 90
         icon_y = hy + 20
         print(f"[{serial}] Tapping TRAINING_ICON at ({icon_x}, {icon_y})...")
         adb_helper.tap(serial, icon_x, icon_y)
-        time.sleep(3)
+        time.sleep(2)
         
         # 4. Wait for TRAIN_UNITS construction state
         state = wait_for_state(serial, detector, ["TRAIN_UNITS"], timeout_sec=10, check_mode="construction")
