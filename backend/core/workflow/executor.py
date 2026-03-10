@@ -124,7 +124,9 @@ async def execute_recipe(
                 was_running = await asyncio.to_thread(
                     core_actions.ensure_app_running, serial, pkg
                 )
-                if not was_running:
+                if was_running is None:
+                    ok = False  # App launch failed entirely
+                elif not was_running:
                     await asyncio.sleep(10)  # Give it time to boot up
 
             elif fn_id == "sys_close_app":
@@ -423,6 +425,34 @@ async def execute_recipe(
                     serial,
                     detector,
                     resource_type=resource_type,
+                )
+
+            elif fn_id == "check_mail":
+                mail_type = (config or {}).get("mail_type", "all")
+                ok = await asyncio.to_thread(
+                    core_actions.check_mail, serial, detector, mail_type=mail_type
+                )
+
+            elif fn_id == "claim_city_resources":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_city_resources, serial, detector
+                )
+
+            elif fn_id == "train_troops":
+                training_list = []
+                for house in ["infantry", "cavalry", "archer", "mage", "siege"]:
+                    val = str((config or {}).get(f"tier_{house}", "default"))
+                    if val != "skip":
+                        tier = val if val == "default" else int(val)
+                        training_list.append((house, tier))
+
+                ok = await asyncio.to_thread(
+                    core_actions.train_troops, serial, detector, training_list=training_list
+                )
+
+            elif fn_id == "claim_alliance_resource":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_alliance_resource, serial, detector
                 )
 
             elif fn_id == "flow_delay":

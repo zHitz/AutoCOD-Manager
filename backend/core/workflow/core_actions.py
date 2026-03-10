@@ -23,43 +23,19 @@ import cv2
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
 
-
-def ensure_app_running(
-    serial: str,
-    package_name: str,
-    adb_path: str = config.adb_path,
-    boot_timeout: int = 30,
-) -> bool:
+def ensure_app_running(serial: str, package_name: str, adb_path: str = config.adb_path):
     """Checks if the app is active, and boots it if it's not.
-    If the app needs to be started, waits up to boot_timeout seconds for the process to appear.
-    Returns True if it was already running, False if it had to be started.
-    """
-    if clipper_helper.is_app_foreground(adb_path, serial, package_name):
-        return True
+    Returns True if already running, False if just launched, None if launch failed."""
+    if not clipper_helper.is_app_foreground(adb_path, serial, package_name):
+        launched = clipper_helper.open_app(adb_path, serial, package_name)
+        if not launched:
+            print(f"[{serial}] [ERROR] open_app failed. App did not launch.")
+            return None
+        time.sleep(10)
+        return False
+    return True
 
-    print(f"[{serial}] App {package_name} is not in foreground. Starting...")
-    clipper_helper.open_app(adb_path, serial, package_name)
-
-    # Wait for app process to actually appear (PID check)
-    start = time.time()
-    while time.time() - start < boot_timeout:
-        res = adb_helper._run_adb(["shell", "pidof", package_name], serial=serial)
-        if res and res.strip().isdigit():
-            print(f"[{serial}] App PID detected ({res.strip()}). App is starting up.")
-            return False
-        time.sleep(2)
-
-    print(
-        f"[{serial}] [WARNING] App PID not detected after {boot_timeout}s. Proceeding anyway."
-    )
-    return False
-
-
-def check_app_crash(
-    serial: str,
-    package_name: str = "com.farlightgames.samo.gp.vn",
-    adb_path: str = config.adb_path,
-) -> bool:
+def check_app_crash(serial: str, package_name: str = "com.farlightgames.samo.gp.vn", adb_path: str = config.adb_path) -> bool:
     """
     Checks if the game has crashed, frozen, or been pushed to the background.
     Returns True if crashed/not in foreground/frozen, False if running normally.
@@ -68,43 +44,34 @@ def check_app_crash(
         # 1. Check PID
         res = adb_helper._run_adb(["shell", "pidof", package_name], serial=serial)
         if not res or not res.strip().isdigit():
-            print(
-                f"[{serial}] [CRASH DETECTED] App {package_name} is not running (No PID)."
-            )
+            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not running (No PID).")
             return True
-
+            
         # 2. Check if it's the foreground app
-        out = adb_helper._run_adb(
-            ["shell", "dumpsys", "window", "windows"], serial=serial
-        )
+        out = adb_helper._run_adb(["shell", "dumpsys", "window", "windows"], serial=serial)
         is_foreground = False
         for line in out.splitlines():
             if "mCurrentFocus" in line:
                 if package_name in line:
                     is_foreground = True
                 break
-
+                
         if not is_foreground:
-            print(
-                f"[{serial}] [CRASH DETECTED] App {package_name} is not in foreground."
-            )
+            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not in foreground.")
             return True
-
+            
         # 3. Check for Engine Freeze (screen hasn't changed a single pixel)
         # We take a fast, low-res screencap (e.g. 1/4 size) to compare.
         import subprocess
-
-        proc = subprocess.run(
-            [adb_path, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True
-        )
+        proc = subprocess.run([adb_path, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True)
         if proc.returncode == 0 and len(proc.stdout) > 1000:
             img_data = np.frombuffer(proc.stdout, np.uint8)
             img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
-
+            
             if img is not None:
                 # Resize very small to ignore tiny compression artifacts and speed up
                 small = cv2.resize(img, (160, 90))
-
+                
                 if serial not in _FREEZE_CACHE:
                     _FREEZE_CACHE[serial] = {"img": small, "freeze_count": 0}
                 else:
@@ -117,107 +84,57 @@ def check_app_crash(
                         # Wait for 6 consecutive checks (60 seconds) before declaring a freeze
                         # to account for long loading screens
                         if _FREEZE_CACHE[serial]["freeze_count"] >= 6:
-                            print(
-                                f"[{serial}] [CRASH DETECTED] Game engine is completely FROZEN (0 pixel change for 60s)."
-                            )
+                            print(f"[{serial}] [CRASH DETECTED] Game engine is completely FROZEN (0 pixel change for 60s).")
                             return True
                     else:
                         # Screen changed, reset freeze counter
                         _FREEZE_CACHE[serial]["freeze_count"] = 0
-
+                    
                     _FREEZE_CACHE[serial]["img"] = small
-
+                    
         return False
     except Exception as e:
         print(f"[{serial}] [WARNING] Error checking crash state: {e}")
         return False
 
 
-def startup_to_lobby(
-    serial: str,
-    detector: GameStateDetector,
-    package_name: str,
-    adb_path: str = config.adb_path,
-    load_timeout: int = 120,
-) -> bool:
+def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str, adb_path: str = config.adb_path, load_timeout: int = 120) -> bool:
     """
     All-in-one startup: Boot game nếu chưa chạy -> chờ load vào Lobby.
     Nếu game đang chạy rồi -> dùng back_to_lobby() để mò về Lobby từ bất kỳ state nào.
     Returns True nếu đã chắc chắn đang ở Lobby, False nếu thất bại.
     """
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-    time.sleep(10)
+    
     was_running = ensure_app_running(serial, package_name, adb_path)
-
+    
+    if was_running is None:
+        print(f"[{serial}] [FAILED] Could not launch app at all.")
+        return False
+    
     if not was_running:
-        # App was just launched — give it a grace period to get past splash screens
-        # before we start checking state (and crash detection)
-        print(
-            f"[{serial}] App was just started. Waiting 15s for initial splash/loading screens..."
-        )
-        time.sleep(15)
-
-        print(
-            f"[{serial}] Now waiting for game to load into Lobby (timeout: {load_timeout}s)..."
-        )
-        # Use crash_grace_sec=30 to suppress crash checks during early boot
-        # (the app may show loading screens where PID exists but state is ERROR_CAPTURE)
-        lobby = wait_for_state(
-            serial, detector, LOBBY_STATES, timeout_sec=load_timeout, crash_grace_sec=30
-        )
+        print(f"[{serial}] App was not running. Waiting for game to load into Lobby...")
+        lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout)
         if not lobby:
-            # Retry once: force-restart the app and try again
-            print(f"[{serial}] First attempt failed. Retrying app launch...")
-            clipper_helper.open_app(adb_path, serial, package_name)
-            time.sleep(15)
-            lobby = wait_for_state(
-                serial,
-                detector,
-                LOBBY_STATES,
-                timeout_sec=load_timeout,
-                crash_grace_sec=30,
-            )
-            if not lobby:
-                print(
-                    f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s (2 attempts)."
-                )
-                return False
+            print(f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s.")
+            return False
         return True
     else:
         print(f"[{serial}] App is already running. Navigating back to Lobby...")
         return back_to_lobby(serial, detector)
 
-
-def wait_for_state(
-    serial: str,
-    detector: GameStateDetector,
-    target_states: list,
-    timeout_sec: int = 60,
-    package_name: str = "com.farlightgames.samo.gp.vn",
-    check_mode: str = "state",
-    crash_grace_sec: int = 0,
-) -> str:
-    """Blocks and loops until the emulator reaches one of the target_states.
-
-    Args:
-        crash_grace_sec: Number of seconds from the start to SKIP crash detection.
-                         Useful when the app was just launched and may not have a stable PID yet.
-    """
+def wait_for_state(serial: str, detector: GameStateDetector, target_states: list, timeout_sec: int = 60, package_name: str = "com.farlightgames.samo.gp.vn", check_mode: str = "state") -> str:
+    """Blocks and loops until the emulator reaches one of the target_states."""
     start_time = time.time()
-    print(
-        f"[{serial}] Waiting for one of states: {target_states} (Timeout: {timeout_sec}s, CrashGrace: {crash_grace_sec}s)"
-    )
-
+    print(f"[{serial}] Waiting for one of states: {target_states} (Timeout: {timeout_sec}s)")
+    
     last_crash_check = time.time()
-
+    
     while True:
-        elapsed = time.time() - start_time
-        if elapsed > timeout_sec:
-            print(
-                f"[{serial}] [TIMEOUT] Failed to reach target state within {timeout_sec}s."
-            )
+        if time.time() - start_time > timeout_sec:
+            print(f"[{serial}] [TIMEOUT] Failed to reach target state within {timeout_sec}s.")
             return None
-
+            
         if check_mode == "construction":
             current_state = detector.check_construction(serial)
         elif check_mode == "special":
@@ -225,51 +142,43 @@ def wait_for_state(
         elif check_mode == "activity":
             result = detector.check_activity(serial)
             current_state = result[0] if result else None
+        elif check_mode == "account":
+            result = detector.check_account_state(serial)
+            current_state = result[0] if result else None
         else:
             current_state = detector.check_state(serial)
-
-        print(
-            f"[{serial}] Current detected state: {current_state} ({elapsed:.0f}s elapsed)"
-        )
-
+            
+        print(f"[{serial}] Current detected state: {current_state}")
+        
         if current_state in target_states:
             print(f"[{serial}] -> Target Reached '{current_state}'")
             return current_state
-
-        if current_state == "ERROR_CAPTURE" and elapsed < crash_grace_sec:
-            # During grace period, ERROR_CAPTURE is expected (emulator still booting)
-            print(
-                f"[{serial}] -> Boot grace period ({crash_grace_sec - elapsed:.0f}s left). Waiting..."
-            )
-            time.sleep(3)
-            continue
-
+            
         if current_state == "LOADING SCREEN":
             print(f"[{serial}] -> Game is loading. Waiting 3 seconds...")
             time.sleep(3)
         else:
-            # Only run crash detection AFTER grace period has expired
-            if elapsed > crash_grace_sec and time.time() - last_crash_check > 10:
+            # Check for crash every 10 seconds to avoid ADB spam
+            if time.time() - last_crash_check > 10:
                 if check_app_crash(serial, package_name):
                     return None
                 last_crash_check = time.time()
-
+                
             time.sleep(2)
-
 
 def go_to_profile(serial: str, detector: GameStateDetector) -> bool:
     """
     Assumes we are at the main lobby (`IN_CITY` or `OUT_CITY`).
     Navigates to the Profile menu. Returning True on success.
     """
+    if detector.check_state(serial) == "IN-GAME LOBBY (PROFILE MENU)":
+        return True
+        
     print(f"[{serial}] Navigating to Profile...")
     adb_helper.tap(serial, 25, 25)
-
-    state = wait_for_state(
-        serial, detector, ["IN-GAME LOBBY (PROFILE MENU)"], timeout_sec=10
-    )
+    
+    state = wait_for_state(serial, detector, ["IN-GAME LOBBY (PROFILE MENU)"], timeout_sec=10)
     return state is not None
-
 
 def go_to_profile_details(serial: str, detector: GameStateDetector) -> bool:
     """
@@ -280,213 +189,39 @@ def go_to_profile_details(serial: str, detector: GameStateDetector) -> bool:
     go_to_profile(serial, detector)
     time.sleep(3)
     adb_helper.tap(serial, 550, 200)
-
-    state = wait_for_state(
-        serial, detector, ["IN-GAME LOBBY (PROFILE MENU DETAIL)"], timeout_sec=10
-    )
+    
+    state = wait_for_state(serial, detector, ["IN-GAME LOBBY (PROFILE MENU DETAIL)"], timeout_sec=10)
     return state is not None
 
-
-def extract_player_id(
-    serial: str, detector: GameStateDetector, adb_path: str = config.adb_path
-) -> str:
+def extract_player_id(serial: str, detector: GameStateDetector, adb_path: str = config.adb_path) -> str:
     """
     Assumes we are on the Profile Menu.
     Taps the copy button, intercepts the ADB Clipper intent, and returns the ID.
     """
     print(f"[{serial}] Tapping Copy ID Button...")
     last_clip = clipper_helper.get_clipper_data(adb_path, serial)
-
+    
     max_retries = 3
     for attempt in range(max_retries):
         adb_helper.tap(serial, 425, 200)
-        print(
-            f"  -> Waiting 2 seconds for clipboard sync (Attempt {attempt + 1}/{max_retries})..."
-        )
+        print(f"  -> Waiting 2 seconds for clipboard sync (Attempt {attempt+1}/{max_retries})...")
         time.sleep(2)
-
+        
         current_clip = clipper_helper.get_clipper_data(adb_path, serial)
-
+        
         # Valid ID heuristic: only digits, reasonably long
         if current_clip and current_clip.isdigit() and len(current_clip) >= 5:
             return current_clip
-
+            
         # Fallback if text changed anyway
         if current_clip and current_clip != last_clip:
             return current_clip
-
+            
         print(f"  -> [WARNING] Empty or old data '{current_clip}'. Retrying...")
-
+    
     return None
 
-
-def swap_account(
-    serial: str,
-    account_detector: AccountDetector,
-    detector: GameStateDetector,
-    target_account: str = None,
-    max_scrolls: int = 5,
-) -> bool:
-    """
-    In-game account switch flow.
-    Navigates: LOBBY -> Profile -> Settings -> Switch Account -> Find & Select Account -> Confirm -> LOBBY.
-
-    Args:
-        serial: Emulator serial ID.
-        account_detector: AccountDetector instance for OCR text detection.
-        detector: GameStateDetector instance with templates loaded.
-        target_account: Account string name to search for (e.g. "Goten").
-                        If None, uses a fallback mechanism that blindly taps
-                        the top 2 visible characters sequentially.
-        max_scrolls: Maximum scroll attempts to find the account in the list.
-
-    Returns True if successfully swapped and reached LOBBY, False on failure.
-    """
-    LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-    print(f"[{serial}] === SWAP ACCOUNT: {target_account} ===")
-
-    # 1. Ensure we're in LOBBY first
-    current = detector.check_state(serial)
-    if current not in LOBBY_STATES:
-        print(f"[{serial}] Not in Lobby ({current}). Navigating back...")
-        if not back_to_lobby(serial, detector):
-            print(f"[{serial}] swap_account failed: Could not reach lobby.")
-            return False
-
-    # 2. Navigate to Profile
-    print(f"[{serial}] Step 1/6: Opening Profile...")
-    if not go_to_profile(serial, detector):
-        print(f"[{serial}] swap_account failed: Could not open Profile.")
-        return False
-    time.sleep(1)
-
-    # 4. Tap Settings button (683, 340) -> wait via account detector
-    print(f"[{serial}] Step 2/6: Opening Settings (683, 340)...")
-    adb_helper.tap(serial, 683, 340)
-    state = wait_for_state(
-        serial, detector, ["SETTINGS"], timeout_sec=10, check_mode="special"
-    )
-    if not state:
-        print(f"[{serial}] swap_account failed: Could not reach Settings screen.")
-        return False
-    time.sleep(1)
-
-    # 5. Tap "Switch Account" (478, 354) -> wait via account detector
-    print(f"[{serial}] Step 3/6: Tapping Switch Account (478, 354)...")
-    adb_helper.tap(serial, 478, 354)
-    state = wait_for_state(
-        serial, detector, ["CHARACTER_MANAGEMENT"], timeout_sec=10, check_mode="special"
-    )
-    if not state:
-        print(
-            f"[{serial}] swap_account failed: Could not reach Character Management screen."
-        )
-        return False
-    time.sleep(1)
-
-    if target_account:
-        # 6. Find target account in the list using check_account_state (OCR text) + scroll
-        print(
-            f"[{serial}] Step 4/6: Searching for account TEXT '{target_account}' in list..."
-        )
-        account_found = None
-
-        for scroll_attempt in range(max_scrolls + 1):
-            # Try to find the account text on current viewport via OCR
-            result = account_detector.check_account_name(
-                serial, target=target_account, check_type="text"
-            )
-
-            if result:
-                name, center_x, center_y = result
-                print(
-                    f"[{serial}] -> Account '{target_account}' found at ({center_x}, {center_y})!"
-                )
-                account_found = (center_x, center_y)
-                break
-
-            if scroll_attempt < max_scrolls:
-                print(
-                    f"[{serial}] -> Account not visible. Scrolling down... ({scroll_attempt + 1}/{max_scrolls})"
-                )
-                adb_helper.swipe(serial, 500, 400, 500, 200, 500)
-                time.sleep(2)
-            else:
-                print(f"[{serial}] -> Account not found after {max_scrolls} scrolls.")
-
-        if not account_found:
-            print(
-                f"[{serial}] swap_account failed: Account '{target_account}' not found in Character Management list."
-            )
-            adb_helper.press_back(serial)
-            time.sleep(2)
-            return False
-
-        # 7. Tap the found account
-        print(
-            f"[{serial}] Step 5/6: Selecting account at ({account_found[0]}, {account_found[1]})..."
-        )
-        adb_helper.tap(serial, account_found[0], account_found[1])
-        time.sleep(2)
-
-        # Check if the confirmation prompt appeared.
-        # If the state is STILL "CHARACTER_MANAGEMENT", it means the account was already selected,
-        # so no confirmation prompt appeared. We just back out 3 times to Lobby.
-        if detector.check_special_state(serial) == "CHARACTER_MANAGEMENT":
-            print(
-                f"[{serial}] Target account '{target_account}' is already the active account. Backing out to Lobby..."
-            )
-            for _ in range(3):
-                adb_helper.press_back(serial)
-                time.sleep(1.5)
-            return True
-        else:
-            print("Account not selected, proceeding to confirm")
-    else:
-        # Fallback Logic: Just toggle between the first 2 character slots
-        print(
-            f"[{serial}] Step 4/6 & 5/6: No target account specified. Using 2-character toggle logic."
-        )
-        char1_pos = (493, 181)  # Tọa độ slot nhân vật 1
-        char2_pos = (487, 249)  # Tọa độ slot nhân vật 2
-
-        print(f"[{serial}] Tapping Character 1 at {char1_pos}...")
-        adb_helper.tap(serial, char1_pos[0], char1_pos[1])
-        time.sleep(2)
-
-        if detector.check_special_state(serial) == "CHARACTER_MANAGEMENT":
-            print(
-                f"[{serial}] Character 1 is active. Tapping Character 2 at {char2_pos}..."
-            )
-            adb_helper.tap(serial, char2_pos[0], char2_pos[1])
-            time.sleep(2)
-        else:
-            print(f"[{serial}] Character 1 selected, proceeding to confirm.")
-
-    # 8. Tap Confirm (400, 300)
-    print(f"[{serial}] Step 6/6: Confirming switch (556, 356)...")
-    adb_helper.tap(serial, 556, 356)
-    time.sleep(3)
-
-    # 9. Wait for game to reload and reach Lobby
-    print(f"[{serial}] Waiting for game to reload into Lobby (timeout: 120s)...")
-    lobby_state = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
-    if not lobby_state:
-        print(
-            f"[{serial}] swap_account failed: Game did not reload into Lobby after switch."
-        )
-        return False
-
-    print(f"[{serial}] === SWAP ACCOUNT SUCCESS -> {lobby_state} ===")
-    return True
-
-
-def back_to_lobby(
-    serial: str,
-    detector: GameStateDetector,
-    max_attempts: int = 15,
-    target_lobby: str = None,
-) -> bool:
+def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 5, target_lobby: str = None) -> bool:
     """
     Intelligently navigates back to the main Lobby from ANY state.
     Handles edge cases:
@@ -494,55 +229,72 @@ def back_to_lobby(
       - UNKNOWN / TRANSITION: Waits 10s grace period before pressing back.
       - Known menu states: Presses back immediately, but max 3 times per state
         before escalating (prevents infinite back-press on sticky menus).
-
+    
     target_lobby: Optional. If set to 'IN-GAME LOBBY (IN_CITY)' or 'IN-GAME LOBBY (OUT_CITY)',
                   will swap lobby by tapping (50, 500) after reaching any lobby.
     Returns True if Lobby was reached, False on failure.
     """
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-
+    
     print(f"[{serial}] === BACK TO LOBBY ===")
+    
+    # 0. Validator: Ensure emulator is online and game is running
+    # If the app crashed or emulator disconnected, we catch it early here
+    was_running = ensure_app_running(serial, "com.farlightgames.samo.gp.vn", config.adb_path)
+    if was_running is None:
+        print(f"[{serial}] [FAILED] Could not launch app during back_to_lobby.")
+        return False
+    if not was_running:
+        print(f"[{serial}] [WARNING] Game was not running during back_to_lobby! Attempting to wait for lobby...")
+        # Since it wasn't running, it was just booted. Wait for it to hit lobby.
+        lobby_ok = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
+        if not lobby_ok:
+            print(f"[{serial}] [FAILED] Game did not load into Lobby after booting.")
+            return False
+        # If it reached lobby, we can proceed with swap check
+        current_state = detector.check_state(serial)
+        if target_lobby and current_state != target_lobby:
+            print(f"[{serial}] -> Swapping to {target_lobby}...")
+            adb_helper.tap(serial, 50, 500)
+            swapped = wait_for_state(serial, detector, [target_lobby], timeout_sec=10)
+            if not swapped:
+                print(f"[{serial}] [WARNING] Could not swap to {target_lobby}.")
+                return False
+            print(f"[{serial}] -> Swapped to {target_lobby}.")
+        return True
 
-    known_state_back_count = 0  # How many times we pressed back on the same known state
-    last_known_state = None  # Track the last known state to count consecutive backs
-    unknown_start_time = None  # Timer for UNKNOWN grace period
-    loading_screen_count = 0  # Timer for LOADING SCREEN loop
-
+    known_state_back_count = 0   # How many times we pressed back on the same known state
+    last_known_state = None      # Track the last known state to count consecutive backs
+    unknown_start_time = None    # Timer for UNKNOWN grace period
+    loading_screen_count = 0     # Timer for LOADING SCREEN loop
+    
     for attempt in range(1, max_attempts + 1):
         current_state = detector.check_state(serial)
         print(f"[{serial}] [Attempt {attempt}/{max_attempts}] State: {current_state}")
-
+        
         # === SUCCESS: Already at Lobby ===
         if current_state in LOBBY_STATES:
             print(f"[{serial}] -> Lobby reached! ({current_state})")
-
+            
             # Swap lobby if target specified and doesn't match
             if target_lobby and current_state != target_lobby:
                 print(f"[{serial}] -> Swapping to {target_lobby}...")
                 adb_helper.tap(serial, 50, 500)
-                swapped = wait_for_state(
-                    serial, detector, [target_lobby], timeout_sec=10
-                )
+                swapped = wait_for_state(serial, detector, [target_lobby], timeout_sec=10)
                 if not swapped:
                     print(f"[{serial}] [WARNING] Could not swap to {target_lobby}.")
                     return False
                 print(f"[{serial}] -> Swapped to {target_lobby}.")
             return True
-
+        
         # === CASE 1: LOADING SCREEN — Wait patiently, do NOT press back ===
         if current_state == "LOADING SCREEN":
             loading_screen_count += 1
             if loading_screen_count >= 3:
-                print(
-                    f"[{serial}] -> Loading detected {loading_screen_count} times. Checking for Server Maintenance..."
-                )
-                special_state = detector.check_special_state(
-                    serial, target="SERVER_MAINTENANCE"
-                )
+                print(f"[{serial}] -> Loading detected {loading_screen_count} times. Checking for Server Maintenance...")
+                special_state = detector.check_special_state(serial, target="SERVER_MAINTENANCE")
                 if special_state == "SERVER_MAINTENANCE":
-                    print(
-                        f"[{serial}] [FATAL] Server Maintenance detected! Aborting script."
-                    )
+                    print(f"[{serial}] [FATAL] Server Maintenance detected! Aborting script.")
                     sys.exit(f"[{serial}] Server Maintenance - Script Terminated")
 
             print(f"[{serial}] -> Loading detected. Waiting 20s before next check...")
@@ -551,10 +303,10 @@ def back_to_lobby(
             last_known_state = None
             time.sleep(20)
             continue
-
+            
         # Reset loading count if we entered a different state
         loading_screen_count = 0
-
+        
         # === CASE 2: LOADING SCREEN (NETWORK ISSUE) — Wait patiently, do NOT press back ===
         if current_state == "LOADING SCREEN (NETWORK ISSUE)":
             print(f"[{serial}] -> Network issue detected. Click Confirm for restart")
@@ -566,27 +318,23 @@ def back_to_lobby(
         if current_state == "UNKNOWN / TRANSITION":
             construction = detector.check_construction(serial)
             if construction:
-                print(
-                    f"[{serial}] -> Construction '{construction}' detected. Pressing BACK..."
-                )
+                print(f"[{serial}] -> Construction '{construction}' detected. Pressing BACK...")
                 unknown_start_time = None
                 adb_helper.press_back(serial)
                 time.sleep(2)
                 continue
-
+            
             # Not a construction either — grace period
             if unknown_start_time is None:
                 unknown_start_time = time.time()
                 print(f"[{serial}] -> Unknown state. Starting 10s grace period...")
                 time.sleep(3)
                 continue
-
+            
             elapsed = time.time() - unknown_start_time
             if elapsed < 10:
                 remaining = 10 - elapsed
-                print(
-                    f"[{serial}] -> Still unknown. Grace period: {remaining:.0f}s left..."
-                )
+                print(f"[{serial}] -> Still unknown. Grace period: {remaining:.0f}s left...")
                 time.sleep(3)
                 continue
             else:
@@ -596,38 +344,31 @@ def back_to_lobby(
                 # Không reset unknown_start_time để các lần sau nếu vẫn kẹt thì tự động back tiếp luôn
                 time.sleep(2)
                 continue
-
+        
         # === CASE 4: Known named state (Profile Menu, Events, etc.) ===
         unknown_start_time = None  # Reset unknown timer since we have a known state
-
+        
         if current_state == last_known_state:
             known_state_back_count += 1
         else:
             # New state detected, reset counter
             last_known_state = current_state
             known_state_back_count = 1
-
+        
         if known_state_back_count <= 3:
-            print(
-                f"[{serial}] -> Known state '{current_state}'. Pressing BACK ({known_state_back_count}/3)..."
-            )
+            print(f"[{serial}] -> Known state '{current_state}'. Pressing BACK ({known_state_back_count}/3)...")
             adb_helper.press_back(serial)
             time.sleep(2)
         else:
             # Pressed back 3 times on the same state and it's not changing
-            print(
-                f"[{serial}] -> [WARNING] State '{current_state}' stuck after 3 backs. Forcing extra wait..."
-            )
+            print(f"[{serial}] -> [WARNING] State '{current_state}' stuck after 3 backs. Forcing extra wait...")
             time.sleep(5)
             known_state_back_count = 0  # Reset and try again
-
+    
     print(f"[{serial}] [FAILED] Could not reach Lobby after {max_attempts} attempts.")
     return False
 
-
-def ensure_lobby_menu_open(
-    serial: str, detector: GameStateDetector, max_attempts: int = 5
-) -> bool:
+def ensure_lobby_menu_open(serial: str, detector: GameStateDetector, max_attempts: int = 5) -> bool:
     """
     Ensures the expandable lobby menu is open.
     Uses detector.is_menu_expanded() which is separate from check_state().
@@ -635,46 +376,39 @@ def ensure_lobby_menu_open(
     Returns True if menu is confirmed open, False on failure.
     """
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-
+    
     for attempt in range(1, max_attempts + 1):
         if detector.is_menu_expanded(serial):
             print(f"[{serial}] -> Lobby menu is already open.")
             return True
-
+        
         current_state = detector.check_state(serial)
-        print(
-            f"[{serial}] [ensure_menu] Attempt {attempt}/{max_attempts} | State: {current_state} | Menu: closed"
-        )
-
+        print(f"[{serial}] [ensure_menu] Attempt {attempt}/{max_attempts} | State: {current_state} | Menu: closed")
+        
         if current_state in LOBBY_STATES:
             print(f"[{serial}] -> Tapping expand button (925, 500)...")
             adb_helper.tap(serial, 925, 500)
             time.sleep(2)
             continue
-
+        
         # Not in a lobby state at all
-        print(
-            f"[{serial}] -> [WARNING] Not in Lobby state ({current_state}). Cannot expand menu."
-        )
+        print(f"[{serial}] -> [WARNING] Not in Lobby state ({current_state}). Cannot expand menu.")
         return False
-
-    print(
-        f"[{serial}] [FAILED] Could not confirm lobby menu open after {max_attempts} attempts."
-    )
+    
+    print(f"[{serial}] [FAILED] Could not confirm lobby menu open after {max_attempts} attempts.")
     return False
-
 
 def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
     """Navigates to the Resources menu from Lobby."""
     print(f"[{serial}] Navigating to Resources...")
-
+    
     if not ensure_lobby_menu_open(serial, detector):
         print(f"[{serial}] [FAILED] Could not open lobby menu.")
         return False
     # Tap (780, 500) with retry — could land on any IN-GAME ITEMS tab
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     ITEMS_STATES = ["IN-GAME ITEMS (ARTIFACTS)", "IN-GAME ITEMS (RESOURCES)"]
-
+    
     items_reached = False
     for retry in range(1, 4):
         adb_helper.tap(serial, 780, 500)
@@ -682,36 +416,30 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
         if state:
             items_reached = True
             break
-
+        
         # Check what state we're in
         current = detector.check_state(serial)
         if current in LOBBY_STATES:
             # Tap didn't register, re-expand and retry
-            print(
-                f"[{serial}] -> Tap (780,500) missed. Retry {retry}/3 — re-expanding menu..."
-            )
+            print(f"[{serial}] -> Tap (780,500) missed. Retry {retry}/3 — re-expanding menu...")
             if not ensure_lobby_menu_open(serial, detector):
                 return False
             continue
-
+        
         # Unknown state — likely some other IN-GAME ITEMS tab without a template
         # Tap (75, 180) directly to switch to Resources tab
-        print(
-            f"[{serial}] -> Unknown Items tab ({current}). Tapping (75, 180) to switch to Resources..."
-        )
+        print(f"[{serial}] -> Unknown Items tab ({current}). Tapping (75, 180) to switch to Resources...")
         items_reached = True
         break
-
+    
     if not items_reached:
         print(f"[{serial}] [FAILED] Could not enter Items menu after 3 retries.")
         return False
-
+    
     # If we landed on Resources directly, skip tapping (75, 180)
     if state != "IN-GAME ITEMS (RESOURCES)":
         adb_helper.tap(serial, 75, 180)
-        state = wait_for_state(
-            serial, detector, ["IN-GAME ITEMS (RESOURCES)"], timeout_sec=15
-        )
+        state = wait_for_state(serial, detector, ["IN-GAME ITEMS (RESOURCES)"], timeout_sec=15)
 
         if not state:
             print(f"[{serial}] [FAILED] Could not reach Items - Resources state.")
@@ -719,9 +447,8 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
 
     adb_helper.tap(serial, 620, 100)
     time.sleep(5)
-
+    
     return True
-
 
 def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> bool:
     """
@@ -730,59 +457,51 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> b
     Must navigate to IN-GAME LOBBY (IN_CITY) first.
     """
     name_upper = name.upper()
-
+    
     if name_upper not in CONSTRUCTION_TAPS:
-        print(
-            f"[{serial}] [FAILED] Unknown construction '{name}'. Not found in construction_data."
-        )
+        print(f"[{serial}] [FAILED] Unknown construction '{name}'. Not found in construction_data.")
         return False
-
+    
     print(f"[{serial}] Navigating to construction: {name_upper}...")
-
+    
     back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
     current_state = detector.check_state(serial)
     if current_state != "IN-GAME LOBBY (IN_CITY)":
         print(f"[{serial}] [FAILED] Must be IN_CITY. Current: {current_state}")
         return False
-
+    
     # Execute tap sequence from data
     taps = CONSTRUCTION_TAPS[name_upper]
     for i, (x, y) in enumerate(taps):
         adb_helper.tap(serial, x, y)
         time.sleep(2)
     time.sleep(3)  # Extra wait for building info to load
-
+    
     # Verify via construction detector
     result = detector.check_construction(serial, target=name_upper)
     if result:
         print(f"[{serial}] -> {name_upper} detected successfully.")
         return True
-
+    
     print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened.")
     return False
-
 
 def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     """
     Go to Capture Pet Full Phase
     """
-    print(f"[{serial}] Starting Capture Pet Full Phase...")
-    if not capture_pet(serial, detector):
-        return False
-    if not go_to_pet_sanctuary(serial, detector):
-        return False
-    if not release_pet(serial, detector):
-        return False
+    capture_pet(serial, detector)
+    go_to_pet_sanctuary(serial, detector)
+    release_pet(serial, detector)
     return True
-
-
+    
 def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     """
     Navigates from OUT_CITY to Auto Capture Pet screen and starts capture.
     Returns True if capture was started successfully.
     """
     print(f"[{serial}] Navigating to Capture Pet...")
-
+    
     # 1. Back to lobby OUT_CITY
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
@@ -792,7 +511,7 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] Opening Search Menu (42, 422)...")
     adb_helper.tap(serial, 42, 422)
     time.sleep(3)
-
+    
     # 3. Tap Menu search Pet
     print(f"[{serial}] Selecting Darklink Legions (158, 486)...")
     adb_helper.tap(serial, 158, 486)
@@ -805,10 +524,8 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
 
     # 5. Verify state AUTO_CAPTURE_PET
     print(f"[{serial}] Waiting for AUTO_CAPTURE_PET state...")
-    state = wait_for_state(
-        serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=10, check_mode="special"
-    )
-
+    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=10, check_mode="special")
+    
     if state != "AUTO_CAPTURE_PET":
         print(f"[{serial}] [FAILED] Did not reach AUTO_CAPTURE_PET state.")
         return False
@@ -817,31 +534,20 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] Configuring Pet Capture (284, 398) x5...")
     for _ in range(5):
         adb_helper.tap(serial, 284, 398)
-        time.sleep(0.2)
+        time.sleep(0.05)
     time.sleep(2)
-
+    
     # 7. Tap Start
     print(f"[{serial}] Starting Capture (501, 466)...")
     adb_helper.tap(serial, 501, 466)
-    time.sleep(5)  # Wait for UI to react
+    time.sleep(2)
 
-    print(f"[{serial}] Checking whether capture started...")
-    # If we are STILL in AUTO_CAPTURE_PET state after tapping Start (and waiting 5s), it means we failed to start
-    # Usually because we don't have enough warrants.
-    state = wait_for_state(
-        serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=5, check_mode="special"
-    )
+    print(f"[{serial}] Checking for AUTO_CAPTURE_PET state...")
+    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=5, check_mode="special")
     if state == "AUTO_CAPTURE_PET":
-        print(f"[{serial}] Not enough warrants to capture pet, or start failed.")
+        print(f"[{serial}] Not engough warrants to capture pet.")
         adb_helper.press_back(serial)
-        time.sleep(2)
-        return False
-        
-    print(f"[{serial}] Capture started successfully. Waiting 600s for completion...")
-    time.sleep(600)
-
     return True
-
 
 def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
     """
@@ -857,23 +563,20 @@ def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
     if not ensure_lobby_menu_open(serial, detector):
         print(f"[{serial}] [FAILED] Could not expand lobby menu.")
         return False
-
+        
     # 2. Tap (510, 507) to open Sanctuary
     print(f"[{serial}] Opening Pet Sanctuary (510, 507)...")
     adb_helper.tap(serial, 510, 507)
     time.sleep(3)
-
+    
     # 3. Verify PET_SANCTUARY
-    state = wait_for_state(
-        serial, detector, ["PET_SANCTUARY"], timeout_sec=10, check_mode="construction"
-    )
+    state = wait_for_state(serial, detector, ["PET_SANCTUARY"], timeout_sec=10, check_mode="construction")
     if state != "PET_SANCTUARY":
         print(f"[{serial}] [FAILED] Did not reach PET_SANCTUARY state.")
         return False
-
+    
     print(f"[{serial}] -> PET_SANCTUARY reached successfully.")
     return True
-
 
 def release_pet(serial: str, detector: GameStateDetector) -> bool:
     """
@@ -886,11 +589,9 @@ def release_pet(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] Opening Pet Enclosure (918, 504)...")
     adb_helper.tap(serial, 918, 504)
     time.sleep(3)
-
+    
     # 2. Verify PET_ENCLOSURE
-    state = wait_for_state(
-        serial, detector, ["PET_ENCLOSURE"], timeout_sec=10, check_mode="construction"
-    )
+    state = wait_for_state(serial, detector, ["PET_ENCLOSURE"], timeout_sec=10, check_mode="construction")
     if state != "PET_ENCLOSURE":
         print(f"[{serial}] [FAILED] Did not reach PET_ENCLOSURE state.")
         return False
@@ -903,7 +604,7 @@ def release_pet(serial: str, detector: GameStateDetector) -> bool:
     time.sleep(2)
     adb_helper.tap(serial, 50, 135)
     time.sleep(2)
-
+    
     def release_loop(tap_point, count):
         print(f"[{serial}] Release loop {tap_point} x{count}...")
         for _ in range(count):
@@ -915,25 +616,22 @@ def release_pet(serial: str, detector: GameStateDetector) -> bool:
             time.sleep(1.5)
             adb_helper.tap(serial, 547, 414)
             time.sleep(2)
-
+            
     release_loop((217, 320), 5)  # x5
     release_loop((151, 315), 3)  # x3
     release_loop((217, 320), 2)  # x2
-
+    
     # Back x2
     print(f"[{serial}] Back x2 to exit Pet screen...")
     adb_helper.press_back(serial)
     time.sleep(2)
     adb_helper.press_back(serial)
     time.sleep(2)
-
+    
     print(f"[{serial}] Pet Release completed!")
     return True
 
-
-def go_to_farming(
-    serial: str, detector: GameStateDetector, resource_type: str = "wood"
-) -> bool:
+def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> bool:
     """
     Farming Workflow:
     1. Back to OUT_CITY
@@ -944,44 +642,44 @@ def go_to_farming(
     6. Check if Create Legion exists -> If so, dispatch available legions.
     """
     print(f"[{serial}] Starting Farming Workflow for: {resource_type.upper()}")
-
+    
     # Coordinates mapping
     RESOURCE_TAPS = {
         "gold": (320, 485),
         "wood": (475, 485),
         "stone": (640, 485),
-        "mana": (795, 485),
+        "mana": (795, 485)
     }
-
+    
     SEARCH_TAPS = {
         "gold": (320, 400),
         "wood": (475, 400),
         "stone": (640, 400),
-        "mana": (795, 400),
+        "mana": (795, 400)
     }
-
+    
     LEGION_TAPS = [
-        (695, 90),  # legion_1
-        (735, 90),  # legion_2
-        (780, 90),  # legion_3
-        (825, 90),  # legion_4
-        (865, 90),  # legion_5
+        (695, 90), # legion_1
+        (735, 90), # legion_2
+        (780, 90), # legion_3
+        (825, 90), # legion_4
+        (865, 90)  # legion_5
     ]
-
+    
     r_type = resource_type.lower()
     if r_type not in RESOURCE_TAPS:
         print(f"[{serial}] [ERROR] Unknown resource type: {resource_type}")
         return False
-
+        
     # 1. Back to lobby OUT_CITY
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return False
-
+        
     # Loop over legions. Will break when we hit max/can't deploy
     for idx, legion_tap in enumerate(LEGION_TAPS):
-        print(f"\n[{serial}] --- Attempting Dispatch #{idx + 1} ---")
-
+        print(f"\n[{serial}] --- Attempting Dispatch #{idx+1} ---")
+        
         # 2. Tap Menu search
         print(f"[{serial}] Opening Search Menu (42, 422)...")
         adb_helper.tap(serial, 42, 422)
@@ -989,9 +687,7 @@ def go_to_farming(
 
         # 3. Tap Resource Category
         res_x, res_y = RESOURCE_TAPS[r_type]
-        print(
-            f"[{serial}] Selecting Resource Category {r_type.upper()} ({res_x}, {res_y})..."
-        )
+        print(f"[{serial}] Selecting Resource Category {r_type.upper()} ({res_x}, {res_y})...")
         adb_helper.tap(serial, res_x, res_y)
         time.sleep(3)
 
@@ -1005,52 +701,45 @@ def go_to_farming(
         print(f"[{serial}] Tapping Gather Button (665, 395)...")
         adb_helper.tap(serial, 665, 395)
         time.sleep(5)
-
+        
         # 6. Check if we can create a legion with retries
-        print(
-            f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)..."
-        )
+        print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
         result = None
         for attempt in range(3):
-            result = detector.check_activity(
-                serial, target="CREATE_LEGION", threshold=0.8
-            )
+            result = detector.check_activity(serial, target="CREATE_LEGION", threshold=0.8)
             if result:
                 break
             print(f"[{serial}] CREATE_LEGION not found, retrying ({attempt + 1}/3)...")
             time.sleep(2)
-
+            
         if not result:
-            print(
-                f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby."
-            )
+            print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
             adb_helper.press_back(serial)
             time.sleep(3)
             # We are done farming.
             break
-
+            
         print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
-
+        
         # 7. Create legion & Dispatch
         print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
         adb_helper.tap(serial, 755, 115)
         time.sleep(4)
-
-        print(f"[{serial}] Selecting Legion Preset #{idx + 1} at {legion_tap}...")
+        
+        print(f"[{serial}] Selecting Legion Preset #{idx+1} at {legion_tap}...")
         adb_helper.tap(serial, legion_tap[0], legion_tap[1])
         time.sleep(3)
-
-        dispatch_loc = (850, 480)
+        
+        dispatch_loc = (850, 480) 
         print(f"[{serial}] Tapping March/Dispatch {dispatch_loc}...")
         adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
-
+        
         # Game puts us back to OUT_CITY after dispatching
         # Sleep enough time to let the march animation start and UI settle
         time.sleep(7)
-
+        
     print(f"[{serial}] Farming Deployment Finished.")
     return True
-
 
 def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> bool:
     """
@@ -1064,99 +753,90 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> bool:
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return False
-
+        
     print(f"[{serial}] Tapping Markers Icon (180, 16)...")
     adb_helper.tap(serial, 180, 16)
     time.sleep(3)
-
+    
     # Wait for Markers Menu
-    state = wait_for_state(
-        serial, detector, ["MARKERS_MENU"], timeout_sec=10, check_mode="construction"
-    )
+    state = wait_for_state(serial, detector, ["MARKERS_MENU"], timeout_sec=10, check_mode="construction")
     if state != "MARKERS_MENU":
         print(f"[{serial}] [FAILED] Could not open Markers Menu.")
         return False
-
+        
     # Check for Resource Center (Activity detector to get coords)
     print(f"[{serial}] Searching for Resource Center marker...")
     rss_marker = None
     for attempt in range(3):
-        rss_marker = detector.check_activity(
-            serial, target="RSS_CENTER_MARKER", threshold=0.8
-        )
+        rss_marker = detector.check_activity(serial, target="RSS_CENTER_MARKER", threshold=0.8)
         if rss_marker:
             break
         time.sleep(2)
-
+        
     if not rss_marker:
-        print(
-            f"[{serial}] Resource Center not found in markers! Aborting and returning to lobby."
-        )
+        print(f"[{serial}] Resource Center not found in markers! Aborting and returning to lobby.")
         adb_helper.press_back(serial)
         time.sleep(2)
         return False
-
+        
     # rss_marker is (name, x, y)
     center_x, center_y = rss_marker[1], rss_marker[2]
     # Tap go to rss_center: (x+570, y)
     go_x, go_y = center_x + 570, center_y
     print(f"[{serial}] Found RSS Center. Tapping GO ({go_x}, {go_y})...")
     adb_helper.tap(serial, go_x, go_y)
-
+    
     # Wait for map to pan
     time.sleep(6)
-
+    
     # Tap the center of the screen
     print(f"[{serial}] Tapping RSS Center on map (479, 254)...")
     adb_helper.tap(serial, 479, 254)
     time.sleep(3)
-
+    
     # Check for View vs Gather
     print(f"[{serial}] Checking whether to Gather or if already occupied...")
     view_state = detector.check_activity(serial, target="RSS_VIEW", threshold=0.8)
     if view_state:
-        print(
-            f"[{serial}] 'View' button detected. Legion already farming this Resource Center. Aborting."
-        )
+        print(f"[{serial}] 'View' button detected. Legion already farming this Resource Center. Aborting.")
         adb_helper.tap(serial, 50, 500)
         time.sleep(2)
         return False
-
+        
     gather_state = detector.check_activity(serial, target="RSS_GATHER", threshold=0.8)
     if not gather_state:
         print(f"[{serial}] 'Gather' button not found. Aborting.")
         adb_helper.tap(serial, 50, 500)
         time.sleep(2)
         return False
-
+        
     g_x, g_y = gather_state[1], gather_state[2]
     print(f"[{serial}] Tapping Gather ({g_x}, {g_y})...")
     adb_helper.tap(serial, g_x, g_y)
     time.sleep(3)
-
+    
     # Create new legion
     print(f"[{serial}] Tapping Create Legion (490, 277)...")
     adb_helper.tap(serial, 490, 277)
     time.sleep(3)
-
+    
     # Create new legion (next screen)
     print(f"[{serial}] Setting up legion (755, 115)...")
     adb_helper.tap(serial, 755, 115)
     time.sleep(3)
-
+    
     LEGION_5_TAP = (865, 90)
     print(f"[{serial}] Selecting Legion Preset #5 at {LEGION_5_TAP}...")
     adb_helper.tap(serial, LEGION_5_TAP[0], LEGION_5_TAP[1])
     time.sleep(2)
-
-    dispatch_loc = (850, 480)
+    
+    dispatch_loc = (850, 480) 
     print(f"[{serial}] Tapping Dispatch {dispatch_loc}...")
     adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
     time.sleep(6)
-
+    
     print(f"[{serial}] Successfully dispatched legion to Resource Center.")
     return True
-
 
 def go_to_market(serial: str, detector: GameStateDetector) -> bool:
     """Navigates to Market."""
@@ -1165,6 +845,411 @@ def go_to_market(serial: str, detector: GameStateDetector) -> bool:
     time.sleep(2)
     adb_helper.tap(serial, 545, 267)
     time.sleep(3)
+    return True
+
+def go_to_alliance(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Navigates to the Alliance menu from Lobby IN_CITY.
+    Returns True if ALLIANCE_MENU state is reached successfully.
+    """
+    print(f"[{serial}] Navigating to Alliance Menu...")
+    
+    # 1. Back to lobby IN_CITY & open menu
+    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+        print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
+        return False
+        
+    if not ensure_lobby_menu_open(serial, detector):
+        print(f"[{serial}] [FAILED] Could not expand lobby menu.")
+        return False
+        
+    # 2. Tap Alliance Icon
+    print(f"[{serial}] Tapping Alliance Icon...")
+    adb_helper.tap(serial, 719, 503)
+    time.sleep(3)
+    
+    # 3. Verify ALLIANCE_MENU
+    state = wait_for_state(serial, detector, ["ALLIANCE_MENU"], timeout_sec=10, check_mode="construction")
+    if state != "ALLIANCE_MENU":
+        print(f"[{serial}] [FAILED] Did not reach ALLIANCE_MENU. Account might not be in an Alliance.")
+        return False
+        
+    print(f"[{serial}] -> ALLIANCE_MENU reached successfully.")
+    return True
+
+def go_to_alliance_war_loop(serial: str, detector: GameStateDetector, loop_count: int = 1) -> bool:
+    """
+    Function Claim Ressource in CITY LOBBY
+    Workflow:
+    1. in lobby IN_CITY
+    2. Go to Alliance
+    3. Go to War (alliance/war.png)
+    4. Check state in war if have rally (alliance/rally.png)
+    5. Join Rally (tap rally button) 
+    6. Using #6 in go_to_farm funciton (core_actions.py) to deploy legions. -> use legion_1
+    7. tap (x.y) to go to lobby IN_CITY
+    -> loop loop_count times
+    """
+    print(f"[{serial}] Starting Alliance War Rally Loop (Count: {loop_count})...")
+    
+    for loop in range(loop_count):
+        print(f"\n[{serial}] --- Rally Loop #{loop+1}/{loop_count} ---")
+            
+        # 2. Go to Alliance
+        if not go_to_alliance(serial, detector):
+            print(f"[{serial}] [FAILED] Could not open Alliance Menu.")
+            return False
+            
+        # 3. Go to War
+        print(f"[{serial}] Searching for War tab...")
+        war_tab_found = False
+        for attempt in range(3):
+            war_info = detector.check_alliance(serial, target="ALLIANCE_WAR", threshold=0.8)
+            if war_info:
+                name, w_x, w_y = war_info
+                print(f"[{serial}] Found War Tab at ({w_x}, {w_y}). Tapping...")
+                adb_helper.tap(serial, w_x, w_y)
+                war_tab_found = True
+                break
+            time.sleep(2)
+            
+        if not war_tab_found:
+            print(f"[{serial}] [WARNING] War tab not found. Aborting this loop.")
+            continue
+            
+        time.sleep(4) # Wait for War screen to load
+        
+        # 4. Check state in war if have rally
+        print(f"[{serial}] Scanning and waiting for active rallies...")
+        
+        rally_available = False
+        for attempt in range(100):
+            # Check for barriers to joining
+            no_rally = detector.check_alliance(serial, target="NO_RALLY", threshold=0.8)
+            already_join = detector.check_alliance(serial, target="ALREADY_JOIN_RALLY", threshold=0.8)
+            
+            # If neither the 'No Rally' text nor the 'Joined' tag are found, we have a fresh rally!
+            if not no_rally and not already_join:
+                print(f"[{serial}] Active joinable rally detected!")
+                rally_available = True
+                break
+                
+            if attempt % 6 == 0:
+                print(f"[{serial}] Waiting for new rallies to appear... ({attempt}/100)")
+            time.sleep(5)
+            
+        if not rally_available:
+            print(f"[{serial}] Timeout: No active rallies found after waiting. Returning to lobby.")
+            continue
+            
+        # 5. Join Rally
+        print(f"[{serial}] Tapping Join Rally at (659, 211)...")
+        adb_helper.tap(serial, 659, 211)
+        time.sleep(4)
+        
+        # 6. Deploy legions (use legion_1)
+        # Check if we can create a legion with retries
+        print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
+        result = None
+        for attempt in range(3):
+            result = detector.check_activity(serial, target="CREATE_LEGION", threshold=0.8)
+            if result:
+                break
+            print(f"[{serial}] CREATE_LEGION not found, retrying ({attempt + 1}/3)...")
+            time.sleep(2)
+            
+        if not result:
+            print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
+            continue
+            
+        print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
+        
+        # Create legion & Dispatch
+        print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
+        adb_helper.tap(serial, 755, 115)
+        time.sleep(4)
+        
+        adb_helper.tap(serial, 848, 154)
+        time.sleep(2)
+        adb_helper.tap(serial, 852, 223)
+        time.sleep(2)
+        adb_helper.tap(serial, 715, 300)
+        time.sleep(2)
+        adb_helper.tap(serial, 723, 448)
+        time.sleep(2)
+        adb_helper.tap(serial, 852, 453)
+        time.sleep(2)
+        
+        dispatch_loc = (850, 480) 
+        print(f"[{serial}] Tapping March/Dispatch {dispatch_loc}...")
+        adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
+        
+        # Game usually puts us back to map or lobby after dispatching. Wait for transition.
+        time.sleep(7)
+        
+        # 7. Return to IN_CITY (handled by start of next loop)
+        print(f"[{serial}] Rally join complete for this loop.")
+
+    print(f"[{serial}] Finished all {loop_count} Rally loops.")
+    return True
+
+def train_troops(serial: str, detector: GameStateDetector, training_list: list = None) -> bool:
+    """
+    Trains troops at the specified training houses and tiers.
+    Requirements:
+    - User must configure the 5 house center coordinates in HOUSE_TAPS.
+    - User must configure the 5 tier coordinates in TIER_TAPS.
+    - Requires TRAIN_UNITS, TRAINING_ICON, BTN_TRAIN templates in state_detector.
+    
+    Args:
+        training_list: A list of tuples, e.g., [("cavalry", 3), ("infantry", 5)]
+    """
+    if training_list is None:
+        training_list = [("infantry", 1)]
+        
+    print(f"[{serial}] Starting Train Troops workflow for {len(training_list)} houses: {training_list}")
+    
+    HOUSE_TAPS = {
+        "archer": (465, 256),
+        "cavalry": (302, 369),
+        "infantry": (379, 318),
+        "siege": (195, 290),
+        "mage": (278, 247)
+    }
+    
+    TIER_TAPS = {
+        1: (121, 460),
+        2: (198, 460),
+        3: (275, 460),
+        4: (352, 460),
+        5: (429, 460)
+    }
+    
+    # Default train button coordinate (adjust if needed)
+    TRAIN_BTN_COORD = (792, 466) 
+    
+    # 1. Back to IN_CITY once at the start
+    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+        print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
+        return False
+        
+    all_success = True
+        
+    for house_type, tier in training_list:
+        h_type = house_type.lower()
+        if str(tier).lower() == "default":
+            tier = "default"
+            
+        if h_type == "siege" and tier in [1, 2]:
+            print(f"[{serial}] [WARNING] Validation: Siege only trains tier 3-5. Changing Tier {tier} to Tier 3.")
+            tier = 3
+            
+        print(f"\n[{serial}] --- Processing House: {h_type.upper()} | Tier: {tier} ---")
+        
+        if h_type not in HOUSE_TAPS:
+            print(f"[{serial}] [ERROR] Unknown house_type: {house_type}. Skipping.")
+            all_success = False
+            continue
+            
+        if tier != "default" and tier not in TIER_TAPS:
+            print(f"[{serial}] [ERROR] Unknown tier: {tier}. Skipping.")
+            all_success = False
+            continue
+            
+        # Ensure we are in the lobby before tapping the next house
+        current_state = detector.check_state(serial)
+        if current_state != "IN-GAME LOBBY (IN_CITY)":
+            if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+                 print(f"[{serial}] [FAILED] Not in IN_CITY lobby. Aborting current training.")
+                 all_success = False
+                 continue
+
+        # 2. Tap training house
+        hx, hy = HOUSE_TAPS[h_type]
+        print(f"[{serial}] Tapping {h_type.upper()} House at ({hx}, {hy})...")
+        adb_helper.tap(serial, hx, hy)
+        time.sleep(3)
+        
+        # 3. Tap training icon relative to house (+90, +20)
+        icon_x = hx + 90
+        icon_y = hy + 20
+        print(f"[{serial}] Tapping TRAINING_ICON at ({icon_x}, {icon_y})...")
+        adb_helper.tap(serial, icon_x, icon_y)
+        time.sleep(3)
+        
+        # 4. Wait for TRAIN_UNITS construction state
+        state = wait_for_state(serial, detector, ["TRAIN_UNITS"], timeout_sec=10, check_mode="construction")
+        if state != "TRAIN_UNITS":
+            print(f"[{serial}] [FAILED] Did not reach TRAIN_UNITS screen. Current state: {state}")
+            adb_helper.press_back(serial)
+            all_success = False
+            continue
+            
+        print(f"[{serial}] -> Reached TRAIN_UNITS screen.")
+        
+        # 5. Check if we can train (look for BTN_TRAIN)
+        print(f"[{serial}] Checking if already training (waiting for BTN_TRAIN)...")
+        btn_train_state = detector.check_activity(serial, target="BTN_TRAIN", threshold=0.8)
+        
+        if btn_train_state:
+            print(f"[{serial}] BTN_TRAIN found -> Troops are already training. Moving to next house.")
+            adb_helper.press_back(serial)
+            time.sleep(2)
+            continue # Try next house
+            
+        # Not training! Begin training
+        print(f"[{serial}] House is idle! Preparing to train Tier {tier}...")
+        
+        if tier == "default":
+            print(f"[{serial}] Default training mode selected. Skipping tier selection.")
+            train_icon = detector.check_activity(serial, target="TRAINING_ICON", threshold=0.8)
+            if train_icon:
+                _, tx, ty = train_icon
+                print(f"[{serial}] Tapping Train Button at coordinate ({tx}, {ty})...")
+                adb_helper.tap(serial, tx, ty)
+                time.sleep(3)
+                print(f"[{serial}] Training started successfully for Default Tier {h_type.upper()}.")
+            else:
+                print(f"[{serial}] [FAILED] Could not find Train Button for Default Tier.")
+                all_success = False
+        else:
+            current_tier = int(tier)
+            trained = False
+            
+            while current_tier >= 1:
+                # Tap Tier
+                tx, ty = TIER_TAPS[current_tier]
+                print(f"[{serial}] Tapping Tier {current_tier} selector at ({tx}, {ty})...")
+                adb_helper.tap(serial, tx, ty)
+                time.sleep(2)
+                
+                # Check for train button
+                train_icon = detector.check_activity(serial, target="TRAINING_ICON", threshold=0.8)
+                if train_icon:
+                    _, btn_x, btn_y = train_icon
+                    print(f"[{serial}] Tapping Train Button at coordinate ({btn_x}, {btn_y})...")
+                    adb_helper.tap(serial, btn_x, btn_y)
+                    time.sleep(3)
+                    print(f"[{serial}] Training started successfully for Tier {current_tier} {h_type.upper()}.")
+                    trained = True
+                    break
+                else:
+                    print(f"[{serial}] Train button not found for Tier {current_tier} (might be locked). Falling back...")
+                    current_tier -= 1
+                    
+            if not trained:
+                print(f"[{serial}] [FAILED] Could not train any tier for {h_type.upper()}.")
+                all_success = False
+        
+        # Back out of the building info if needed, or wait for animation
+        # adb_helper.press_back(serial)
+        time.sleep(2)
+
+    print(f"[{serial}] Finished all training requests. Returning to lobby.")
+    back_to_lobby(serial, detector)
+    
+    return all_success
+
+
+def claim_alliance_resource(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Claims Alliance Territory Resource.
+    1. Go to Alliance Menu
+    2. Tap Territory Icon
+    3. Tap Claim Button
+    """
+    print(f"[{serial}] Starting Claim Alliance Resource...")
+    
+    # 1. Request in alliance menu
+    if not go_to_alliance(serial, detector):
+        print(f"[{serial}] [FAILED] Could not reach Alliance Menu to claim resource.")
+        return False
+        
+    # 2. Tap territory icon
+    print(f"[{serial}] Tapping Territory Icon...")
+    adb_helper.tap(serial, 635, 350)
+    time.sleep(3)
+    
+    # 3. Tap claim button (826, 175)
+    print(f"[{serial}] Tapping Claim Button (826, 175)...")
+    adb_helper.tap(serial, 826, 175)
+    time.sleep(2)
+    
+    print(f"[{serial}] -> Claim Alliance Resource completed.")
+
+    # back to lobby
+    adb_helper.press_back(serial)
+    time.sleep(2)
+    adb_helper.press_back(serial)
+    time.sleep(2)
+    return True
+
+def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all") -> bool:
+    """
+    Checks and claims mail in the game.
+    mail_type can be 'events', 'system', 'alliance', or 'all' (default).
+    """
+    valid_types = ["events", "system", "alliance", "all"]
+    mail_type = mail_type.lower()
+    if mail_type not in valid_types:
+        print(f"[{serial}] [ERROR] Invalid mail_type '{mail_type}'. Use {valid_types}.")
+        return False
+        
+    print(f"[{serial}] Starting Check Mail ({mail_type})...")
+
+
+    
+    # 1. Back to lobby
+    if not back_to_lobby(serial, detector):
+        print(f"[{serial}] [FAILED] Could not reach lobby.")
+        return False
+        
+    # 2. Tap mail icon
+    print(f"[{serial}] Tapping Mail Icon (926, 447)...")
+    adb_helper.tap(serial, 926, 447)
+    time.sleep(3)
+    
+    # 3. Verify MAIL_MENU
+    state = wait_for_state(serial, detector, ["MAIL_MENU"], timeout_sec=10, check_mode="special")
+    if state != "MAIL_MENU":
+        print(f"[{serial}] [FAILED] Did not reach MAIL_MENU.")
+        return False
+        
+    print(f"[{serial}] -> MAIL_MENU reached successfully.")
+    
+    # 4. Locations for tabs
+    tabs = {
+        "alliance": (370, 25),
+        "events": (500, 25),
+        "system": (615, 25)
+    }
+    claim_button = (100, 512)
+    
+    tabs_to_check = []
+    if mail_type == "all":
+        tabs_to_check = ["alliance", "events", "system"]
+    else:
+        tabs_to_check = [mail_type]
+        
+    for tab in tabs_to_check:
+        print(f"[{serial}] Checking '{tab.capitalize()}' mail...")
+        tab_x, tab_y = tabs[tab]
+        
+        # Tap tab
+        adb_helper.tap(serial, tab_x, tab_y)
+        time.sleep(2)
+        
+        # Tap claim
+        print(f"[{serial}] Tapping Claim ({claim_button[0]}, {claim_button[1]})...")
+        adb_helper.tap(serial, claim_button[0], claim_button[1])
+        time.sleep(2)
+        
+    # 5. Back out
+    print(f"[{serial}] Closing Mail Menu...")
+    adb_helper.press_back(serial)
+    time.sleep(2)
+    
+    print(f"[{serial}] -> Check Mail completed.")
     return True
 
 
@@ -1182,3 +1267,168 @@ def go_to_pet_token(serial: str, detector: GameStateDetector) -> bool:
     adb_helper.tap(serial, 100, 375)
     time.sleep(3)
     return True
+
+def swap_account(serial: str, account_detector: AccountDetector, detector: GameStateDetector, target_account: str = None, max_scrolls: int = 5) -> bool:
+    """
+    In-game account switch flow.
+    Navigates: LOBBY -> Profile -> Settings -> Switch Account -> Find & Select Account -> Confirm -> LOBBY.
+
+    Args:
+        serial: Emulator serial ID.
+        account_detector: AccountDetector instance for OCR text detection.
+        detector: GameStateDetector instance with templates loaded.
+        target_account: Account string name to search for (e.g. "Goten"). 
+                        If None, uses a fallback mechanism that blindly taps 
+                        the top 2 visible characters sequentially.
+        max_scrolls: Maximum scroll attempts to find the account in the list.
+
+    Returns True if successfully swapped and reached LOBBY, False on failure.
+    """
+    LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
+    print(f"[{serial}] === SWAP ACCOUNT: {target_account} ===")
+
+    # 1. Ensure we're in LOBBY first (and game is running)
+    if not startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp.vn", load_timeout=120):
+        print(f"[{serial}] swap_account failed: Could not reach lobby.")
+        return False
+
+    # 2. Navigate to Profile
+    print(f"[{serial}] Step 1/6: Opening Profile...")
+    if not go_to_profile(serial, detector):
+        print(f"[{serial}] swap_account failed: Could not open Profile.")
+        return False
+    time.sleep(1) 
+
+    # 4. Tap Settings button (683, 340) -> wait via account detector
+    print(f"[{serial}] Step 2/6: Opening Settings (683, 340)...")
+    adb_helper.tap(serial, 683, 340)
+    state = wait_for_state(serial, detector, ["SETTINGS"], timeout_sec=10, check_mode="special")
+    if not state:
+        print(f"[{serial}] swap_account failed: Could not reach Settings screen.")
+        return False
+    time.sleep(1)
+
+    # 5. Tap "Switch Account" (478, 354) -> wait via account detector
+    print(f"[{serial}] Step 3/6: Tapping Switch Account (478, 354)...")
+    adb_helper.tap(serial, 478, 354)
+    state = wait_for_state(serial, detector, ["CHARACTER_MANAGEMENT"], timeout_sec=10, check_mode="special")
+    if not state:
+        print(f"[{serial}] swap_account failed: Could not reach Character Management screen.")
+        return False
+    time.sleep(1)
+
+    if target_account:
+        # 6. Find target account in the list using check_account_state (OCR text) + scroll
+        print(f"[{serial}] Step 4/6: Searching for account TEXT '{target_account}' in list...")
+        account_found = None
+
+        for scroll_attempt in range(max_scrolls + 1):
+            # Try to find the account text on current viewport via OCR
+            result = account_detector.check_account_name(serial, target=target_account, check_type="text")
+
+            if result:
+                name, center_x, center_y = result
+                print(f"[{serial}] -> Account '{target_account}' found at ({center_x}, {center_y})!")
+                account_found = (center_x, center_y)
+                break
+
+            if scroll_attempt < max_scrolls:
+                print(f"[{serial}] -> Account not visible. Scrolling down... ({scroll_attempt + 1}/{max_scrolls})")
+                adb_helper.swipe(serial, 500, 400, 500, 200, 500)
+                time.sleep(2)
+            else:
+                print(f"[{serial}] -> Account not found after {max_scrolls} scrolls.")
+
+        if not account_found:
+            print(f"[{serial}] swap_account failed: Account '{target_account}' not found in Character Management list.")
+            adb_helper.press_back(serial)
+            time.sleep(2)
+            return False
+
+        # 7. Tap the found account
+        print(f"[{serial}] Step 5/6: Selecting account at ({account_found[0]}, {account_found[1]})...")
+        adb_helper.tap(serial, account_found[0], account_found[1])
+        time.sleep(2)
+
+        # Check if the confirmation prompt appeared. 
+        # If the state is STILL "CHARACTER_MANAGEMENT", it means the account was already selected,
+        # so no confirmation prompt appeared. We just back out 3 times to Lobby.
+        if detector.check_special_state(serial) == "CHARACTER_MANAGEMENT":
+            print(f"[{serial}] Target account '{target_account}' is already the active account. Backing out to Lobby...")
+            for _ in range(3):
+                adb_helper.press_back(serial)
+                time.sleep(1.5)
+            return True
+        else: 
+            print("Account not selected, proceeding to confirm")
+    else:
+        # Fallback Logic: Just toggle between the first 2 character slots
+        print(f"[{serial}] Step 4/6 & 5/6: No target account specified. Using 2-character toggle logic.")
+        char1_pos = (493, 181)  # Tọa độ slot nhân vật 1
+        char2_pos = (487, 249)  # Tọa độ slot nhân vật 2
+        
+        print(f"[{serial}] Tapping Character 1 at {char1_pos}...")
+        adb_helper.tap(serial, char1_pos[0], char1_pos[1])
+        time.sleep(2)
+        
+        if detector.check_special_state(serial) == "CHARACTER_MANAGEMENT":
+            print(f"[{serial}] Character 1 is active. Tapping Character 2 at {char2_pos}...")
+            adb_helper.tap(serial, char2_pos[0], char2_pos[1])
+            time.sleep(2)
+        else:
+            print(f"[{serial}] Character 1 selected, proceeding to confirm.")
+
+    # 8. Tap Confirm (400, 300)
+    print(f"[{serial}] Step 6/6: Confirming switch (556, 356)...")
+    adb_helper.tap(serial, 556, 356)
+    time.sleep(3)
+
+    # 9. Wait for game to reload and reach Lobby
+    print(f"[{serial}] Waiting for game to reload into Lobby (timeout: 120s)...")
+    lobby_state = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
+    if not lobby_state:
+        print(f"[{serial}] swap_account failed: Game did not reload into Lobby after switch.")
+        return False
+
+    print(f"[{serial}] === SWAP ACCOUNT SUCCESS -> {lobby_state} ===")
+    return True
+
+def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
+    """
+    Claims all available resources (Gold, Wood, Ore, Mana) in the city.
+    Requirements:
+    - User must have icons_markers/city_rss_..._full.png configured in state_detector mapped to specific resource names.
+    Returns:
+    - Number of resources successfully claimed.
+    """
+    print(f"[{serial}] Starting Claim City Resources workflow...")
+    
+    # 1. Back to IN_CITY
+    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+        print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
+        return 0
+        
+    claimed_count = 0
+    
+    # 2. Specific Resource Icons to check
+    rss_types = ["CITY_RSS_GOLD", "CITY_RSS_WOOD", "CITY_RSS_ORE", "CITY_RSS_MANA"]
+    
+    # 3. Loop each resource type individually
+    for rss_type in rss_types:
+        print(f"[{serial}] --- Checking for {rss_type} ---")
+        for attempt in range(2):
+            print(f"[{serial}] Looking for {rss_type} (Attempt {attempt + 1}/2)...")
+            rss_icon = detector.locate_icon(serial, target=rss_type, threshold=0.8)
+            
+            if rss_icon:
+                icon_name, icon_x, icon_y = rss_icon
+                print(f"[{serial}] Found {rss_type}! Tapping at ({icon_x}, {icon_y})...")
+                adb_helper.tap(serial, icon_x, icon_y)
+                claimed_count += 1
+                time.sleep(1.5)
+            else:
+                print(f"[{serial}] No more {rss_type} found.")
+                break
+            
+    print(f"[{serial}] Finished claiming city resources. Total claimed: {claimed_count}")
+    return claimed_count

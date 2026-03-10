@@ -461,6 +461,7 @@ const WF3 = {
     // ── NEW: Dynamic Registry & Config Cache ──
     _systemActivities: [],   // Loaded from /api/workflow/activity-registry
     _groupConfigs: {},       // Cache for loaded group configs (v2 schema)
+    _currentConfigActivityId: null, // Currently open activity in right panel
     _statusPollInterval: null,
     _isStatusPollInFlight: false,
 
@@ -1014,6 +1015,11 @@ const WF3 = {
         const conf = this._groupConfigs[groupId];
         if (conf && conf.activities && conf.activities[activityId]) {
             const actNode = conf.activities[activityId];
+            // Backward/forward compatibility: trust the metric directly
+            // Backend now computes this exclusively based on server-time YYYY-MM-DD
+            if (actNode.runs_today !== undefined) {
+                return actNode.runs_today || 0;
+            }
             const todayStr = new Date().toLocaleDateString();
             if (actNode.runs_today_date === todayStr) {
                 return actNode.runs_today || 0;
@@ -1353,6 +1359,43 @@ const WF3 = {
         // BUG 1 FIX: Server now sends per-activity breakdown in activity_statuses
         const statuses = queueData.activity_statuses || {};
         this._latestActivityStatuses = statuses;
+
+        // NEW: Live Metrics Sync (Last Run, Runs Today)
+        if (queueData.activity_metrics) {
+            const gid = queueData.group_id;
+            if (this._groupConfigs[gid] && this._groupConfigs[gid].activities) {
+                Object.keys(queueData.activity_metrics).forEach(actId => {
+                    const metrics = queueData.activity_metrics[actId];
+                    if (this._groupConfigs[gid].activities[actId]) {
+                        this._groupConfigs[gid].activities[actId].last_run = metrics.last_run;
+                        this._groupConfigs[gid].activities[actId].runs_today = metrics.runs_today;
+                    }
+                });
+            }
+
+            // If the user's focus corresponds to an updated activity, refresh the panel metrics
+            if (this._currentConfigActivityId && queueData.activity_metrics[this._currentConfigActivityId]) {
+                const liveLastRun = document.getElementById('acv-cfg-last-run');
+                const liveRunsToday = document.getElementById('acv-cfg-runs-today');
+                const liveStatusBadge = document.getElementById('acv-cooldown-status-badge');
+
+                if (liveLastRun || liveRunsToday) {
+                    const metrics = queueData.activity_metrics[this._currentConfigActivityId];
+                    if (liveLastRun) {
+                        liveLastRun.textContent = metrics.last_run ? new Date(metrics.last_run).toLocaleString() : 'Never';
+                    }
+                    if (liveRunsToday) {
+                        liveRunsToday.textContent = metrics.runs_today || 0;
+                    }
+                    if (liveStatusBadge) {
+                        const cooldownStatus = this._isOnCooldown(this._currentConfigActivityId, gid)
+                            ? `<span style="color:var(--amber-500)">⏳ ${this._formatCooldownRemaining(this._currentConfigActivityId, gid)}</span>`
+                            : (metrics.last_run ? '<span style="color:var(--emerald-500)">✓ Ready</span>' : '');
+                        liveStatusBadge.innerHTML = cooldownStatus;
+                    }
+                }
+            }
+        }
 
         // We only update badges for the currently selected group's list
         const config = this.getActivityConfig(this.activitySelectedGroupId);
@@ -1859,6 +1902,7 @@ const WF3 = {
     showActivityConfig(activityId, groupId) {
         // Switch to config tab
         this.switchRightTab('config');
+        this._currentConfigActivityId = activityId;
 
         const panel = document.getElementById('acv-config-panel');
         if (!panel) return;
@@ -1924,11 +1968,11 @@ const WF3 = {
                 <span style="font-size:12px; color:var(--muted-foreground);">Minutes</span>
             </div>
             <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground);">
-                <span>Last run: ${lastRunStr}</span>
+                <span>Last run: <span id="acv-cfg-last-run">${lastRunStr}</span></span>
                 <span id="acv-cooldown-status-badge">${cooldownStatus}</span>
             </div>
             <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground); margin-top:-5px;">
-                <span>Runs today: <strong style="color:var(--foreground);">${runsToday}</strong></span>
+                <span>Runs today: <strong id="acv-cfg-runs-today" style="color:var(--foreground);">${runsToday}</strong></span>
             </div>
 `;
 

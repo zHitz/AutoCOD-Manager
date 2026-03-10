@@ -14,6 +14,7 @@ from backend.core.ldplayer_manager import (
     list_all_instances,
     quit_instance,
     launch_instance,
+    wait_for_device,
 )
 from backend.config import config
 import os
@@ -111,6 +112,7 @@ class BotOrchestrator:
                 }
                 for acc in self.queue
             ],
+            "activity_metrics": await self._get_activity_metrics(),
         }
 
         import inspect
@@ -169,8 +171,49 @@ class BotOrchestrator:
         else:
             self.ws_callback(event_type, data)
 
-    async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int):
-        """Closes old emulator / game and boots new one."""
+    async def _get_activity_metrics(self) -> Dict[str, Any]:
+        """Queries the database for live metrics (last_run, runs_today) for all activities in this group."""
+        metrics = {}
+        import aiosqlite
+        from datetime import datetime
+        
+        try:
+            today_prefix = datetime.now().strftime('%Y-%m-%d')
+            async with aiosqlite.connect(config.db_path) as db:
+                for act in self.activities:
+                    act_id = act.get("id", act.get("name"))
+                    if not act_id:
+                        continue
+                        
+                    metrics[act_id] = {"last_run": None, "runs_today": 0}
+                    
+                    # Get Last Run
+                    async with db.execute(
+                        """SELECT started_at FROM account_activity_logs 
+                           WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
+                           ORDER BY started_at DESC LIMIT 1""", 
+                        (self.group_id, act_id)
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if row and row[0]:
+                            metrics[act_id]["last_run"] = row[0]
+                            
+                            # Get Runs Today
+                            async with db.execute(
+                                """SELECT COUNT(*) FROM account_activity_logs 
+                                   WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
+                                   AND started_at LIKE ?""", 
+                                (self.group_id, act_id, f"{today_prefix}%")
+                            ) as cursor2:
+                                count_row = await cursor2.fetchone()
+                                metrics[act_id]["runs_today"] = count_row[0] if count_row else 0
+        except Exception as e:
+            print(f"[BotOrchestrator] Error fetching activity metrics: {e}")
+            
+        return metrics
+
+    async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int) -> bool:
+        """Closes old emulator / game and boots new one. Returns True on success."""
         import logging
 
         print(
@@ -188,8 +231,18 @@ class BotOrchestrator:
         print(f"[BotOrchestrator] Launching Emu {new_emu_index}...")
         await asyncio.to_thread(launch_instance, new_emu_index)
 
-        print(f"[BotOrchestrator] Waiting 15s for Emu {new_emu_index} to boot...")
-        await asyncio.sleep(15)  # Give LDPlayer system time to boot up
+        print(f"[BotOrchestrator] Waiting for Emu {new_emu_index} to fully boot...")
+        boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 120)
+        if not boot_ok:
+            # Retry once with shorter timeout
+            print(f"[BotOrchestrator] Boot timeout. Retrying with 60s...")
+            boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 60)
+        if not boot_ok:
+            print(f"[BotOrchestrator] Emu {new_emu_index} boot FAILED after retry.")
+            return False
+        # Short grace period for OS services to settle after boot_completed
+        await asyncio.sleep(5)
+        return True
 
     async def start(self):
         """Main orchestrator loop."""
@@ -302,6 +355,7 @@ class BotOrchestrator:
                 )
 
                 # Check if swap is needed
+                swap_needed = False
                 if last_emu_index is not None:
                     if last_emu_index == emu_idx:
                         if last_account_id == acc_id:
@@ -310,33 +364,16 @@ class BotOrchestrator:
                             )
                         else:
                             # SAME EMULATOR -> Need in-game account swap
-                            serial = f"emulator-{5554 + emu_idx * 2}"
-                            detector = GameStateDetector(
-                                adb_path=config.adb_path,
-                                templates_dir=self.templates_dir,
-                            )
-                            account_detector = AccountDetector(adb_path=config.adb_path)
-
-                            # target_lord = self.queue[self.current_idx].get("lord_name")
-                            swap_ok = await asyncio.to_thread(
-                                core_actions.swap_account,
-                                serial,
-                                account_detector,
-                                detector,
-                                # target_lord
-                            )
-                            if not swap_ok:
-                                print(
-                                    f"[BotOrchestrator] Account swap failed on Emu {emu_idx}. Skipping account."
-                                )
-                                self.account_statuses[acc_id] = "error"
-                                last_emu_index = emu_idx
-                                last_account_id = acc_id
-                                self._advance_queue()
-                                continue
+                            swap_needed = True
                     else:
                         # DIFFERENT EMULATOR -> Cross-emu swap
-                        await self._handle_cross_emu_swap(last_emu_index, emu_idx)
+                        swap_ok = await self._handle_cross_emu_swap(last_emu_index, emu_idx)
+                        if not swap_ok:
+                            print(f"[BotOrchestrator] Cross-emu swap FAILED. Skipping account.")
+                            self.account_statuses[acc_id] = "error"
+                            # Do NOT set last_emu_index — next account should retry boot
+                            self._advance_queue()
+                            continue
                 else:
                     # BEGINNING OF RUN (last_emu_index is None) -> MUST LAUNCH FIRST EMULATOR
                     print(f"[BotOrchestrator] Launching initial Emu {emu_idx}...")
@@ -351,13 +388,69 @@ class BotOrchestrator:
                     if not is_running:
                         await asyncio.to_thread(launch_instance, emu_idx)
                         print(
-                            f"[BotOrchestrator] Waiting 15s for initial Emu {emu_idx} to boot..."
+                            f"[BotOrchestrator] Waiting for initial Emu {emu_idx} to fully boot..."
                         )
-                        await asyncio.sleep(15)
+                        boot_ok = await asyncio.to_thread(wait_for_device, emu_idx, 120)
+                        if not boot_ok:
+                            # Retry once
+                            print(f"[BotOrchestrator] Boot timeout. Retrying with 60s...")
+                            boot_ok = await asyncio.to_thread(wait_for_device, emu_idx, 60)
+                        if not boot_ok:
+                            print(f"[BotOrchestrator] Emu {emu_idx} boot FAILED after retry. Skipping account.")
+                            self.account_statuses[acc_id] = "error"
+                            # Do NOT set last_emu_index — next account should retry boot
+                            self._advance_queue()
+                            continue
+                        await asyncio.sleep(5)
                     else:
                         print(
                             f"[BotOrchestrator] Initial Emu {emu_idx} is already running."
                         )
+
+                serial = f"emulator-{5554 + emu_idx * 2}"
+                detector = GameStateDetector(
+                    adb_path=config.adb_path,
+                    templates_dir=self.templates_dir,
+                )
+
+                # ── ALWAYS ENSURE GAME IS OPEN AND AT LOBBY ──
+                print(f"[BotOrchestrator] Ensuring game is running and at lobby on Emu {emu_idx}...")
+                lobby_ok = await asyncio.to_thread(
+                    core_actions.startup_to_lobby,
+                    serial,
+                    detector,
+                    "com.farlightgames.samo.gp.vn",
+                    config.adb_path,
+                    120
+                )
+                
+                if not lobby_ok:
+                    print(f"[BotOrchestrator] Failed to reach lobby on Emu {emu_idx}. Skipping account.")
+                    self.account_statuses[acc_id] = "error"
+                    last_emu_index = emu_idx
+                    last_account_id = acc_id
+                    self._advance_queue()
+                    continue
+
+                if swap_needed:
+                    account_detector = AccountDetector(adb_path=config.adb_path)
+                    #target_lord = acc.get("lord_name")
+                    swap_ok = await asyncio.to_thread(
+                        core_actions.swap_account,
+                        serial,
+                        account_detector,
+                        detector,
+                        #target_lord
+                    )
+                    if not swap_ok:
+                        print(
+                            f"[BotOrchestrator] Account swap failed on Emu {emu_idx}. Skipping account."
+                        )
+                        self.account_statuses[acc_id] = "error"
+                        last_emu_index = emu_idx
+                        last_account_id = acc_id
+                        self._advance_queue()
+                        continue
 
                 # Wait slightly before starting activities
                 await asyncio.sleep(2)
@@ -526,6 +619,9 @@ class BotOrchestrator:
                         break  # stop processing activities for this account on error
 
                 # End of activities loop for this account
+                # Log finalized account status and broadcast fresh metrics
+                await self.broadcast_state()
+
                 self.current_activity = None
 
                 # Update last run time for cooldown tracking
