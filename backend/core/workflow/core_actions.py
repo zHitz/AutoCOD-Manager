@@ -493,6 +493,7 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     capture_pet(serial, detector)
     go_to_pet_sanctuary(serial, detector)
     release_pet(serial, detector)
+    capture_pet(serial, detector)
     return True
     
 def capture_pet(serial: str, detector: GameStateDetector) -> bool:
@@ -517,17 +518,21 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     adb_helper.tap(serial, 158, 486)
     time.sleep(2)
 
+    print(f"[{serial}] Selecting BEASTS MENU (301, 215)...")
+    adb_helper.tap(serial, 301, 215)
+    time.sleep(2)
+
     # 4. Tap Auto Capture submenu
     print(f"[{serial}] Selecting Auto Capture (285, 400)...")
     adb_helper.tap(serial, 285, 400)
     time.sleep(2)
 
-    # 5. Verify state AUTO_CAPTURE_PET
-    print(f"[{serial}] Waiting for AUTO_CAPTURE_PET state...")
-    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=10, check_mode="special")
+    # 5. Verify state AUTO_CAPTURE_PET / AUTO_CAPTURE_START
+    print(f"[{serial}] Waiting for Capture window to open...")
+    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"], timeout_sec=10, check_mode="special")
     
-    if state != "AUTO_CAPTURE_PET":
-        print(f"[{serial}] [FAILED] Did not reach AUTO_CAPTURE_PET state.")
+    if state not in ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"]:
+        print(f"[{serial}] [FAILED] Did not reach Capture window.")
         return False
 
     # 6. Tap (284, 398) x5 to configure
@@ -542,11 +547,35 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     adb_helper.tap(serial, 501, 466)
     time.sleep(2)
 
-    print(f"[{serial}] Checking for AUTO_CAPTURE_PET state...")
-    state = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET"], timeout_sec=5, check_mode="special")
-    if state == "AUTO_CAPTURE_PET":
-        print(f"[{serial}] Not engough warrants to capture pet.")
+    # 8. Check if not enough warrants or capture in progress
+    print(f"[{serial}] Checking outcome of Auto Capture...")
+    outcome = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"], timeout_sec=10, check_mode="special")
+    
+    if outcome is None:
+        print(f"[{serial}] Auto capture started & game pushed to map! Capture successful.")
+        return True
+        
+    if outcome == "AUTO_CAPTURE_IN_PROGRESS":
+        print(f"[{serial}] Auto Capture remains on screen and is in progress! Waiting for completion...")
+        while True:
+            # Check if start icon appeared (meaning capture finished)
+            finished = detector.check_special_state(serial, target="AUTO_CAPTURE_START")
+            if finished:
+                print(f"[{serial}] Auto capture completed successfully!")
+                adb_helper.press_back(serial)
+                break
+                
+            print(f"[{serial}] Still in progress... tapping refresh (285, 400) and waiting 5s.")
+            # Bấm đổi tab Auto Capture để nó loading lại giao diện
+            adb_helper.tap(serial, 147, 140)
+            time.sleep(0.5)
+            adb_helper.tap(serial, 150, 233)
+            time.sleep(5)
+            
+    elif outcome == "AUTO_CAPTURE_START":
+        print(f"[{serial}] Not enough warrants to capture pet (or idle state returned).")
         adb_helper.press_back(serial)
+        
     return True
 
 def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
