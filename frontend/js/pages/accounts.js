@@ -12,6 +12,44 @@ const AccountsPage = {
     _errorMessage: '',
     _actionLoading: {},     // { [actionKey]: true }
     _comparisonCache: {},
+    _sortField: null,
+    _sortDirection: 'asc',
+
+    formatDateTime(value) {
+        if (!value) return 'Never';
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return 'Never';
+        return dt.toLocaleString();
+    },
+
+    _normalizeLoginMethod(method) {
+        const m = (method || '').toLowerCase();
+        if (m === 'google') return 'Google';
+        if (m === 'facebook') return 'Facebook';
+        if (m === 'email') return 'Email';
+        return 'Email';
+    },
+
+    _normalizeProvider(provider) {
+        const p = (provider || '').toLowerCase();
+        if (p === 'funtap') return 'Funtap';
+        return 'Global';
+    },
+
+    _getRuntimeStatus(row) {
+        const emuStatus = (row.emu_status || '').toLowerCase();
+        const hasEmulatorLink = !!row.emulator_db_id || row.emu_index != null || !!row.emu_name;
+        if (row.is_active === 1 && emuStatus === 'online') {
+            return { label: '🟢 Running', style: 'background:rgba(16,185,129,0.1);color:var(--emerald-500);border:1px solid rgba(16,185,129,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;', title: 'Active and online now' };
+        }
+        if (row.is_active === 1) {
+            return { label: '🟡 Ready', style: 'background:rgba(234,179,8,0.1);color:var(--yellow-500);border:1px solid rgba(234,179,8,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;', title: 'Enabled but emulator is offline' };
+        }
+        if (hasEmulatorLink) {
+            return { label: '⚪ Linked', style: 'background:var(--muted);color:var(--muted-foreground);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;border:1px solid var(--border);', title: 'Linked to emulator, not active' };
+        }
+        return { label: '🔴 Unlinked', style: 'background:rgba(239,68,68,0.1);color:var(--red-500);border:1px solid rgba(239,68,68,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;', title: 'No emulator linked' };
+    },
 
     formatResource(valAbs) {
         if (!valAbs || isNaN(valAbs)) return '0M';
@@ -26,6 +64,63 @@ const AccountsPage = {
         if (valAbs >= 1000000000) return (valAbs / 1000000000).toFixed(1) + 'B';
         if (valAbs >= 1000000) return (valAbs / 1000000).toFixed(1) + 'M';
         return valAbs.toLocaleString();
+    },
+
+
+
+    _sortValue(row, field) {
+        const text = (v) => (v == null ? '' : String(v)).toLowerCase();
+        switch (field) {
+            case 'account_id': return Number(row.account_id || 0);
+            case 'emulator': return text(row.emu_name || (row.emu_index != null ? `ldp-${row.emu_index}` : ''));
+            case 'name': return text(row.lord_name || '');
+            case 'game_id': return text(row.game_id || '');
+            case 'power': return Number(row.power || 0);
+            case 'runtime': {
+                const rank = { '🟢 Running': 4, '🟡 Ready': 3, '⚪ Linked': 2, '🔴 Unlinked': 1 };
+                return rank[this._getRuntimeStatus(row).label] || 0;
+            }
+            case 'provider': return text(this._normalizeProvider(row.provider));
+            case 'gold': return Number(row.gold || 0);
+            case 'wood': return Number(row.wood || 0);
+            case 'ore': return Number(row.ore || 0);
+            case 'pet_token': return Number(row.pet_token || 0);
+            case 'mana': return Number(row.mana || 0);
+            default: return Number(row.account_id || 0);
+        }
+    },
+
+    _sortedAccounts() {
+        if (!this._sortField) return [...this._accountsData];
+        const dir = this._sortDirection === 'desc' ? -1 : 1;
+        return [...this._accountsData].sort((a, b) => {
+            const av = this._sortValue(a, this._sortField);
+            const bv = this._sortValue(b, this._sortField);
+            if (av === bv) return Number(a.account_id || 0) - Number(b.account_id || 0);
+            if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * dir;
+            return (av > bv ? 1 : -1) * dir;
+        });
+    },
+
+    sortBy(field) {
+        if (this._sortField === field) {
+            this._sortDirection = this._sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this._sortField = field;
+            this._sortDirection = 'asc';
+        }
+
+        if (typeof router !== 'undefined' && router._currentPage === 'accounts') {
+            const root = document.getElementById('page-root');
+            if (root) root.innerHTML = this.render();
+        }
+    },
+
+    _sortIndicator(field) {
+        if (this._sortField !== field) return '<span style="opacity:.35; margin-left:6px;">↕</span>';
+        return this._sortDirection === 'asc'
+            ? '<span style="margin-left:6px;color:var(--primary);">↑</span>'
+            : '<span style="margin-left:6px;color:var(--primary);">↓</span>';
     },
 
     render() {
@@ -89,6 +184,8 @@ const AccountsPage = {
                 .th-group { background: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted-foreground); padding: 8px 16px; border-bottom: 1px solid var(--border); text-align: center; }
                 .th-col { padding: 10px 14px; font-weight: 600; font-size: 12px; color: var(--muted-foreground); background: var(--card); border-bottom: 2px solid var(--border); white-space: nowrap; }
                 .th-col.accent { color: var(--primary); }
+                .th-sortable { cursor: pointer; user-select: none; }
+                .th-sortable:hover { background: var(--accent); }
 
                 /* ── GRID / CARD LIST ── */
                 .account-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; align-items: start; }
@@ -462,18 +559,18 @@ const AccountsPage = {
                     <table class="accounts-table">
                         <thead style="position: sticky; top: 0; z-index: 10;">
                             <tr>
-                                <th class="th-col freeze-col-1 stt-col" style="padding-left:14px;z-index:11;">#</th>
-                                <th class="th-col freeze-col-2" style="min-width:110px;z-index:11;">Emulator</th>
-                                <th class="th-col freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);">Name</th>
-                                <th class="th-col" style="border-left:1px solid var(--border);font-size:11px;">Game ID</th>
-                                <th class="th-col accent" style="text-align:right;">Power</th>
-                                <th class="th-col" style="text-align:center;">Runtime Status</th>
-                                <th class="th-col" style="text-align:center;">Provider</th>
-                                <th class="th-col" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);">Gold</th>
-                                <th class="th-col" style="text-align:right;color:var(--emerald-600,#059669);">Wood</th>
-                                <th class="th-col" style="text-align:right;color:var(--indigo-500,#6366f1);">Ore</th>
-                                <th class="th-col" style="text-align:right;color:var(--orange-500,#f97316);">Pet 🐾</th>
-                                <th class="th-col" style="text-align:right;color:var(--purple-500,#a855f7);">Mana ✦</th>
+                                <th class="th-col th-sortable freeze-col-1 stt-col" style="padding-left:14px;z-index:11;" onclick="AccountsPage.sortBy('account_id')"># ${this._sortIndicator('account_id')}</th>
+                                <th class="th-col th-sortable freeze-col-2" style="min-width:110px;z-index:11;" onclick="AccountsPage.sortBy('emulator')">Emulator ${this._sortIndicator('emulator')}</th>
+                                <th class="th-col th-sortable freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);" onclick="AccountsPage.sortBy('name')">Name ${this._sortIndicator('name')}</th>
+                                <th class="th-col th-sortable" style="border-left:1px solid var(--border);font-size:11px;" onclick="AccountsPage.sortBy('game_id')">Game ID ${this._sortIndicator('game_id')}</th>
+                                <th class="th-col th-sortable accent" style="text-align:right;" onclick="AccountsPage.sortBy('power')">Power ${this._sortIndicator('power')}</th>
+                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('runtime')">Runtime State ${this._sortIndicator('runtime')}</th>
+                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('provider')">Provider ${this._sortIndicator('provider')}</th>
+                                <th class="th-col th-sortable" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);" onclick="AccountsPage.sortBy('gold')">Gold ${this._sortIndicator('gold')}</th>
+                                <th class="th-col th-sortable" style="text-align:right;color:var(--emerald-600,#059669);" onclick="AccountsPage.sortBy('wood')">Wood ${this._sortIndicator('wood')}</th>
+                                <th class="th-col th-sortable" style="text-align:right;color:var(--indigo-500,#6366f1);" onclick="AccountsPage.sortBy('ore')">Ore ${this._sortIndicator('ore')}</th>
+                                <th class="th-col th-sortable" style="text-align:right;color:var(--orange-500,#f97316);" onclick="AccountsPage.sortBy('pet_token')">Pet 🐾 ${this._sortIndicator('pet_token')}</th>
+                                <th class="th-col th-sortable" style="text-align:right;color:var(--purple-500,#a855f7);" onclick="AccountsPage.sortBy('mana')">Mana ✦ ${this._sortIndicator('mana')}</th>
                                 <th class="th-col" style="width:60px;"></th>
                             </tr>
                         </thead>
@@ -548,7 +645,7 @@ const AccountsPage = {
             </tr>`;
         }
 
-        return this._accountsData.map((row) => {
+        return this._sortedAccounts().map((row) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
             const dotClass = statusStr === 'online' ? 'status-dot-on' : 'status-dot-off';
             const isSelected = this._selectedAccountId === row.account_id;
@@ -568,22 +665,14 @@ const AccountsPage = {
             // Delta setup
             const mkInlineDelta = (key) => {
                 const cached = this._comparisonCache[gameId];
-                if (!cached || !cached.delta || !cached.delta[key]) return '';
+                if (!cached || !cached.delta || cached.delta[key] == null) return '';
+                if (cached.delta[key] === 0) return '<span title="No change" style="font-size:10px; margin-left:4px; color:var(--muted-foreground);">•</span>';
                 const v = cached.delta[key];
                 const isUp = v > 0;
                 return `<span title="${isUp ? '+' : ''}${v.toLocaleString()}" style="font-size:10px; margin-left:4px; font-family:sans-serif; color: ${isUp ? 'var(--emerald-500)' : 'var(--red-500)'}">${isUp ? '▲' : '▼'}</span>`;
             };
-            // Active status badge
-            let statusBadge;
-            if (row.is_active === 1 && statusStr === 'online') {
-                statusBadge = '<span class="badge-status-yes">🟢 Active</span>';
-            } else if (row.is_active === 1) {
-                statusBadge = '<span style="background:rgba(234,179,8,0.1);color:var(--yellow-500);border:1px solid rgba(234,179,8,0.25);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
-            } else if (row.emulator_db_id) {
-                statusBadge = '<span style="background:var(--muted);color:var(--muted-foreground);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">⚪ Idle</span>';
-            } else {
-                statusBadge = '<span class="badge-status-no">🔴 None</span>';
-            }
+            const runtimeStatus = this._getRuntimeStatus(row);
+            const statusBadge = `<span title="${runtimeStatus.title}" style="${runtimeStatus.style}">${runtimeStatus.label}</span>`;
 
             return `
             <tr class="account-row${isSelected ? ' selected' : ''}" onclick="AccountsPage.openDetail(${row.account_id})">
@@ -598,7 +687,7 @@ const AccountsPage = {
                 <td style="padding:11px 14px;font-size:12px;font-family:monospace;color:var(--muted-foreground);border-left:1px solid var(--border);">${isLegacy ? '<span style="color:var(--yellow-500)" title="Legacy account - needs Game ID">⚠️</span>' : gameId}</td>
                 <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;">${powFormatted}</td>
                 <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
-                <td style="padding:11px 14px;text-align:center;font-size:12px;">${row.provider || '—'}</td>
+                <td style="padding:11px 14px;text-align:center;font-size:12px;">${this._normalizeProvider(row.provider)}</td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
                     <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>${mkInlineDelta('gold')}
                 </td>
@@ -672,7 +761,7 @@ const AccountsPage = {
                         <span class="power-hall">Hall ${row.hall_level || 0}</span>
                     </div>
                     <div class="power-bar"><div class="power-fill" style="width:${powerPct}%"></div></div>
-                    <div class="sync-time">Synced: ${row.last_scan_at ? new Date(row.last_scan_at).toLocaleTimeString() : 'Never'}</div>
+                    <div class="sync-time">Synced: ${this.formatDateTime(row.last_scan_at)}</div>
                 </div>
                 <div class="card-actions">
                     <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.account_id})">
@@ -792,18 +881,16 @@ const AccountsPage = {
                                 <div class="field">
                                     <label>Login Method</label>
                                     <select id="form-login-method" onchange="AccountsPage._checkEmailRequired()">
-                                        <option value="" ${!acc.login_method ? 'selected' : ''} disabled>-- Select --</option>
-                                        <option value="Google" ${acc.login_method === 'Google' ? 'selected' : ''}>Google</option>
-                                        <option value="Facebook" ${acc.login_method === 'Facebook' ? 'selected' : ''}>Facebook</option>
-                                        <option value="Apple" ${acc.login_method === 'Apple' ? 'selected' : ''}>Apple</option>
-                                        <option value="Guest" ${acc.login_method === 'Guest' ? 'selected' : ''}>Guest</option>
+                                        <option value="Facebook" ${this._normalizeLoginMethod(acc.login_method) === 'Facebook' ? 'selected' : ''}>🔵 Facebook</option>
+                                        <option value="Google" ${this._normalizeLoginMethod(acc.login_method) === 'Google' ? 'selected' : ''}>🟡 Google</option>
+                                        <option value="Email" ${this._normalizeLoginMethod(acc.login_method) === 'Email' ? 'selected' : ''}>✉️ Email</option>
                                     </select>
                                     <div id="err-login-method" style="font-size:11px; color:var(--red-500); margin-top:4px; display:none;"></div>
                                 </div>
                                 <div class="field">
                                     <label>
                                         Login Email 
-                                        <span id="email-asterisk" class="required" style="display:${(acc.login_method === 'Google' || acc.login_method === 'Facebook') ? 'inline-block' : 'none'}; margin-left:4px;"></span>
+                                        <span id="email-asterisk" class="required" style="display:${(this._normalizeLoginMethod(acc.login_method) === 'Google' || this._normalizeLoginMethod(acc.login_method) === 'Facebook' || this._normalizeLoginMethod(acc.login_method) === 'Email') ? 'inline-block' : 'none'}; margin-left:4px;"></span>
                                     </label>
                                     <input type="email" id="form-email" value="${acc.email || ''}" placeholder="account@gmail.com"/>
                                     <div id="err-email" style="font-size:11px; color:var(--red-500); margin-top:4px; display:none;"></div>
@@ -811,9 +898,8 @@ const AccountsPage = {
                                 <div class="field">
                                     <label>Provider</label>
                                     <select id="form-provider">
-                                        <option value="Global" ${acc.provider === 'Global' ? 'selected' : ''}>Global</option>
-                                        <option value="Funtap" ${acc.provider === 'Funtap' ? 'selected' : ''}>Funtap</option>
-                                        <option value="VNG" ${acc.provider === 'VNG' ? 'selected' : ''}>VNG</option>
+                                        <option value="Global" ${this._normalizeProvider(acc.provider) === 'Global' ? 'selected' : ''}>🌐 Global</option>
+                                        <option value="Funtap" ${this._normalizeProvider(acc.provider) === 'Funtap' ? 'selected' : ''}>🎮 Funtap</option>
                                     </select>
                                 </div>
                                 <div class="field">
@@ -861,7 +947,7 @@ const AccountsPage = {
         const method = document.getElementById('form-login-method').value;
         const reqSpan = document.getElementById('email-asterisk');
         if (reqSpan) {
-            reqSpan.style.display = (method === 'Google' || method === 'Facebook') ? 'inline' : 'none';
+            reqSpan.style.display = (method === 'Google' || method === 'Facebook' || method === 'Email') ? 'inline' : 'none';
         }
     },
 
@@ -874,9 +960,9 @@ const AccountsPage = {
 
         const gameIdStr = document.getElementById('form-game-id').value.trim();
         const emuIndex = document.getElementById('form-emu-index').value;
-        const loginMethod = document.getElementById('form-login-method').value;
+        const loginMethod = this._normalizeLoginMethod(document.getElementById('form-login-method').value);
         const email = document.getElementById('form-email').value.trim();
-        const provider = document.getElementById('form-provider').value;
+        const provider = this._normalizeProvider(document.getElementById('form-provider').value);
         const alliance = document.getElementById('form-alliance').value.trim();
         const note = document.getElementById('form-note').value;
 
@@ -1055,7 +1141,7 @@ const AccountsPage = {
         const accMatching = acc.lord_name ? 'Yes' : 'No';
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
-        const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
+        const timeAgo = this.formatDateTime(acc.last_scan_at);
         const gameIdDisplay = acc.game_id || 'Unknown';
         const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
 
@@ -1179,6 +1265,7 @@ const AccountsPage = {
             if (data && data.delta) {
                 this._comparisonCache[gameId] = data;
                 this._updateDeltaUI(data.delta, data.previous);
+                return data;
             }
         } catch (e) {
             console.warn('[Accounts] Comparison fetch failed:', e);
@@ -1216,7 +1303,7 @@ const AccountsPage = {
     },
 
     _renderActiveTab(acc) {
-        const loginMethod = acc.login_method || '—';
+        const loginMethod = this._normalizeLoginMethod(acc.login_method || 'Email');
         const displayEmail = acc.email || '—';
         const displayAlliance = acc.alliance || '—';
         const hallLvl = acc.hall_level || 0;
@@ -1259,7 +1346,7 @@ const AccountsPage = {
                         </div>
                         <div class="info-row">
                             <span class="info-key">Provider</span>
-                            <span class="info-val"><span class="provider-tag">${acc.provider || 'Global'}</span></span>
+                            <span class="info-val"><span class="provider-tag">${this._normalizeProvider(acc.provider)}</span></span>
                         </div>
                     </div>
 
@@ -1308,7 +1395,7 @@ const AccountsPage = {
             const orePct = Math.min(Math.round((acc.ore || 0) / 3000000000 * 100), 100);
             const manaPct = Math.min(Math.round((acc.mana || 0) / 3000000000 * 100), 100);
             const oreIsCritical = orePct < 30;
-            const timeAgo = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : 'Never';
+            const timeAgo = this.formatDateTime(acc.last_scan_at);
 
             // Pre-loaded comparison data (if cached)
             const cached = this._comparisonCache[acc.game_id];
@@ -1549,12 +1636,11 @@ const AccountsPage = {
                 this._pageState = 'empty';
             } else {
                 this._pageState = 'ready';
-                // Auto-fetch comparisons for all accounts
-                this._accountsData.forEach(account => {
-                    if (account.game_id && !this._comparisonCache[account.game_id]) {
-                        this._fetchComparison(account.game_id);
-                    }
-                });
+                // Preload comparison deltas so table renders immediately
+                const jobs = this._accountsData
+                    .filter(account => account.game_id && !this._comparisonCache[account.game_id])
+                    .map(account => this._fetchComparison(account.game_id));
+                if (jobs.length) await Promise.allSettled(jobs);
             }
         } catch (e) {
             console.error('Failed to fetch accounts:', e);
@@ -1634,9 +1720,9 @@ const AccountsPage = {
                     <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Login Method</label>
                     <select id="pq-login-method" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
                         <option value="">-- Select --</option>
-                        <option value="Google">Google</option>
                         <option value="Facebook">Facebook</option>
-                        <option value="Apple">Apple</option>
+                        <option value="Google">Google</option>
+                        <option value="Email">Email</option>
                     </select>
                 </div>
                 <div>
@@ -1646,7 +1732,7 @@ const AccountsPage = {
                 <div>
                     <label style="display:block;font-size:11px;font-weight:700;color:var(--muted-foreground);margin-bottom:4px;">Provider</label>
                     <select id="pq-provider" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--foreground);font-size:13px;">
-                        <option value="Global">Global / Main</option>
+                        <option value="Global">Global</option>
                         <option value="Funtap">Funtap</option>
                     </select>
                 </div>
@@ -1669,9 +1755,9 @@ const AccountsPage = {
     },
 
     async confirmPending(pendingId) {
-        const loginMethod = document.getElementById('pq-login-method')?.value || '';
+        const loginMethod = this._normalizeLoginMethod(document.getElementById('pq-login-method')?.value || 'Email');
         const email = document.getElementById('pq-email')?.value || '';
-        const provider = document.getElementById('pq-provider')?.value || 'Global';
+        const provider = this._normalizeProvider(document.getElementById('pq-provider')?.value || 'Global');
         const alliance = document.getElementById('pq-alliance')?.value || '';
         const note = document.getElementById('pq-note')?.value || '';
 
