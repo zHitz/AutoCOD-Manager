@@ -78,30 +78,74 @@ def launch_instance(index: int) -> bool:
 
 
 def wait_for_device(index: int, timeout: int = 120) -> bool:
-    """Wait for an emulator to fully boot by checking sys.boot_completed via ADB."""
+    """Wait for an emulator to fully boot by checking sys.boot_completed via ADB.
+    
+    Handles LDPlayer quirk: devices don't always auto-register in `adb devices`.
+    Uses `adb connect` as fallback when device not found.
+    """
     import time
     from backend.core.workflow import adb_helper
     
     serial = f"emulator-{5554 + index * 2}"
+    # LDPlayer TCP port for adb connect fallback
+    tcp_port = 5555 + index * 2
+    tcp_serial = f"127.0.0.1:{tcp_port}"
+    
     start_time = time.time()
+    adb_restarted = False
+    connect_attempted = False
     
     print(f"[{serial}] Waiting for Android to boot completely (timeout: {timeout}s)...")
     
-    # Wait for adb connection
     while time.time() - start_time < timeout:
-        out = adb_helper._run_adb(["devices"])
+        out = adb_helper._run_adb(["devices"], timeout=10)
         device_ready = False
+        actual_serial = serial  # Which serial to use for commands
+        
         for line in out.splitlines():
             if serial in line and "offline" not in line and "unauthorized" not in line:
                 device_ready = True
+                actual_serial = serial
                 break
+            if tcp_serial in line and "offline" not in line and "unauthorized" not in line:
+                device_ready = True
+                actual_serial = tcp_serial
+                break
+        
+        if not device_ready:
+            elapsed = time.time() - start_time
+            
+            # After 15s, try adb connect as fallback
+            if elapsed > 15 and not connect_attempted:
+                print(f"[{serial}] Device not in 'adb devices'. Trying 'adb connect {tcp_serial}'...")
+                adb_helper._run_adb(["connect", tcp_serial], timeout=5)
+                connect_attempted = True
+                time.sleep(2)
+                continue
+            
+            # After 45s, restart ADB server once as last resort
+            if elapsed > 45 and not adb_restarted:
+                print(f"[{serial}] Still not found. Restarting ADB server...")
+                adb_helper._run_adb(["kill-server"], timeout=5)
+                time.sleep(2)
+                adb_helper._run_adb(["start-server"], timeout=10)
+                time.sleep(3)
+                adb_restarted = True
+                connect_attempted = False  # Allow another connect attempt
+                continue
+            
+            time.sleep(3)
+            continue
                 
-        if device_ready:
-            # Device attached, check boot_completed
-            prop = adb_helper._run_adb(["-s", serial, "shell", "getprop", "sys.boot_completed"])
-            if prop and prop.strip() == "1":
-                print(f"[{serial}] Android boot completed.")
-                return True
+        # Device found — check boot_completed
+        prop = adb_helper._run_adb(
+            ["shell", "getprop", "sys.boot_completed"],
+            serial=actual_serial,
+            timeout=10,
+        )
+        if prop and prop.strip() == "1":
+            print(f"[{serial}] Android boot completed (serial: {actual_serial}).")
+            return True
         time.sleep(2)
         
     print(f"[{serial}] Timeout waiting for Android boot.")

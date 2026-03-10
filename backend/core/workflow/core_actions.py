@@ -23,10 +23,14 @@ import cv2
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
 
-def ensure_app_running(serial: str, package_name: str, adb_path: str = config.adb_path) -> bool:
-    """Checks if the app is active, and boots it if it's not. Returns True if it was already running."""
+def ensure_app_running(serial: str, package_name: str, adb_path: str = config.adb_path):
+    """Checks if the app is active, and boots it if it's not.
+    Returns True if already running, False if just launched, None if launch failed."""
     if not clipper_helper.is_app_foreground(adb_path, serial, package_name):
-        clipper_helper.open_app(adb_path, serial, package_name)
+        launched = clipper_helper.open_app(adb_path, serial, package_name)
+        if not launched:
+            print(f"[{serial}] [ERROR] open_app failed. App did not launch.")
+            return None
         time.sleep(10)
         return False
     return True
@@ -103,6 +107,10 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     
     was_running = ensure_app_running(serial, package_name, adb_path)
+    
+    if was_running is None:
+        print(f"[{serial}] [FAILED] Could not launch app at all.")
+        return False
     
     if not was_running:
         print(f"[{serial}] App was not running. Waiting for game to load into Lobby...")
@@ -233,6 +241,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
     # 0. Validator: Ensure emulator is online and game is running
     # If the app crashed or emulator disconnected, we catch it early here
     was_running = ensure_app_running(serial, "com.farlightgames.samo.gp.vn", config.adb_path)
+    if was_running is None:
+        print(f"[{serial}] [FAILED] Could not launch app during back_to_lobby.")
+        return False
     if not was_running:
         print(f"[{serial}] [WARNING] Game was not running during back_to_lobby! Attempting to wait for lobby...")
         # Since it wasn't running, it was just booted. Wait for it to hit lobby.

@@ -74,8 +74,8 @@ def is_app_foreground(adb_path: str, serial: str, package_name: str) -> bool:
         return False
 
 
-def open_app(adb_path: str, serial: str, package_name: str):
-    """Launch the application using monkeys intent."""
+def open_app(adb_path: str, serial: str, package_name: str) -> bool:
+    """Launch the application using monkeys intent. Returns True on success."""
     print(f"[INFO] Launching app {package_name} on {serial}...")
     cmd = [
         adb_path,
@@ -101,6 +101,8 @@ def open_app(adb_path: str, serial: str, package_name: str):
         else:
             if attempt > 0:
                 print(f"[INFO] App launched successfully on attempt {attempt+1}.")
-            return
+            return True
             
     print(f"[ERROR] Failed to launch app {package_name} after 3 attempts.")
+    return False
+

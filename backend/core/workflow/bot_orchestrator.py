@@ -212,8 +212,8 @@ class BotOrchestrator:
             
         return metrics
 
-    async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int):
-        """Closes old emulator / game and boots new one."""
+    async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int) -> bool:
+        """Closes old emulator / game and boots new one. Returns True on success."""
         import logging
 
         print(
@@ -234,10 +234,15 @@ class BotOrchestrator:
         print(f"[BotOrchestrator] Waiting for Emu {new_emu_index} to fully boot...")
         boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 120)
         if not boot_ok:
-            print(f"[BotOrchestrator] Warning: Emu {new_emu_index} boot timeout.")
-        else:
-            # Short grace period for OS services to settle after boot_completed
-            await asyncio.sleep(5)
+            # Retry once with shorter timeout
+            print(f"[BotOrchestrator] Boot timeout. Retrying with 60s...")
+            boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 60)
+        if not boot_ok:
+            print(f"[BotOrchestrator] Emu {new_emu_index} boot FAILED after retry.")
+            return False
+        # Short grace period for OS services to settle after boot_completed
+        await asyncio.sleep(5)
+        return True
 
     async def start(self):
         """Main orchestrator loop."""
@@ -362,7 +367,13 @@ class BotOrchestrator:
                             swap_needed = True
                     else:
                         # DIFFERENT EMULATOR -> Cross-emu swap
-                        await self._handle_cross_emu_swap(last_emu_index, emu_idx)
+                        swap_ok = await self._handle_cross_emu_swap(last_emu_index, emu_idx)
+                        if not swap_ok:
+                            print(f"[BotOrchestrator] Cross-emu swap FAILED. Skipping account.")
+                            self.account_statuses[acc_id] = "error"
+                            # Do NOT set last_emu_index — next account should retry boot
+                            self._advance_queue()
+                            continue
                 else:
                     # BEGINNING OF RUN (last_emu_index is None) -> MUST LAUNCH FIRST EMULATOR
                     print(f"[BotOrchestrator] Launching initial Emu {emu_idx}...")
@@ -381,9 +392,16 @@ class BotOrchestrator:
                         )
                         boot_ok = await asyncio.to_thread(wait_for_device, emu_idx, 120)
                         if not boot_ok:
-                            print(f"[BotOrchestrator] Warning: Emu {emu_idx} boot timeout.")
-                        else:
-                            await asyncio.sleep(5)
+                            # Retry once
+                            print(f"[BotOrchestrator] Boot timeout. Retrying with 60s...")
+                            boot_ok = await asyncio.to_thread(wait_for_device, emu_idx, 60)
+                        if not boot_ok:
+                            print(f"[BotOrchestrator] Emu {emu_idx} boot FAILED after retry. Skipping account.")
+                            self.account_statuses[acc_id] = "error"
+                            # Do NOT set last_emu_index — next account should retry boot
+                            self._advance_queue()
+                            continue
+                        await asyncio.sleep(5)
                     else:
                         print(
                             f"[BotOrchestrator] Initial Emu {emu_idx} is already running."
@@ -416,13 +434,13 @@ class BotOrchestrator:
 
                 if swap_needed:
                     account_detector = AccountDetector(adb_path=config.adb_path)
-                    target_lord = acc.get("lord_name")
+                    #target_lord = acc.get("lord_name")
                     swap_ok = await asyncio.to_thread(
                         core_actions.swap_account,
                         serial,
                         account_detector,
                         detector,
-                        target_lord
+                        #target_lord
                     )
                     if not swap_ok:
                         print(

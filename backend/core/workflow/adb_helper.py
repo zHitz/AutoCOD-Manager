@@ -8,7 +8,7 @@ import time
 from backend.config import config
 
 
-def _run_adb(cmd_list: list[str], serial: str = None) -> str:
+def _run_adb(cmd_list: list[str], serial: str = None, timeout: int = 30) -> str:
     """Execute an ADB command and return stdout."""
     try:
         base = [config.adb_path]
@@ -24,7 +24,7 @@ def _run_adb(cmd_list: list[str], serial: str = None) -> str:
             capture_output=True,
             text=True,
             startupinfo=startupinfo,
-            timeout=30,
+            timeout=timeout,
         )
         return result.stdout.strip()
     except subprocess.TimeoutExpired:

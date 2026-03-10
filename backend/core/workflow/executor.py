@@ -124,7 +124,9 @@ async def execute_recipe(
                 was_running = await asyncio.to_thread(
                     core_actions.ensure_app_running, serial, pkg
                 )
-                if not was_running:
+                if was_running is None:
+                    ok = False  # App launch failed entirely
+                elif not was_running:
                     await asyncio.sleep(10)  # Give it time to boot up
 
             elif fn_id == "sys_close_app":
