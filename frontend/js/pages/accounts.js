@@ -165,6 +165,11 @@ const AccountsPage = {
 
                 /* Resource values in table */
                 .resource-val { font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; }
+                .resource-cell { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 78px; }
+                .resource-delta { width: 10px; display: inline-block; text-align: center; font-size: 10px; line-height: 1; font-family: sans-serif; }
+                .resource-delta.up { color: var(--emerald-500); }
+                .resource-delta.down { color: var(--red-500); }
+                .resource-delta.neutral, .resource-delta.empty { color: var(--muted-foreground); }
 
                 /* Status dots */
                 .status-dot-on  { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); box-shadow: 0 0 5px var(--emerald-500); display: inline-block; flex-shrink: 0; }
@@ -368,8 +373,11 @@ const AccountsPage = {
                 
                 .progress-bar { width: 100%; height: 4px; background: var(--muted); border-radius: 4px; margin-top: 10px; overflow: hidden; }
                 @keyframes growBar { from { width: 0 !important; } }
-                .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), var(--yellow-400)); transition: width 1s ease; animation: growBar 1s 0.5s ease both; transform-origin: left; }
+                .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), var(--yellow-400)); transition: width 0.45s ease; transform-origin: left; }
                 .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); animation: pulse 2s infinite; display: inline-block; }
+                .stat-value-sync { display: flex; flex-direction: column; gap: 2px; line-height: 1.05; }
+                .stat-value-sync .sync-date-line { font-size: 29px; font-weight: 700; letter-spacing: -0.01em; }
+                .stat-value-sync .sync-time-line { font-size: 23px; font-weight: 600; color: var(--foreground); opacity: 0.95; }
                 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); } 50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } }
 
                 /* ── Tabs ── */
@@ -665,11 +673,11 @@ const AccountsPage = {
             // Delta setup
             const mkInlineDelta = (key) => {
                 const cached = this._comparisonCache[gameId];
-                if (!cached || !cached.delta || cached.delta[key] == null) return '';
-                if (cached.delta[key] === 0) return '<span title="No change" style="font-size:10px; margin-left:4px; color:var(--muted-foreground);">•</span>';
+                if (!cached || !cached.delta || cached.delta[key] == null) return '<span class="resource-delta empty"></span>';
+                if (cached.delta[key] === 0) return '<span class="resource-delta neutral" title="No change">•</span>';
                 const v = cached.delta[key];
                 const isUp = v > 0;
-                return `<span title="${isUp ? '+' : ''}${v.toLocaleString()}" style="font-size:10px; margin-left:4px; font-family:sans-serif; color: ${isUp ? 'var(--emerald-500)' : 'var(--red-500)'}">${isUp ? '▲' : '▼'}</span>`;
+                return `<span class="resource-delta ${isUp ? 'up' : 'down'}" title="${isUp ? '+' : ''}${v.toLocaleString()}">${isUp ? '▲' : '▼'}</span>`;
             };
             const runtimeStatus = this._getRuntimeStatus(row);
             const statusBadge = `<span title="${runtimeStatus.title}" style="${runtimeStatus.style}">${runtimeStatus.label}</span>`;
@@ -689,19 +697,19 @@ const AccountsPage = {
                 <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
                 <td style="padding:11px 14px;text-align:center;font-size:12px;">${this._normalizeProvider(row.provider)}</td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
-                    <span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>${mkInlineDelta('gold')}
+                    <span class="resource-cell"><span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>${mkInlineDelta('gold')}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--emerald-600,#059669);font-size:13px;">${woodFormatted}</span>${mkInlineDelta('wood')}
+                    <span class="resource-cell"><span class="resource-val" style="color:var(--emerald-600,#059669);font-size:13px;">${woodFormatted}</span>${mkInlineDelta('wood')}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>${mkInlineDelta('ore')}
+                    <span class="resource-cell"><span class="resource-val" style="color:var(--indigo-500,#6366f1);font-size:13px;">${oreFormatted}</span>${mkInlineDelta('ore')}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>${mkInlineDelta('pet_token')}
+                    <span class="resource-cell"><span class="resource-val" style="color:var(--orange-500,#f97316);font-size:13px;">${(row.pet_token || 0).toLocaleString()}</span>${mkInlineDelta('pet_token')}</span>
                 </td>
                 <td style="padding:11px 14px;text-align:right;">
-                    <span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>${mkInlineDelta('mana')}
+                    <span class="resource-cell"><span class="resource-val" style="color:var(--purple-500,#a855f7);font-size:13px;">${manaFormatted}</span>${mkInlineDelta('mana')}</span>
                 </td>
                 <td style="padding:11px 14px;">
                     <div class="hover-actions-arrow">
@@ -1141,7 +1149,8 @@ const AccountsPage = {
         const accMatching = acc.lord_name ? 'Yes' : 'No';
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
-        const timeAgo = this.formatDateTime(acc.last_scan_at);
+        const syncDateLine = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleDateString() : 'Never';
+        const syncTimeLine = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : '—';
         const gameIdDisplay = acc.game_id || 'Unknown';
         const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
 
@@ -1222,7 +1231,7 @@ const AccountsPage = {
                             <span class="sync-dot"></span>
                             Last Sync
                         </div>
-                        <div class="stat-value" style="font-size:24px; padding-top:4px;">${timeAgo}</div>
+                        <div class="stat-value stat-value-sync"><span class="sync-date-line">${syncDateLine}</span><span class="sync-time-line">${syncTimeLine}</span></div>
                         <div class="stat-sub">${activeStatus.substring(2)} · ${emuDisplay}</div>
                     </div>
                 </div>
@@ -1395,8 +1404,7 @@ const AccountsPage = {
             const orePct = Math.min(Math.round((acc.ore || 0) / 3000000000 * 100), 100);
             const manaPct = Math.min(Math.round((acc.mana || 0) / 3000000000 * 100), 100);
             const oreIsCritical = orePct < 30;
-            const timeAgo = this.formatDateTime(acc.last_scan_at);
-
+    
             // Pre-loaded comparison data (if cached)
             const cached = this._comparisonCache[acc.game_id];
             const delta = cached ? cached.delta : null;
