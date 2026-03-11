@@ -30,6 +30,7 @@ config.load()
 pytesseract.pytesseract.tesseract_cmd = config.tesseract_path
 
 from workflow import adb_helper
+from workflow.ocr_name_utils import sanitize_lord_name
 
 
 class AccountDetector:
@@ -66,6 +67,10 @@ class AccountDetector:
         Runs OCR on the given serial's screen. Finds the first occurrence of target (case-insensitive)
         and returns its center (x, y) along with the exact matched text.
 
+        Uses multi-strategy search:
+          Strategy 1: Exact substring match with raw target
+          Strategy 2: Sanitized name fallback (strips OCR noise, alliance tags)
+
         Applies image preprocessing (Scaling + Contrast) to improve accuracy on game fonts.
         """
         if check_type != "text":
@@ -76,52 +81,70 @@ class AccountDetector:
             return None
 
         # --- IMAGE PRE-PROCESSING CHO TESSERACT ---
-        # 1. Scale up 2x (Tesseract đọc chữ nhỏ trong game rất kém, phóng to 2x giúp tăng độ chính xác)
         scale = 2
         h, w = screen_img.shape[:2]
         scaled = cv2.resize(
             screen_img, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC
         )
 
-        # 2. Grayscale
         gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
 
-        # 3. Enhance Contrast (CLAHE - Chống nhiễu background game)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
 
-        # Output.DICT gives us access to coordinates and confidences
         data = pytesseract.image_to_data(
             enhanced, config=tesseract_config, output_type=Output.DICT
         )
 
-        target_lower = target.lower().strip()
+        # Build search candidates: exact first, sanitized fallback
+        raw_lower = target.lower().strip()
+        sanitized = sanitize_lord_name(target).lower()
 
+        candidates = [raw_lower]
+        if sanitized and sanitized != raw_lower:
+            candidates.append(sanitized)
+
+        for search_term in candidates:
+            result = self._find_text_in_ocr_data(data, search_term, scale)
+            if result:
+                label = "exact" if search_term == raw_lower else "sanitized"
+                print(f"[OCR] Matched via {label} strategy: '{search_term}'")
+                return (target, result[0], result[1])
+
+        # Debug: dump OCR words when nothing matched
+        all_words = [
+            w.strip() for w in data["text"] if w.strip()
+        ]
+        print(
+            f"[OCR] No match for '{target}' (candidates: {candidates}). "
+            f"OCR words on screen: {all_words[:30]}"
+        )
+        return None
+
+    def _find_text_in_ocr_data(
+        self, data: dict, search_term: str, scale: int
+    ) -> tuple:
+        """Search for a term in OCR data dict. Returns (center_x, center_y) or None."""
         for i in range(len(data["text"])):
             word = data["text"][i].strip()
+            if not word:
+                continue
 
-            # Check if the word is non-empty and contains the search text
-            if word and target_lower in word.lower():
+            if search_term in word.lower():
                 x = data["left"][i]
                 y = data["top"][i]
                 w_box = data["width"][i]
                 h_box = data["height"][i]
                 conf = data["conf"][i]
 
-                # Filter low confidence results (< 50) unless the text is very short
                 if conf != "-1" and int(conf) > 40:
-                    # Calculate center on the UPSCALED image
-                    center_x_scaled = x + (w_box // 2)
-                    center_y_scaled = y + (h_box // 2)
-
-                    # Scale coordinates BACK to native resolution (chia cho scale)
-                    center_x = center_x_scaled // scale
-                    center_y = center_y_scaled // scale
+                    center_x = (x + (w_box // 2)) // scale
+                    center_y = (y + (h_box // 2)) // scale
 
                     print(
                         f"[OCR] Found '{word}' at center ({center_x}, {center_y}) | conf: {conf}%"
                     )
-                    return (target, center_x, center_y)
+                    return (center_x, center_y)
 
         return None
 

@@ -56,6 +56,221 @@ const TaskPage = {
         }
         return [];
     },
+    _formatDateTime(value) {
+        if (!value) return '--';
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    },
+
+    _formatDuration(ms) {
+        const totalMs = Number(ms || 0);
+        if (!totalMs) return '--';
+        if (totalMs < 1000) return `${totalMs} ms`;
+        const totalSeconds = Math.round(totalMs / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (!minutes) return `${seconds}s`;
+        return `${minutes}m ${seconds}s`;
+    },
+
+    _escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    _closeHistoryPanel() {
+        if (this._historyPanelEl) {
+            this._historyPanelEl.remove();
+            this._historyPanelEl = null;
+        }
+        if (this._historyOverlayEl) {
+            this._historyOverlayEl.remove();
+            this._historyOverlayEl = null;
+        }
+    },
+    _renderHistoryPanelContent(account, payload = {}, loading = false, error = '') {
+        const summary = payload.summary || {};
+        const activityStats = Array.isArray(payload.activity_stats) ? payload.activity_stats : [];
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        const visibleLatestError = summary.latest_error && summary.latest_error.toLowerCase() !== 'unknown execution failure'
+            ? summary.latest_error
+            : '';
+
+        const summaryCards = [
+            { label: 'Total runs', value: summary.total_runs || 0, tone: 'var(--foreground)' },
+            { label: 'Success', value: summary.success_count || 0, tone: '#047857' },
+            { label: 'Failed', value: summary.failed_count || 0, tone: '#b91c1c' },
+            { label: 'Avg duration', value: this._formatDuration(summary.avg_duration_ms), tone: 'var(--foreground)' },
+            { label: 'Last run', value: this._formatDateTime(summary.last_run), tone: 'var(--foreground)', compact: true }
+        ];
+
+        const summaryHtml = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;">
+                ${summaryCards.map((card) => `
+                    <div style="border:1px solid var(--border);border-radius:16px;padding:14px 16px;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.04));min-height:92px;">
+                        <div style="font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.08em;">${this._escapeHtml(card.label)}</div>
+                        <div style="font-size:${card.compact ? '13px' : '28px'};font-weight:800;line-height:${card.compact ? '1.5' : '1.2'};margin-top:8px;color:${card.tone};word-break:break-word;">${this._escapeHtml(card.value)}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        const breakdownHtml = loading
+            ? '<div style="padding:18px;color:var(--muted-foreground);">Loading activity history...</div>'
+            : error
+                ? `<div style="padding:18px;color:#b91c1c;">${this._escapeHtml(error)}</div>`
+                : activityStats.length
+                    ? `<div style="display:flex;flex-direction:column;gap:10px;">${activityStats.map((stat) => `
+                        <div style="border:1px solid var(--border);border-radius:14px;background:var(--card);padding:14px 16px;">
+                            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                                <div>
+                                    <div style="font-weight:800;font-size:14px;">${this._escapeHtml(stat.activity_name || stat.activity_id)}</div>
+                                    <div style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">ID: ${this._escapeHtml(stat.activity_id || '--')}</div>
+                                </div>
+                                <span class="task-pill task-status-pill ${stat.last_status === 'FAILED' ? 'overdue' : stat.last_status === 'SUCCESS' ? 'on-track' : 'at-risk'}">${this._escapeHtml(stat.last_status || '--')}</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:12px;">
+                                <div><div style="font-size:11px;color:var(--muted-foreground);">Runs</div><div style="font-size:18px;font-weight:800;margin-top:4px;">${stat.total_runs || 0}</div></div>
+                                <div><div style="font-size:11px;color:var(--muted-foreground);">Success</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#047857;">${stat.success_count || 0}</div></div>
+                                <div><div style="font-size:11px;color:var(--muted-foreground);">Failed</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#b91c1c;">${stat.failed_count || 0}</div></div>
+                                <div><div style="font-size:11px;color:var(--muted-foreground);">Avg duration</div><div style="font-size:18px;font-weight:800;margin-top:4px;">${this._escapeHtml(this._formatDuration(stat.avg_duration_ms))}</div></div>
+                                <div><div style="font-size:11px;color:var(--muted-foreground);">Last run</div><div style="font-size:12px;font-weight:700;line-height:1.5;margin-top:4px;">${this._escapeHtml(this._formatDateTime(stat.last_run))}</div></div>
+                            </div>
+                        </div>
+                    `).join('')}</div>`
+                    : '<div style="padding:18px;color:var(--muted-foreground);">No activity history for the selected date.</div>';
+
+        const timelineHtml = loading
+            ? '<div style="padding:18px;color:var(--muted-foreground);">Loading execution timeline...</div>'
+            : error
+                ? `<div style="padding:18px;color:#b91c1c;">${this._escapeHtml(error)}</div>`
+                : items.length
+                    ? items.map((item) => {
+                        const metadata = this._escapeHtml(JSON.stringify(item.metadata || {}, null, 2));
+                        const result = this._escapeHtml(JSON.stringify(item.result || {}, null, 2));
+                        const errorHtml = item.error_message
+                            ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(185,28,28,.06);border:1px solid rgba(185,28,28,.14);color:#991b1b;font-size:12px;line-height:1.5;"><b>Error:</b> ${this._escapeHtml(item.error_message)}</div>`
+                            : '';
+                        const statusClass = item.status === 'FAILED' ? 'overdue' : item.status === 'SUCCESS' ? 'on-track' : 'at-risk';
+                        return `
+                            <div style="border:1px solid var(--border);border-radius:16px;padding:14px 16px;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.03));">
+                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                                    <div>
+                                        <div style="font-weight:800;font-size:14px;">${this._escapeHtml(item.activity_name || item.activity_id)}</div>
+                                        <div style="font-size:11px;color:var(--muted-foreground);margin-top:5px;line-height:1.6;word-break:break-word;">Run ${this._escapeHtml(item.run_id || '--')} | ${this._escapeHtml(item.source || '--')} | attempts ${item.attempts || 1}</div>
+                                    </div>
+                                    <span class="task-pill task-status-pill ${statusClass}">${this._escapeHtml(item.status || '--')}</span>
+                                </div>
+                                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px;font-size:12px;">
+                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Started</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDateTime(item.started_at))}</div></div>
+                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Finished</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDateTime(item.finished_at))}</div></div>
+                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Duration</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDuration(item.duration_ms))}</div></div>
+                                </div>
+                                ${errorHtml}
+                                <details style="margin-top:12px;">
+                                    <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700;">Show metadata and result</summary>
+                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:10px;">
+                                        <div>
+                                            <div style="font-size:11px;font-weight:700;margin-bottom:6px;">Metadata</div>
+                                            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:var(--background);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11px;max-height:220px;overflow:auto;">${metadata}</pre>
+                                        </div>
+                                        <div>
+                                            <div style="font-size:11px;font-weight:700;margin-bottom:6px;">Result</div>
+                                            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:var(--background);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11px;max-height:220px;overflow:auto;">${result}</pre>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+                        `;
+                    }).join('')
+                    : '<div style="padding:18px;color:var(--muted-foreground);">No activity runs for this account on the selected date.</div>';
+
+        return `
+            <div style="padding:22px 24px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.05));">
+                <div style="min-width:0;">
+                    <div style="font-size:28px;font-weight:900;letter-spacing:-.03em;line-height:1.2;word-break:break-word;">${this._escapeHtml(account.accountName || account.lord_name || 'Activity history')}</div>
+                    <div style="font-size:12px;color:var(--muted-foreground);margin-top:8px;line-height:1.6;word-break:break-word;">${this._escapeHtml(account.gameId || account.game_id || '--')} | ${this._escapeHtml(account.emulator || account.emulator_name || '--')} | ${this._escapeHtml(this._selectedDate)}</div>
+                </div>
+                <button class="btn btn-sm btn-ghost" id="task-history-close" style="flex:0 0 auto;">Close</button>
+            </div>
+            <div style="padding:18px 22px 22px;overflow:auto;display:flex;flex-direction:column;gap:16px;background:var(--background);">
+                ${summaryHtml}
+                ${visibleLatestError ? `<div style="border:1px solid rgba(185,28,28,.18);background:linear-gradient(180deg,rgba(185,28,28,.08),rgba(185,28,28,.03));color:#991b1b;border-radius:14px;padding:12px 14px;font-size:12px;line-height:1.5;"><b>Latest error:</b> ${this._escapeHtml(visibleLatestError)}</div>` : ''}
+                <div style="display:flex;gap:8px;padding:4px;background:var(--card);border:1px solid var(--border);border-radius:14px;width:max-content;max-width:100%;overflow:auto;">
+                    <button class="task-history-tab-btn btn btn-sm" data-history-tab="timeline" style="border:none;background:var(--foreground);color:var(--background);white-space:nowrap;">Execution timeline</button>
+                    <button class="task-history-tab-btn btn btn-sm btn-ghost" data-history-tab="breakdown" style="border:none;white-space:nowrap;">Activity breakdown</button>
+                </div>
+                <section data-history-panel="timeline" style="display:block;">
+                    <div style="display:flex;flex-direction:column;gap:12px;">${timelineHtml}</div>
+                </section>
+                <section data-history-panel="breakdown" style="display:none;">
+                    ${breakdownHtml}
+                </section>
+            </div>
+        `;
+    },
+
+    _mountHistoryPanel(account, payload = {}, loading = false, error = '') {
+        this._closeHistoryPanel();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'task-history-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.38);z-index:50;backdrop-filter:blur(4px);';
+        overlay.addEventListener('click', () => this._closeHistoryPanel());
+
+        const panel = document.createElement('aside');
+        panel.id = 'task-history-panel';
+        panel.style.cssText = 'position:fixed;top:0;right:0;width:min(980px,96vw);height:100vh;background:var(--background);z-index:51;box-shadow:-24px 0 60px rgba(15,23,42,.18);display:flex;flex-direction:column;border-left:1px solid var(--border);';
+        panel.innerHTML = this._renderHistoryPanelContent(account, payload, loading, error);
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(panel);
+
+        this._historyOverlayEl = overlay;
+        this._historyPanelEl = panel;
+
+        const closeBtn = document.getElementById('task-history-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => this._closeHistoryPanel());
+
+        const tabButtons = Array.from(panel.querySelectorAll('[data-history-tab]'));
+        const tabPanels = Array.from(panel.querySelectorAll('[data-history-panel]'));
+        tabButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const nextTab = button.dataset.historyTab;
+                tabButtons.forEach((btn) => {
+                    const isActive = btn.dataset.historyTab === nextTab;
+                    btn.style.background = isActive ? 'var(--foreground)' : 'transparent';
+                    btn.style.color = isActive ? 'var(--background)' : 'var(--foreground)';
+                });
+                tabPanels.forEach((section) => {
+                    section.style.display = section.dataset.historyPanel === nextTab ? 'block' : 'none';
+                });
+            });
+        });
+    },
+
+    async _openHistoryPanel(accId) {
+        const account = this._accounts.find(a => a.id === accId);
+        if (!account) return;
+
+        this._mountHistoryPanel(account, {}, true, '');
+
+        try {
+            const response = await fetch(`/api/task/account-history?account_id=${accId}&date=${this._selectedDate}&limit=100`);
+            const payload = await response.json();
+            if (!response.ok || payload.status === 'error') {
+                throw new Error(payload.error || 'Failed to load activity history');
+            }
+            this._mountHistoryPanel({ ...account, ...(payload.account || {}) }, payload, false, '');
+        } catch (fetchError) {
+            console.error('[TaskPage] Failed to open history panel:', fetchError);
+            this._mountHistoryPanel(account, {}, false, fetchError?.message || 'Failed to load activity history');
+        }
+    },
 
     async _loadRealData() {
         this._isLoading = true;
@@ -439,7 +654,7 @@ const TaskPage = {
         return `
             <tr id="${this._rowId(acc.id)}" class="task-row ${index === this._selectedIndex ? 'selected' : ''}" data-id="${acc.id}">
                 <td class="task-sticky-col">
-                    <div class="task-account-name">${acc.accountName}</div>
+                    <button class="task-account-open" data-account-open="${acc.id}" style="background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-align:left;">${acc.accountName}</button>
                     <div class="task-account-meta">${acc.emulator} · ${acc.owner} · ${acc.region}</div>
                 </td>
                 <td><span id="row-status-${this._normalizeDomPart(acc.id)}" class="task-pill task-status-pill ${acc.status}">${statusLabel}</span></td>
@@ -494,289 +709,15 @@ const TaskPage = {
     _renderBodyOnly() {
         this._applyFilters();
         const tbody = document.getElementById('task-tbody');
-        const t0 = performance.now();
-        const html = this._renderGrid();
-        if (tbody) tbody.innerHTML = html;
-        console.log('TASK_GRID_RENDER ms=', Math.round((performance.now() - t0) * 100) / 100);
-        setTimeout(() => this._syncScrollHint(), 50);
-    },
-
-    _patchCell(accId, actId, newState) {
-        const cell = document.getElementById(this._cellId(accId, actId));
-        if (!cell) return false;
-        const normalized = newState || '';
-        if ((cell.dataset.status || '') === normalized) return false;
-        cell.dataset.status = normalized;
-        cell.innerHTML = this._renderCellStatus(normalized);
-        return true;
-    },
-
-    _updateRowStats(accId) {
-        const acc = this._accounts.find(a => a.id === accId);
-        if (!acc) return;
-
-        const total = this._checklistTemplates.length;
-        let done = 0;
-        let failed = 0;
-
-        this._checklistTemplates.forEach(t => {
-            const s = acc.activities[t.key]?.status || '';
-            if (s === 'SUCCESS') done += 1;
-            if (s === 'FAILED') failed += 1;
-        });
-
-        acc.progress = { done, total };
-        acc.failed = failed;
-
-        let status = 'on-track';
-        if (done === 0 && total > 0) status = 'overdue';
-        else if (done < total) status = 'at-risk';
-        acc.status = status;
-
-        let priority = 'low';
-        if (status === 'overdue') priority = 'high';
-        else if (status === 'at-risk') priority = 'medium';
-        acc.priority = priority;
-
-        const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-        const statusEl = document.getElementById(`row-status-${this._normalizeDomPart(accId)}`);
-        if (statusEl) {
-            const statusLabel = status === 'on-track' ? 'On track' : status === 'at-risk' ? 'At risk' : 'Overdue';
-            statusEl.className = `task-pill task-status-pill ${status}`;
-            statusEl.textContent = statusLabel;
-        }
-
-        const priorityEl = document.getElementById(`row-priority-${this._normalizeDomPart(accId)}`);
-        if (priorityEl) priorityEl.innerHTML = this._renderPriorityBadge(priority);
-
-        const progressEl = document.getElementById(`row-progress-${this._normalizeDomPart(accId)}`);
-        if (progressEl) {
-            progressEl.innerHTML = `
-                <div style="height:6px;background:var(--muted);border-radius:99px;margin-bottom:4px;"><div style="height:100%;background:var(--primary);border-radius:99px;width:${percent}%"></div></div>
-                <div style="font-size:11px;color:var(--muted-foreground);">${done}/${total} tasks · ${percent}%</div>
-            `;
-        }
-    },
-
-    _enqueuePatch(payload) {
-        if (!payload || !payload.account_id || !payload.activity_id) return;
-        const key = `${payload.account_id}::${payload.activity_id}`;
-        this._wsPatchQueue.set(key, payload);
-
-        if (this._wsPatchTimer) return;
-        this._wsPatchTimer = setTimeout(() => this._flushPatchQueue(), 100);
-    },
-
-    _flushPatchQueue() {
-        const pending = Array.from(this._wsPatchQueue.values());
-        this._wsPatchQueue.clear();
-        this._wsPatchTimer = null;
-        if (!pending.length) return;
-
-        console.log(`TASK_GRID_PATCH batch=${pending.length}`);
-
-        pending.forEach((p) => {
-            const accId = Number(p.account_id);
-            const actId = p.activity_id;
-            const status = p.status || '';
-
-            const acc = this._accounts.find(a => a.id === accId);
-            if (acc) {
-                if (!acc.activities[actId]) acc.activities[actId] = {};
-                acc.activities[actId].status = status;
-                if (typeof p.runs_today !== 'undefined') acc.activities[actId].runs_today = p.runs_today;
-                if (typeof p.last_run !== 'undefined') acc.activities[actId].last_run = p.last_run;
-                if (typeof p.error !== 'undefined') acc.activities[actId].error = p.error || '';
-            }
-
-            const changed = this._patchCell(accId, actId, status);
-            if (changed) this._updateRowStats(accId);
-        });
-    },
-
-    _setupWebSockets() {
-        if (this._wsSetup || !window.EventBus) return;
-
-        window.EventBus.on('task_state_update', (data) => {
-            if (router._currentPage !== 'task') return;
-            this._enqueuePatch(data);
-        });
-
-        ['activity_started', 'activity_completed', 'activity_failed'].forEach(evt => {
-            window.EventBus.on(evt, (data) => {
-                if (router._currentPage !== 'task') return; // only process when active
-                let mappedStatus = 'SUCCESS';
-                if (evt === 'activity_started') mappedStatus = 'RUNNING';
-                else if (evt === 'activity_failed') mappedStatus = 'FAILED';
-
-                const accId = data.account_id ? Number(data.account_id) : null;
-                const actId = data.activity_id;
-
-                if (accId && actId) {
-                    this._enqueuePatch({
-                        account_id: accId,
-                        activity_id: actId,
-                        status: mappedStatus,
-                        runs_today: data.runs_today,
-                        last_run: data.last_run,
-                        error: data.error
-                    });
-                }
-            });
-        });
-        this._wsSetup = true;
-    },
-
-    async _toggleActivityStatus(accId, actId, currentStatus, gameId) {
-        const newStatus = currentStatus === 'SUCCESS' ? 'UNDO' : 'SUCCESS';
-
-        // Optimistic UI update
-        const acc = this._accounts.find(a => a.id === accId);
-        if (acc) {
-            if (!acc.activities[actId]) acc.activities[actId] = {};
-            acc.activities[actId].status = newStatus === 'UNDO' ? '' : 'SUCCESS';
-            this._renderBodyOnly();
-        }
-
-        try {
-            const res = await fetch('/api/task/checklist/mark', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    account_id: accId,
-                    activity_id: actId,
-                    status: newStatus,
-                    game_id: gameId
-                })
-            });
-            if (!res.ok) throw new Error('Failed to mark');
-        } catch (e) {
-            console.error(e);
-            if (window.Toast) Toast.error('Error', 'Failed to update activity status');
-            // Revert changes
-            if (acc) {
-                acc.activities[actId].status = currentStatus;
-                this._renderBodyOnly();
-            }
-        }
-    },
-
-    async _saveTemplate() {
-        const checked = Array.from(document.querySelectorAll('.task-setting-checkbox:checked')).map(el => el.value);
-        try {
-            await fetch('/api/task/checklist/templates', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: 'Default Template',
-                    scope: 'org',
-                    scope_id: 0,
-                    items: checked.map((id, idx) => ({ activity_id: id, sort_order: idx, is_critical: 0 }))
-                })
-            });
-            if (window.Toast) Toast.success('Saved', 'Template saved successfully');
-            this._showSettingsPanel = false;
-            await this._loadRealData();
-            router.navigate('task');
-        } catch (e) {
-            console.error(e);
-            if (window.Toast) Toast.error('Error', 'Failed to save template');
-        }
-    },
-
-    async init() {
-        await this._loadRealData();
-        this._setupWebSockets();
-
-        if (!this._hasLoadedRealData) {
-            return;
-        }
-
-        const root = document.getElementById('page-root');
-        if (root) root.innerHTML = this.render();
-
-        const addListener = (id, event, handler) => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener(event, handler);
-        };
-
-        addListener('task-date-picker', 'change', async (e) => {
-            this._selectedDate = e.target.value;
-            this._page = 1;
-            await this._loadRealData();
-            router.navigate('task');
-        });
-
-        addListener('task-group-filter', 'change', async (e) => {
-            this._selectedGroupId = e.target.value;
-            this._page = 1;
-            await this._loadRealData();
-            router.navigate('task');
-        });
-
-        addListener('task-search', 'input', (e) => {
-            this._search = e.target.value;
-            this._selectedIndex = 0;
-            this._renderBodyOnly();
-        });
-
-        addListener('task-status-filter', 'change', (e) => {
-            this._statusFilter = e.target.value;
-            this._selectedIndex = 0;
-            this._renderBodyOnly();
-        });
-
-        addListener('task-priority-filter', 'change', (e) => {
-            this._priorityFilter = e.target.value;
-            this._selectedIndex = 0;
-            this._renderBodyOnly();
-        });
-
-        addListener('task-reset-view', 'click', () => {
-            this._search = '';
-            this._statusFilter = 'all';
-            this._priorityFilter = 'all';
-            this._selectedIndex = 0;
-
-            const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-            setVal('task-search', '');
-            setVal('task-status-filter', 'all');
-            setVal('task-priority-filter', 'all');
-            this._renderBodyOnly();
-        });
-
-        addListener('task-prev-page', 'click', async () => {
-            if (this._page <= 1) return;
-            this._page -= 1;
-            await this._loadRealData();
-            router.navigate('task');
-        });
-
-        addListener('task-next-page', 'click', async () => {
-            const totalPages = this._pagination?.total_pages || 1;
-            if (this._page >= totalPages) return;
-            this._page += 1;
-            await this._loadRealData();
-            router.navigate('task');
-        });
-
-        addListener('task-settings-toggle', 'click', () => {
-            this._showSettingsPanel = !this._showSettingsPanel;
-            router.navigate('task');
-        });
-
-        addListener('task-settings-close', 'click', () => {
-            this._showSettingsPanel = false;
-            router.navigate('task');
-        });
-
-        addListener('task-settings-save', 'click', () => {
-            this._saveTemplate();
-        });
-
-        const tbody = document.getElementById('task-tbody');
         if (tbody) {
             tbody.addEventListener('click', (e) => {
+                const accountTrigger = e.target.closest('.task-account-open');
+                if (accountTrigger) {
+                    const accId = Number(accountTrigger.dataset.accountOpen);
+                    if (accId) this._openHistoryPanel(accId);
+                    return;
+                }
+
                 const cell = e.target.closest('.task-clickable-cell');
                 if (cell) {
                     const accId = Number(cell.dataset.accId);
@@ -789,11 +730,12 @@ const TaskPage = {
                 }
             });
         }
-
         const tableScroll = document.getElementById('task-table-scroll');
         if (tableScroll) tableScroll.addEventListener('scroll', () => this._syncScrollHint());
         window.requestAnimationFrame(() => this._syncScrollHint());
     },
 
-    destroy() { }
+    destroy() {
+        this._closeHistoryPanel();
+    }
 };

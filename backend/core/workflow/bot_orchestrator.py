@@ -413,6 +413,7 @@ class BotOrchestrator:
         self.is_running = True
         self.stop_requested = False
         self.run_start_time = time.time()
+        self._last_verified_account_id = None
 
         await execution_log.create_run(self.run_id, self.run_meta)
 
@@ -471,39 +472,60 @@ class BotOrchestrator:
                     and last_run > 0
                     and (time.time() - last_run) < cooldown_sec
                 ):
-                    consecutive_skips += 1
+                    remaining_cd = cooldown_sec - (time.time() - last_run)
 
-                    # If we've skipped ALL accounts → everyone is on cooldown
-                    if consecutive_skips >= len(self.queue):
-                        # Find the shortest remaining cooldown
-                        now = time.time()
-                        wait_times = []
-                        for a in self.queue:
-                            aid = str(a["id"])
-                            lr = self.last_run_times.get(aid, 0)
-                            if lr > 0:
-                                remaining = cooldown_sec - (now - lr)
-                                if remaining > 0:
-                                    wait_times.append(remaining)
-
-                        sleep_sec = min(wait_times) if wait_times else 30
-                        sleep_min = round(sleep_sec / 60, 1)
+                    # ── SMART WAIT: if active account's cooldown ends soon, wait instead of swapping ──
+                    expected_gid_for_wait = str(acc.get("game_id") or "").strip()
+                    swap_wait_threshold = self.misc_config.get("swap_wait_threshold_min", 0) * 60
+                    if (
+                        swap_wait_threshold > 0
+                        and remaining_cd <= swap_wait_threshold
+                        and last_account_id
+                        and expected_gid_for_wait == last_account_id
+                    ):
                         print(
-                            f"[BotOrchestrator] All accounts on cooldown. Sleeping {sleep_min}m until next account is ready."
+                            f"[BotOrchestrator] Smart Wait: account {acc_id} is active and cooldown ends in "
+                            f"{remaining_cd/60:.1f}m (threshold: {swap_wait_threshold/60:.0f}m). Waiting..."
                         )
                         await self.broadcast_state()
-
-                        # Sleep in small chunks so we can respond to stop_requested
-                        while sleep_sec > 0 and not self.stop_requested:
-                            chunk = min(sleep_sec, 10)  # Check every 10 seconds
+                        while remaining_cd > 0 and not self.stop_requested:
+                            chunk = min(remaining_cd, 10)
                             await asyncio.sleep(chunk)
-                            sleep_sec -= chunk
-
-                        consecutive_skips = 0  # Reset after sleeping
+                            remaining_cd -= chunk
+                        # Fall through to normal processing — no skip, no swap needed
                     else:
-                        self.account_statuses[acc_id] = "pending"
-                        self._advance_queue()
-                    continue
+                        # Normal cooldown skip
+                        consecutive_skips += 1
+
+                        # If we've skipped ALL accounts → everyone is on cooldown
+                        if consecutive_skips >= len(self.queue):
+                            now = time.time()
+                            wait_times = []
+                            for a in self.queue:
+                                aid = str(a["id"])
+                                lr = self.last_run_times.get(aid, 0)
+                                if lr > 0:
+                                    remaining = cooldown_sec - (now - lr)
+                                    if remaining > 0:
+                                        wait_times.append(remaining)
+
+                            sleep_sec = min(wait_times) if wait_times else 30
+                            sleep_min = round(sleep_sec / 60, 1)
+                            print(
+                                f"[BotOrchestrator] All accounts on cooldown. Sleeping {sleep_min}m until next account is ready."
+                            )
+                            await self.broadcast_state()
+
+                            while sleep_sec > 0 and not self.stop_requested:
+                                chunk = min(sleep_sec, 10)
+                                await asyncio.sleep(chunk)
+                                sleep_sec -= chunk
+
+                            consecutive_skips = 0
+                        else:
+                            self.account_statuses[acc_id] = "pending"
+                            self._advance_queue()
+                        continue
 
                 # Account is ready — reset skip counter
                 consecutive_skips = 0
@@ -577,6 +599,22 @@ class BotOrchestrator:
                     self._advance_queue()
                     continue
 
+                # ── SMART QUEUE: Early probe on first iteration to reorder queue ──
+                if last_account_id is None and lobby_ok:
+                    probe = await self._read_live_account_id(serial, detector, "smart queue probe")
+                    if probe["account_id"]:
+                        last_account_id = probe["account_id"]
+                        self._last_verified_account_id = last_account_id
+                        print(
+                            f"[BotOrchestrator] Smart Queue: detected active account "
+                            f"{last_account_id} on Emu {emu_idx}. Reordering queue..."
+                        )
+                        self._reorder_queue_for_active_account(last_account_id)
+                        acc = self.queue[self.current_idx]
+                        acc_id = str(acc["id"])
+                        emu_idx = int(acc.get("emu_index") or 0)
+                        emu_name = name_map.get(emu_idx, f"Emulator-{emu_idx}")
+
                 expected_game_id = str(acc.get("game_id") or "").strip()
                 if not expected_game_id:
                     print(
@@ -588,6 +626,8 @@ class BotOrchestrator:
                     continue
 
                 target_lord = (acc.get("lord_name") or "").strip() or None
+                if target_lord and ('"' in target_lord or "'" in target_lord or ' ' in target_lord):
+                    print(f"[BotOrchestrator] ⚠ lord_name may contain OCR noise: '{target_lord}'")
                 account_detector = AccountDetector(adb_path=config.adb_path)
 
                 account_ready, verified_account_id = await self._ensure_correct_account(
@@ -810,6 +850,7 @@ class BotOrchestrator:
 
                 last_emu_index = emu_idx
                 last_account_id = verified_account_id
+                self._last_verified_account_id = verified_account_id
 
                 self._advance_queue()
 
@@ -844,9 +885,55 @@ class BotOrchestrator:
         if self.current_idx >= len(self.queue):
             self.current_idx = 0
             self.cycle += 1
+            # Smart reorder: prioritize currently-active account to avoid swap-back
+            if self._last_verified_account_id:
+                self._reorder_queue_for_active_account(self._last_verified_account_id)
             # Reset all statuses for the new cycle
             for key in self.account_statuses:
                 self.account_statuses[key] = "pending"
+
+    def _reorder_queue_for_active_account(self, active_account_id: str):
+        """Reorder queue so the currently-active account on each emulator
+        runs first, minimizing unnecessary swaps.
+
+        Groups accounts by emu_index, then within each group:
+        - If the active account is in this group → move it to front of group
+        - Otherwise → keep original order
+
+        Preserves cross-emulator ordering (emu0 group before emu1 group).
+        """
+        from collections import OrderedDict
+
+        groups = OrderedDict()
+        for acc in self.queue:
+            emu = acc.get("emu_index") or 999
+            groups.setdefault(emu, []).append(acc)
+
+        reordered = []
+        changed = False
+
+        for emu, accs in groups.items():
+            active_idx = None
+            for i, a in enumerate(accs):
+                if str(a.get("game_id", "")).strip() == active_account_id:
+                    active_idx = i
+                    break
+
+            if active_idx is not None and active_idx != 0:
+                active_acc = accs.pop(active_idx)
+                accs.insert(0, active_acc)
+                changed = True
+
+            reordered.extend(accs)
+
+        if changed:
+            old_order = [str(a.get('game_id', '')) for a in self.queue]
+            self.queue = reordered
+            new_order = [str(a.get('game_id', '')) for a in self.queue]
+            print(
+                f"[BotOrchestrator] Smart Queue: reordered for active account {active_account_id}. "
+                f"Order: {old_order} → {new_order}"
+            )
 
 
 def start_sequential_orchestrator(

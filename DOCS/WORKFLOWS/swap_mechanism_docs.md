@@ -1,306 +1,448 @@
-# Bot Orchestrator — Cơ chế Swap Account & Swap Emulator
+﻿# Bot Orchestrator - Co che Swap Account va Swap Emulator
 
-Tài liệu mô tả chi tiết luồng xử lý đổi Account và đổi Emulator trong hệ thống Bot Orchestrator.
+Tai lieu nay mo ta dung luong xu ly swap trong `BotOrchestrator` sau khi bo sung co che **xac minh account bang live game_id** truoc khi chay activity.
+
+Muc tieu moi:
+
+```text
+expected_game_id == actual_account_id
+```
+
+Neu dieu kien tren chua dung, orchestrator **khong duoc phep** chay activity.
 
 ---
 
-## Tổng quan kiến trúc
-
-```mermaid
-graph TD
-    A["API: /api/bot/run-sequential"] --> B["start_sequential_orchestrator()"]
-    B --> C["BotOrchestrator.__init__()"]
-    C --> D["BotOrchestrator.start()"]
-    D --> E{"Vòng lặp while\nnot stop_requested"}
-    
-    E --> F{"last_emu_index\n== None?"}
-    F -->|"Yes (Lần chạy đầu)"| G["Launch Emulator\n+ wait_for_device()"]
-    F -->|No| H{"Same Emulator?"}
-    
-    H -->|"Yes (same emu_idx)"| I{"Same Account?"}
-    I -->|Yes| J["Skip swap\n(đã đúng acc)"]
-    I -->|No| K["IN-GAME SWAP\nswap_account()"]
-    
-    H -->|"No (khác emu_idx)"| L["CROSS-EMU SWAP\n_handle_cross_emu_swap()"]
-    
-    G --> M["startup_to_lobby()"]
-    K --> M
-    L --> M
-    J --> M
-    
-    M --> N["Execute Activities"]
-    N --> O["_advance_queue()"]
-    O --> E
-```
-
----
-
-## File & Function Map
-
-| File | Function | Vai trò |
-|------|----------|---------|
-| [bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py) | `BotOrchestrator.start()` | Vòng lặp chính, điều phối toàn bộ |
-| [bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#L215-L245) | [_handle_cross_emu_swap()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#215-246) | Tắt Emu cũ, bật Emu mới |
-| [bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#L662-L674) | [_advance_queue()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#662-674) | Tăng index, chuyển cycle |
-| [core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#L1300-L1423) | [swap_account()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#1300-1424) | Swap account in-game qua UI |
-| [core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#L95-L114) | [startup_to_lobby()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#101-125) | Đảm bảo game đang ở Lobby |
-| [core_actions.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#L224-L369) | [back_to_lobby()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#224-370) | Điều hướng về Lobby từ bất kỳ state |
-| [account_detector.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/account_detector.py#L33-L110) | `AccountDetector.check_account_name()` | OCR tìm tên account trên màn hình |
-| [ldplayer_manager.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L73-L77) | [launch_instance()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#73-78) | Khởi động emulator bằng ldconsole |
-| [ldplayer_manager.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L80-L152) | [wait_for_device()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#80-153) | Chờ Android boot xong qua ADB |
-| [ldplayer_manager.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L154-L157) | [quit_instance()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#154-158) | Tắt emulator bằng ldconsole |
-
----
-
-## I. Khởi tạo Queue (Constructor)
-
-```python
-# bot_orchestrator.py L51-53
-self.queue = sorted(accounts, key=lambda a: a.get("emu_index") or 999)
-```
-
-> [!IMPORTANT]
-> Queue được **sort theo [emu_index](file:///f:/COD_CHECK/UI_MANAGER/backend/storage/database.py#1819-1837)** ngay từ đầu. Tất cả account cùng 1 emulator sẽ chạy liền nhau, giảm thiểu số lần Cross-Emu Swap tốn kém (phải tắt/bật emulator).
-
-Nếu có `start_account_id`, orchestrator sẽ nhảy tới vị trí account đó trong queue thay vì bắt đầu từ index 0.
-
----
-
-## II. Vòng lặp chính — [start()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#247-661) (L247-L661)
-
-Mỗi iteration của vòng lặp xử lý **1 account**. Luồng quyết định swap:
-
-### Bước 1: Validate Emulator Assignment
-```
-if emu_index is None → skip account, advance queue
-```
-
-### Bước 2: Enforce Cooldown
-```
-if cooldown_min > 0 AND (now - last_run) < cooldown:
-    skip → advance queue
-    if ALL accounts skipped → sleep until shortest cooldown expires
-```
-
-### Bước 3: Quyết định Swap (L357-L408)
+## 1. Tong quan kien truc
 
 ```mermaid
 flowchart TD
-    A{"last_emu_index\nis None?"} -->|Yes| B["Lần chạy đầu tiên"]
-    A -->|No| C{"last_emu_index\n== emu_idx?"}
-    
-    B --> B1{"Emu already\nrunning?"}
-    B1 -->|Yes| B2["Skip launch"]
-    B1 -->|No| B3["launch_instance()\n+ wait_for_device(120s)\n+ retry 60s"]
-    
-    C -->|Yes| D{"last_account_id\n== acc_id?"}
-    C -->|No| E["CROSS-EMU SWAP"]
+    A["POST /api/bot/run-sequential"] --> B["start_sequential_orchestrator()"]
+    B --> C["BotOrchestrator.start()"]
+    C --> D{"Moi vong lap\n1 account"}
 
-    D -->|Yes| F["Skip swap\n(same account)"]
-    D -->|No| G["IN-GAME SWAP"]
-    
-    E --> E1["_handle_cross_emu_swap()"]
-    G --> G1["swap_account()"]
+    D --> E["Validate emu_index + cooldown"]
+    E --> F{"Can chuyen emulator?"}
+    F -->|Co| G["_handle_cross_emu_swap()"]
+    F -->|Khong| H["Dung emulator hien tai"]
+
+    G --> I["_ensure_lobby()"]
+    H --> I
+
+    I --> J["_ensure_correct_account()"]
+    J -->|Verified| K["Final activity guard"]
+    J -->|Fail sau 3 lan| L["Mark error + skip account"]
+
+    K -->|Verified| M["Execute activities"]
+    K -->|Mismatch| N["Re-run _ensure_correct_account()"]
+    N -->|Still fail| L
+    N -->|Recovered| M
+
+    M --> O["Update last_account_id = verified game_id"]
+    O --> P["_advance_queue()"]
+    L --> P
+    P --> D
 ```
 
-### Bước 4: Ensure Lobby
-Sau mọi nhánh swap, orchestrator **luôn gọi**:
-```python
-# L416-L433
-core_actions.startup_to_lobby(serial, detector, package_name, adb_path, 120)
-```
-Đảm bảo game đang chạy và nhân vật ở Lobby trước khi bắt đầu activities.
+Diem khac biet lon nhat so voi co che cu:
 
-### Bước 5: Execute Activities
-Chạy từng activity trong `self.activities` theo thứ tự. Mỗi activity có thể có cooldown riêng (`cooldown_enabled`, `cooldown_minutes`). Nếu `limit_min > 0`, dùng `asyncio.wait_for()` để timeout.
-
-### Bước 6: Advance Queue
-```python
-# L662-L674
-def _advance_queue(self):
-    self.current_idx += 1
-    if self.current_idx >= len(self.queue):
-        self.current_idx = 0
-        self.cycle += 1          # Bắt đầu cycle mới
-        # Reset tất cả status → "pending"
-```
+- Co che cu: swap xong -> assume thanh cong -> chay activity.
+- Co che moi: vao lobby -> doc live account id -> swap neu can -> verify -> chi khi dung account moi chay activity.
 
 ---
 
-## III. Cross-Emulator Swap — [_handle_cross_emu_swap()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py#215-246) (L215-L245)
+## 2. File va function map
 
-Khi account tiếp theo nằm trên **emulator khác** với account trước.
-
-```
-Step 1: quit_instance(old_emu_index)     → Tắt emulator cũ qua ldconsole
-Step 2: asyncio.sleep(3)                 → Chờ LDPlayer đóng hoàn toàn
-Step 3: launch_instance(new_emu_index)   → Bật emulator mới qua ldconsole
-Step 4: wait_for_device(new_emu_index, 120s)  → Chờ Android boot
-  └─ Retry: wait_for_device(60s) nếu lần đầu timeout
-Step 5: asyncio.sleep(5)                 → Grace period cho OS services
-```
-
-### Dependency Functions
-
-#### [quit_instance()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#154-158) — [ldplayer_manager.py:L154](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L154)
-```python
-def quit_instance(index: int) -> bool:
-    _run(["quit", "--index", str(index)], timeout=15)
-    return True
-```
-Gọi `ldconsole.exe quit --index N`.
-
-#### [launch_instance()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#73-78) — [ldplayer_manager.py:L73](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L73)
-```python
-def launch_instance(index: int) -> bool:
-    _run(["launch", "--index", str(index)], timeout=30)
-    return True
-```
-Gọi `ldconsole.exe launch --index N`.
-
-#### [wait_for_device()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#80-153) — [ldplayer_manager.py:L80](file:///f:/COD_CHECK/UI_MANAGER/backend/core/ldplayer_manager.py#L80)
-Chờ emulator xuất hiện trong `adb devices` rồi check `sys.boot_completed == 1`.
-- Sau 15s: thử `adb connect 127.0.0.1:{port}` (fallback cho LDPlayer)
-- Sau 45s: restart ADB server (`kill-server` + `start-server`)
+| File | Function | Vai tro |
+|------|----------|---------|
+| `backend/core/workflow/bot_orchestrator.py` | `BotOrchestrator.start()` | Vong lap chinh cua sequential orchestrator |
+| `backend/core/workflow/bot_orchestrator.py` | `_handle_cross_emu_swap()` | Tat emulator cu, mo emulator moi |
+| `backend/core/workflow/bot_orchestrator.py` | `_ensure_lobby()` | Wrapper async de dam bao game dang o lobby |
+| `backend/core/workflow/bot_orchestrator.py` | `_read_live_account_id()` | Doc live `game_id` tu game bang flow Profile -> Copy ID |
+| `backend/core/workflow/bot_orchestrator.py` | `_restart_game_app()` | Force-stop app, mo lai game, vao lobby |
+| `backend/core/workflow/bot_orchestrator.py` | `_ensure_correct_account()` | Core logic verify/swap/retry toi da 3 lan |
+| `backend/core/workflow/core_actions.py` | `startup_to_lobby()` | Dam bao game dang chay va ve lobby |
+| `backend/core/workflow/core_actions.py` | `go_to_profile()` | Mo profile menu |
+| `backend/core/workflow/core_actions.py` | `extract_player_id()` | Copy va doc player id tu clipboard |
+| `backend/core/workflow/core_actions.py` | `back_to_lobby()` | Quay lai lobby sau khi doc id |
+| `backend/core/workflow/core_actions.py` | `swap_account()` | Chay flow doi account trong game |
+| `backend/core/workflow/account_detector.py` | `check_account_name()` | OCR tim account theo `lord_name` trong danh sach character |
 
 ---
 
-## IV. In-Game Account Swap — [swap_account()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#1300-1424) (L1300-L1423)
+## 3. Du lieu danh tinh duoc su dung
 
-Khi 2 accounts cùng nằm trên **1 emulator** nhưng là **accounts khác nhau**.
+Trong orchestrator, payload account co cac field quan trong:
 
-### Luồng 6 bước
+```python
+{
+    "id": 123,
+    "game_id": "16025772",
+    "emu_index": 1,
+    "lord_name": "My Lord"
+}
+```
+
+Quy uoc:
+
+- `game_id`: hard identity, dung de verify active account.
+- `lord_name`: chi la selector hint de giup `swap_account()` OCR dung dong account nhanh hon.
+- `last_account_id`: khong con la source of truth. Day chi la cache cua **last verified live account**.
+
+---
+
+## 4. Luong chay chinh trong `start()`
+
+Moi iteration xu ly 1 account theo thu tu queue.
+
+### Buoc 1 - Validate emulator assignment
+
+```text
+if emu_index is None:
+    mark error
+    advance queue
+```
+
+### Buoc 2 - Check cooldown
+
+```text
+if account dang trong cooldown:
+    skip tam thoi
+    neu tat ca account deu cooldown -> sleep den account gan nhat san sang
+```
+
+### Buoc 3 - Cross-emulator swap neu can
+
+`last_emu_index` chi dung de quyet dinh co can tat emulator cu / mo emulator moi khong.
+
+- Neu `last_emu_index != emu_idx` -> goi `_handle_cross_emu_swap()`.
+- Neu `last_emu_index == emu_idx` -> o lai emulator hien tai, nhung **van phai verify live account**.
+- Neu la lan dau chay -> launch emulator neu chua mo.
+
+### Buoc 4 - Ensure lobby
+
+Truoc khi doc account id hay swap, orchestrator luon goi:
+
+```python
+await self._ensure_lobby(serial, detector, 120)
+```
+
+Neu khong vao duoc lobby:
+
+- mark account la `error`
+- skip account
+- advance queue
+
+### Buoc 5 - Ensure correct account
+
+Sau khi lobby da san sang, orchestrator goi:
+
+```python
+account_ready, verified_account_id = await self._ensure_correct_account(
+    serial,
+    detector,
+    account_detector,
+    expected_game_id,
+    target_lord,
+)
+```
+
+Neu `account_ready == False`:
+
+- mark account `error`
+- khong chay activity
+- advance queue
+
+### Buoc 6 - Final activity guard
+
+Ngay truoc khi chay activity, orchestrator **doc live account id mot lan nua**:
+
+```python
+final_guard = await self._read_live_account_id(serial, detector, "final activity guard")
+```
+
+Neu `final_guard["account_id"] != expected_game_id`:
+
+- log mismatch
+- goi lai `_ensure_correct_account()` mot lan nua
+- neu van fail -> skip account
+
+### Buoc 7 - Execute activities
+
+Chi sau khi account da verified, orchestrator moi:
+
+- reset `activity_statuses`
+- build steps bang `workflow_registry.build_steps_for_activity()`
+- chay tung activity theo thu tu
+- cap nhat execution log va websocket state nhu cu
+
+### Buoc 8 - Cap nhat cache runtime
+
+Sau khi account run xong:
+
+```python
+last_emu_index = emu_idx
+last_account_id = verified_account_id
+```
+
+Y nghia:
+
+- `last_emu_index`: emulator dang active o cuoi iteration.
+- `last_account_id`: live account da duoc verify thanh cong, khong phai account du kien.
+
+---
+
+## 5. Chi tiet `_read_live_account_id()`
+
+Ham nay la source of truth cho active account.
+
+### Preconditions
+
+Truoc khi doc ID:
+
+1. goi `_ensure_lobby()`
+2. chi doc ID khi lobby da confirmed
+
+### Flow
 
 ```mermaid
 sequenceDiagram
     participant O as Orchestrator
     participant CA as core_actions
-    participant AD as AccountDetector
-    participant ADB as adb_helper
-    participant GSD as GameStateDetector
 
-    O->>CA: swap_account(serial, account_detector, detector, target_lord)
-    
-    CA->>CA: Step 1: startup_to_lobby()
-    Note over CA: Đảm bảo game đang chạy + ở Lobby
-    
-    CA->>ADB: Step 2: tap(25, 25) → Profile
-    CA->>GSD: wait_for_state("PROFILE MENU")
-    
-    CA->>ADB: Step 3: tap(683, 340) → Settings
-    CA->>GSD: wait_for_state("SETTINGS", special)
-    
-    CA->>ADB: Step 4: tap(478, 354) → Switch Account
-    CA->>GSD: wait_for_state("CHARACTER_MANAGEMENT", special)
-    
-    alt target_account đã chỉ định
-        loop max_scrolls lần
-            CA->>AD: check_account_name(serial, target)
-            alt Tìm thấy
-                AD-->>CA: (name, x, y)
-                CA->>ADB: tap(x, y)
-            else Không thấy
-                CA->>ADB: swipe down
+    O->>O: _ensure_lobby()
+    alt Lobby fail
+        O-->>O: return {lobby_ok: False, account_id: None}
+    else Lobby ok
+        O->>CA: go_to_profile()
+        alt Profile fail
+            O->>CA: back_to_lobby()
+            O-->>O: return {lobby_ok: True, account_id: None}
+        else Profile ok
+            O->>CA: extract_player_id() attempt 1
+            alt Empty/failed
+                O->>CA: extract_player_id() attempt 2
             end
+            O->>CA: back_to_lobby()
+            O-->>O: return {lobby_ok: True, account_id: value_or_None}
         end
-        CA->>GSD: check_special_state()
-        alt Vẫn ở CHARACTER_MANAGEMENT
-            Note over CA: Account đã active → back x3
-        else Confirmation popup
-            CA->>ADB: Step 6: tap(556, 356) Confirm
-        end
-    else Không có target (fallback)
-        CA->>ADB: tap slot 1 (493, 181)
-        alt Slot 1 đã active
-            CA->>ADB: tap slot 2 (487, 249)
-        end
-        CA->>ADB: Step 6: tap(556, 356) Confirm
     end
-    
-    CA->>GSD: wait_for_state(LOBBY, timeout=120s)
-    CA-->>O: True/False
 ```
 
-### Hai chế độ hoạt động
+### Quy tac reliability
 
-| Chế độ | Khi nào | Cách hoạt động |
-|--------|---------|----------------|
-| **OCR Mode** | `target_account` ≠ None | Dùng [AccountDetector](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/account_detector.py#35-178) (Tesseract OCR) quét text trên màn hình, cuộn danh sách đến khi tìm được tên account, rồi tap vào đó |
-| **Toggle Mode** | `target_account` = None | Blindly tap slot nhân vật 1 → nếu đã active thì tap slot 2. Không cần OCR |
-
-> [!WARNING]
-> **Hiện tại trong [bot_orchestrator.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/bot_orchestrator.py) L437-L443**, `target_lord` đang bị comment out:
-> ```python
-> #target_lord = acc.get("lord_name")
-> swap_ok = await asyncio.to_thread(
->     core_actions.swap_account,
->     serial, account_detector, detector,
->     #target_lord   ← KHÔNG truyền target_account
-> )
-> ```
-> Điều này có nghĩa swap_account **luôn chạy ở Toggle Mode** (không dùng OCR). Để bật OCR mode, uncomment dòng `target_lord` và thêm nó vào arguments.
-
-### AccountDetector — OCR Engine
-
-[account_detector.py](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/account_detector.py) sử dụng **Tesseract OCR** với image preprocessing:
-1. **Scale 2x** — Phóng to ảnh để Tesseract đọc chữ nhỏ trong game
-2. **Grayscale** — Chuyển sang ảnh xám
-3. **CLAHE** — Tăng contrast để chống nhiễu background game
-4. Filter kết quả có confidence > 40%
-5. Tọa độ trả về được scale ngược lại về resolution gốc
+- Neu `extract_player_id()` fail lan 1 -> retry 1 lan nua.
+- Neu van fail -> `account_id = None`.
+- Du thanh cong hay that bai, sau khi doc xong deu quay lai lobby.
 
 ---
 
-## V. Xử lý lỗi & Edge Cases
+## 6. Chi tiet `_ensure_correct_account()`
 
-| Tình huống | Xử lý |
-|------------|-------|
-| Account không gán emulator | Skip → advance queue |
-| Boot emulator timeout 120s | Retry thêm 60s. Nếu vẫn fail → skip account |
-| Cross-emu swap fail | Skip account, **không set `last_emu_index`** để account tiếp thử lại boot |
-| In-game swap fail | Skip account, set `last_emu_index` = emu hiện tại |
-| [startup_to_lobby()](file:///f:/COD_CHECK/UI_MANAGER/backend/core/workflow/core_actions.py#101-125) fail | Skip account |
-| OCR không tìm được account | Press back, return False |
-| Account đã là active account | Back x3 về Lobby, return True (không cần switch) |
-| Game reload timeout 120s | Return False |
-| Tất cả accounts on cooldown | Sleep đến khi account gần nhất hết cooldown |
-| [stop()](file:///f:/COD_CHECK/UI_MANAGER/frontend/js/infrastructure/workflow/repositories/BotRepository.js#27-41) được gọi | `main_task.cancel()` → `CancelledError` caught trong finally |
+Day la ham trung tam cua co che moi.
+
+### Dau vao
+
+- `expected_game_id`: account can chay.
+- `target_lord`: OCR hint de `swap_account()` tim dung dong account.
+
+### Luong xu ly
+
+#### Phase A - Pre-swap verification
+
+```text
+read current live account id
+if current == expected:
+    success ngay, khong swap
+else:
+    bat dau retry ladder
+```
+
+#### Phase B - Retry ladder (toi da 3 lan)
+
+##### Attempt 1
+
+- goi `swap_account(serial, account_detector, detector, target_lord)`
+- vao lobby lai
+- doc `actual_account_id`
+- neu match -> success
+
+##### Attempt 2
+
+- lap lai y chang attempt 1
+
+##### Attempt 3
+
+- goi `_restart_game_app()` truoc
+- sau do moi chay `swap_account()`
+- vao lobby lai
+- doc `actual_account_id`
+- neu match -> success
+
+### Logging mismatch
+
+Neu verify fail nhung van doc duoc live id:
+
+```text
+expected_game_id=...
+actual_account_id=...
+```
+
+Neu khong doc duoc id:
+
+```text
+actual_account_id=<unreadable>
+```
+
+### Ket qua
+
+- `return (True, actual_account_id)` khi verified dung account.
+- `return (False, last_read_account_id_or_None)` khi het 3 lan ma van khong dung.
 
 ---
 
-## VI. Lifecycle tổng thể
+## 7. Chi tiet `_restart_game_app()`
 
+Day la recovery path chi dung o attempt 3.
+
+Flow:
+
+```text
+adb shell am force-stop com.farlightgames.samo.gp.vn
+sleep 2s
+startup_to_lobby()
 ```
-User bấm "Start Bot" trên UI
-    ↓
-Frontend: RunBotActivitiesService.execute()
-    ↓
-API: POST /api/bot/run-sequential
-    ↓
-start_sequential_orchestrator(group_id, accounts, activities, ws_callback, misc_config)
-    ↓
-BotOrchestrator.__init__()   ← Sort queue theo emu_index
-    ↓
-asyncio.create_task(orch.start())
-    ↓
-╔══════════════════════════════════════════════╗
-║ WHILE LOOP (mỗi iteration = 1 account)      ║
-║                                              ║
-║  1. Validate emu assignment                  ║
-║  2. Check cooldown                           ║
-║  3. Decide swap type                         ║
-║     ├─ First run → Launch emu                ║
-║     ├─ Same emu, diff acc → swap_account()   ║
-║     └─ Diff emu → _handle_cross_emu_swap()   ║
-║  4. startup_to_lobby()                       ║
-║  5. Execute all activities sequentially      ║
-║  6. _advance_queue() → next account          ║
-║                                              ║
-║  Cycle increments when all accounts done     ║
-║  Loop runs infinitely until stop_requested   ║
-╚══════════════════════════════════════════════╝
-    ↓
-User bấm "Stop Bot" → stop() → cancel task
-    ↓
-Finally block: mark STOPPED/COMPLETED, cleanup
+
+Luu y:
+
+- Day la **restart app**, khong phai reboot emulator.
+- Neu restart app fail, orchestrator van tiep tuc attempt 3, nhung kha nang verify thanh cong se phu thuoc vao viec game co vao lai lobby duoc hay khong.
+
+---
+
+## 8. In-game swap qua `swap_account()`
+
+`swap_account()` van giu kien truc cu, nhung hien tai orchestrator truyen `target_lord` neu co, nen uu tien OCR mode thay vi blind toggle mode.
+
+### OCR mode
+
+Khi `target_lord` co gia tri:
+
+- `AccountDetector.check_account_name()` tim dong account trong Character Management.
+- Neu tim thay -> tap vao dong do.
+- Neu account da la active account -> `swap_account()` back ra lobby va return `True`.
+
+### Toggle fallback
+
+Khi `target_lord` la `None`:
+
+- `swap_account()` fallback ve logic tap slot character 1 / 2.
+
+### Dieu quan trong
+
+`swap_account()` **khong con la nguon xac nhan thanh cong**.
+
+Success that su chi duoc xac nhan boi:
+
+```text
+_read_live_account_id() -> actual_account_id == expected_game_id
 ```
+
+---
+
+## 9. Quy tac cache va safety
+
+### `last_account_id`
+
+Quy tac moi:
+
+- Chi update khi account da duoc verify thanh cong.
+- Khong update bang account du kien neu swap fail.
+- Khong update khi lobby fail.
+- Khong update khi live ID unreadable.
+
+### He qua
+
+Co che nay ngan bug cu:
+
+```text
+bot nghi dang o account B
+nhung game van dang o account A
+```
+
+Vi tu nay, cache chi luu **account da verify**, khong luu account "du kien".
+
+---
+
+## 10. Edge cases va cach xu ly
+
+| Tinh huong | Xu ly |
+|-----------|-------|
+| Account khong gan emulator | Mark error, skip account |
+| Emulator boot timeout 120s | Retry 60s; neu van fail -> skip account |
+| Cross-emu swap fail | Skip account, khong update `last_emu_index` |
+| Khong vao duoc lobby truoc verify | Verification fail cho account do |
+| `extract_player_id()` fail lan 1 | Retry doc ID them 1 lan |
+| `extract_player_id()` fail lan 2 | Xem nhu unreadable verification |
+| Swap xong nhung live ID van sai | Retry attempt tiep theo |
+| Attempt 1 va 2 deu fail | Attempt 3 restart app roi swap lai |
+| Het 3 attempt van sai account | Mark error, skip account, khong chay activity |
+| Final activity guard phat hien mismatch | Re-run `_ensure_correct_account()` mot lan nua |
+| User stop bot | `main_task.cancel()` -> `CancelledError` -> finally cleanup |
+
+---
+
+## 11. Lifecycle tong the
+
+```text
+User bam Start Bot
+-> API /api/bot/run-sequential
+-> start_sequential_orchestrator()
+-> asyncio.create_task(orch.start())
+
+Moi account:
+1. validate emu_index
+2. check cooldown
+3. launch/cross-swap emulator neu can
+4. _ensure_lobby()
+5. _ensure_correct_account()
+6. final activity guard (_read_live_account_id)
+7. execute activities
+8. update verified cache
+9. advance queue
+```
+
+Vong lap chay lien tuc cho den khi:
+
+- user goi stop
+- hoac task bi cancel
+
+---
+
+## 12. Tom tat thay doi quan trong so voi version cu
+
+### Truoc day
+
+```text
+same emulator + different account
+-> swap_account()
+-> assume success
+-> run activities
+```
+
+### Bay gio
+
+```text
+same emulator + different account
+-> read live game_id
+-> swap_account() neu can
+-> verify live game_id
+-> retry toi da 3 lan
+-> chi khi dung account moi run activities
+```
+
+Ket qua:
+
+- Khong chay activity tren nham account.
+- Co gioi han retry ro rang, khong loop vo han.
+- Co recovery path bang app restart o lan thu 3.
+- `game_id` tro thanh source of truth cho account correctness.

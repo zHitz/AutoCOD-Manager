@@ -211,7 +211,7 @@ def wait_for_state(serial: str, detector: GameStateDetector, target_states: list
                     return None
                 last_crash_check = time.time()
                 
-            time.sleep(2)
+            time.sleep(0.5)
 
 def go_to_profile(serial: str, detector: GameStateDetector) -> bool:
     """
@@ -1397,6 +1397,10 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
 
     if target_account:
         # 6. Find target account in the list using check_account_state (OCR text) + scroll
+        from workflow.ocr_name_utils import sanitize_lord_name
+        clean_name = sanitize_lord_name(target_account)
+        if clean_name != target_account:
+            print(f"[{serial}] Sanitized account name: '{target_account}' → '{clean_name}'")
         print(f"[{serial}] Step 4/6: Searching for account TEXT '{target_account}' in list...")
         account_found = None
 
