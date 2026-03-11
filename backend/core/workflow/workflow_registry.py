@@ -59,12 +59,12 @@ FUNCTION_REGISTRY = [
         "description": "Navigate back to lobby from any state",
         "params": [
             {
-                "key": "max_attempts",
-                "label": "Max Attempts",
+                "key": "timeout_sec",
+                "label": "Timeout (sec)",
                 "type": "number",
-                "default": 15,
-                "min": 5,
-                "max": 30,
+                "default": 30,
+                "min": 10,
+                "max": 120,
             }
         ],
     },
@@ -358,7 +358,7 @@ RECIPE_TEMPLATES = [
             {"function_id": "run_macro", "config": {"file": "FARM +4", "loop": 1}},
             {"function_id": "flow_delay", "config": {"seconds": 30}},
             {"function_id": "scan_full", "config": {}},
-            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+            {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
         ],
     },
     {
@@ -370,7 +370,7 @@ RECIPE_TEMPLATES = [
             {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
             {"function_id": "go_to_profile", "config": {}},
             {"function_id": "extract_player_id", "config": {}},
-            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+            {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
         ],
     },
     {
@@ -381,7 +381,7 @@ RECIPE_TEMPLATES = [
         "steps": [
             {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
             {"function_id": "scan_full", "config": {}},
-            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+            {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
         ],
     },
     {
@@ -396,7 +396,7 @@ RECIPE_TEMPLATES = [
                 "config": {"file": "Swap_Charactor", "loop": 5},
             },
             {"function_id": "flow_delay", "config": {"seconds": 10}},
-            {"function_id": "back_to_lobby", "config": {"max_attempts": 15}},
+            {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
         ],
     },
 ]

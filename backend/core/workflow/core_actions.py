@@ -268,37 +268,49 @@ def extract_player_id(serial: str, detector: GameStateDetector, adb_path: str = 
     
     return None
 
-def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 5, target_lobby: str = None) -> bool:
+def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 30, target_lobby: str = None, debug: bool = False) -> bool:
     """
     Intelligently navigates back to the main Lobby from ANY state.
-    Handles edge cases:
-      - LOADING SCREEN: Waits 20s before attempting back (avoid breaking the load).
-      - UNKNOWN / TRANSITION: Waits 10s grace period before pressing back.
-      - Known menu states: Presses back immediately, but max 3 times per state
-        before escalating (prevents infinite back-press on sticky menus).
-    
-    target_lobby: Optional. If set to 'IN-GAME LOBBY (IN_CITY)' or 'IN-GAME LOBBY (OUT_CITY)',
-                  will swap lobby by tapping (50, 500) after reaching any lobby.
+    Uses a time-based loop (timeout_sec) instead of attempt count.
+    Single screencap per iteration via check_state_full() for speed.
+
+    Handles:
+      - BLACK SCREEN: Waits patiently (game booting, NEVER press back!).
+      - LOADING SCREEN: Waits 10s (avoid breaking the load).
+      - UNKNOWN / TRANSITION: 5s grace period, then press back.
+      - Construction / Special screens: Press back immediately (no grace).
+      - Known menu states: Press back, max 3 per same state before escalating.
+
+    target_lobby: Optional. 'IN-GAME LOBBY (IN_CITY)' or 'IN-GAME LOBBY (OUT_CITY)'.
     Returns True if Lobby was reached, False on failure.
     """
+    import numpy as np
+    BLACK_SCREEN_THRESHOLD = 15  # Mean brightness below this = black screen (game booting)
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-    
+
+    # Debug mode: save UNKNOWN screenshots for template creation
+    debug = True
+    debug_dir = None
+    debug_count = 0
+    if debug:
+        import cv2 as _cv2
+        debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_unknown_captures")
+        os.makedirs(debug_dir, exist_ok=True)
+        print(f"[{serial}] [DEBUG] Saving UNKNOWN screenshots to: {debug_dir}")
+
     print(f"[{serial}] === BACK TO LOBBY ===")
-    
-    # 0. Validator: Ensure emulator is online and game is running
-    # If the app crashed or emulator disconnected, we catch it early here
+
+    # 0. Ensure emulator is online and game is running
     was_running = ensure_app_running(serial, "com.farlightgames.samo.gp.vn", config.adb_path)
     if was_running is None:
         print(f"[{serial}] [FAILED] Could not launch app during back_to_lobby.")
         return False
     if not was_running:
         print(f"[{serial}] [WARNING] Game was not running during back_to_lobby! Attempting to wait for lobby...")
-        # Since it wasn't running, it was just booted. Wait for it to hit lobby.
         lobby_ok = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
         if not lobby_ok:
             print(f"[{serial}] [FAILED] Game did not load into Lobby after booting.")
             return False
-        # If it reached lobby, we can proceed with swap check
         current_state = detector.check_state(serial)
         if target_lobby and current_state != target_lobby:
             print(f"[{serial}] -> Swapping to {target_lobby}...")
@@ -310,20 +322,31 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
             print(f"[{serial}] -> Swapped to {target_lobby}.")
         return True
 
-    known_state_back_count = 0   # How many times we pressed back on the same known state
-    last_known_state = None      # Track the last known state to count consecutive backs
-    unknown_start_time = None    # Timer for UNKNOWN grace period
-    loading_screen_count = 0     # Timer for LOADING SCREEN loop
-    
-    for attempt in range(1, max_attempts + 1):
-        current_state = detector.check_state(serial)
-        print(f"[{serial}] [Attempt {attempt}/{max_attempts}] State: {current_state}")
-        
+    # --- Time-based main loop ---
+    known_state_back_count = 0
+    last_known_state = None
+    unknown_start_time = None
+    loading_screen_count = 0
+    start_time = time.time()
+    iteration = 0
+
+    while time.time() - start_time < timeout_sec:
+        iteration += 1
+        elapsed = time.time() - start_time
+
+        # Single screencap: check state + construction + special in one pass
+        result = detector.check_state_full(serial)
+        current_state = result["state"]
+        construction = result["construction"]
+        special = result["special"]
+
+        print(f"[{serial}] [{elapsed:.1f}s] State: {current_state}"
+              + (f" | Construction: {construction}" if construction else "")
+              + (f" | Special: {special}" if special else ""))
+
         # === SUCCESS: Already at Lobby ===
         if current_state in LOBBY_STATES:
             print(f"[{serial}] -> Lobby reached! ({current_state})")
-            
-            # Swap lobby if target specified and doesn't match
             if target_lobby and current_state != target_lobby:
                 print(f"[{serial}] -> Swapping to {target_lobby}...")
                 adb_helper.tap(serial, 50, 500)
@@ -333,8 +356,8 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
                     return False
                 print(f"[{serial}] -> Swapped to {target_lobby}.")
             return True
-        
-        # === CASE 1: LOADING SCREEN — Wait patiently, do NOT press back ===
+
+        # === CASE 1: LOADING SCREEN — Wait patiently ===
         if current_state == "LOADING SCREEN":
             loading_screen_count += 1
             if loading_screen_count >= 3:
@@ -344,75 +367,97 @@ def back_to_lobby(serial: str, detector: GameStateDetector, max_attempts: int = 
                     print(f"[{serial}] [FATAL] Server Maintenance detected! Aborting script.")
                     _exit_with_log(serial, "FATAL", "Server Maintenance - Script Terminated")
 
-            print(f"[{serial}] -> Loading detected. Waiting 20s before next check...")
-            unknown_start_time = None  # Reset unknown timer
+            print(f"[{serial}] -> Loading detected. Waiting 10s...")
+            unknown_start_time = None
             known_state_back_count = 0
             last_known_state = None
-            time.sleep(20)
+            time.sleep(10)
             continue
-            
-        # Reset loading count if we entered a different state
+
         loading_screen_count = 0
-        
-        # === CASE 2: LOADING SCREEN (NETWORK ISSUE) — Wait patiently, do NOT press back ===
+
+        # === CASE 2: NETWORK ISSUE — Tap confirm ===
         if current_state == "LOADING SCREEN (NETWORK ISSUE)":
-            print(f"[{serial}] -> Network issue detected. Click Confirm for restart")
+            print(f"[{serial}] -> Network issue detected. Tapping Confirm...")
             adb_helper.tap(serial, 500, 325)
             time.sleep(2)
             continue
 
-        # === CASE 3: UNKNOWN — Check if it's a construction screen ===
-        if current_state == "UNKNOWN / TRANSITION":
-            construction = detector.check_construction(serial)
-            if construction:
-                print(f"[{serial}] -> Construction '{construction}' detected. Pressing BACK...")
-                unknown_start_time = None
-                adb_helper.press_back(serial)
-                time.sleep(2)
+        # === CASE 3: Construction detected (via check_state_full) — Press BACK immediately ===
+        if construction:
+            print(f"[{serial}] -> Construction '{construction}' detected. Pressing BACK...")
+            unknown_start_time = None
+            adb_helper.press_back(serial)
+            time.sleep(1.5)
+            continue
+
+        # === CASE 4: Special screen detected — Press BACK immediately ===
+        if special:
+            print(f"[{serial}] -> Special screen '{special}' detected. Pressing BACK...")
+            unknown_start_time = None
+            adb_helper.press_back(serial)
+            time.sleep(1.5)
+            continue
+
+        # === CASE 5: BLACK SCREEN — Game booting, NEVER press back! ===
+        # Black screen appears before loading screen during game boot.
+        # Pressing BACK here kills the app → ensure_app_running restarts it → infinite loop!
+        screen = result["screen"]
+        if current_state == "UNKNOWN / TRANSITION" and screen is not None:
+            mean_brightness = np.mean(screen)
+            if mean_brightness < BLACK_SCREEN_THRESHOLD:
+                print(f"[{serial}] -> BLACK SCREEN detected (brightness={mean_brightness:.1f}). Game booting. Waiting 5s...")
+                unknown_start_time = None  # Reset grace — this is NOT a stuck unknown
+                time.sleep(5)
                 continue
-            
-            # Not a construction either — grace period
+
+        # === CASE 6: UNKNOWN / TRANSITION — Short grace period, then back ===
+        if current_state == "UNKNOWN / TRANSITION":
+            # Debug: save screenshot for template creation
+            if debug and debug_dir and screen is not None:
+                debug_count += 1
+                ts = time.strftime("%H%M%S")
+                fname = f"unknown_{ts}_{debug_count:03d}.png"
+                _cv2.imwrite(os.path.join(debug_dir, fname), screen)
+                print(f"[{serial}] [DEBUG] Saved: {fname}")
+
             if unknown_start_time is None:
                 unknown_start_time = time.time()
-                print(f"[{serial}] -> Unknown state. Starting 10s grace period...")
-                time.sleep(3)
+                print(f"[{serial}] -> Unknown state. Starting 5s grace period...")
+                time.sleep(1.5)
                 continue
-            
-            elapsed = time.time() - unknown_start_time
-            if elapsed < 10:
-                remaining = 10 - elapsed
-                print(f"[{serial}] -> Still unknown. Grace period: {remaining:.0f}s left...")
-                time.sleep(3)
+
+            grace_elapsed = time.time() - unknown_start_time
+            if grace_elapsed < 5:
+                remaining = 5 - grace_elapsed
+                print(f"[{serial}] -> Still unknown. Grace: {remaining:.0f}s left...")
+                time.sleep(1.5)
                 continue
             else:
-                # Grace period expired, press back
-                print(f"[{serial}] -> Unknown for >10s. Pressing BACK immediately...")
+                print(f"[{serial}] -> Unknown for >5s. Pressing BACK...")
                 adb_helper.press_back(serial)
-                # Không reset unknown_start_time để các lần sau nếu vẫn kẹt thì tự động back tiếp luôn
-                time.sleep(2)
+                time.sleep(1.5)
                 continue
-        
-        # === CASE 4: Known named state (Profile Menu, Events, etc.) ===
-        unknown_start_time = None  # Reset unknown timer since we have a known state
-        
+
+        # === CASE 6: Known named state (Profile Menu, Bazaar, Events, etc.) ===
+        unknown_start_time = None
+
         if current_state == last_known_state:
             known_state_back_count += 1
         else:
-            # New state detected, reset counter
             last_known_state = current_state
             known_state_back_count = 1
-        
+
         if known_state_back_count <= 3:
             print(f"[{serial}] -> Known state '{current_state}'. Pressing BACK ({known_state_back_count}/3)...")
             adb_helper.press_back(serial)
-            time.sleep(2)
+            time.sleep(1.5)
         else:
-            # Pressed back 3 times on the same state and it's not changing
-            print(f"[{serial}] -> [WARNING] State '{current_state}' stuck after 3 backs. Forcing extra wait...")
-            time.sleep(5)
-            known_state_back_count = 0  # Reset and try again
-    
-    print(f"[{serial}] [FAILED] Could not reach Lobby after {max_attempts} attempts.")
+            print(f"[{serial}] -> [WARNING] State '{current_state}' stuck after 3 backs. Extra wait 3s...")
+            time.sleep(3)
+            known_state_back_count = 0
+
+    print(f"[{serial}] [FAILED] Could not reach Lobby within {timeout_sec}s.")
     return False
 
 def ensure_lobby_menu_open(serial: str, detector: GameStateDetector, max_attempts: int = 5) -> bool:

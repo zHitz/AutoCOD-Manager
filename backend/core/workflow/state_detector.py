@@ -21,14 +21,18 @@ class GameStateDetector:
             "lobby_loading.png": "LOADING SCREEN",
             "lobby_profile_detail.png": "IN-GAME LOBBY (PROFILE MENU DETAIL)",
             "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
+            "lobby_profile.png": "IN-GAME LOBBY (PROFILE MENU)",
             "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
+            "lobby_bazzar.png": "IN-GAME LOBBY (BAZAAR)",
+            "lobby_hall_new.png": "IN-GAME LOBBY (HALL_NEW)",
             "lobby_hammer.png": "IN-GAME LOBBY (IN_CITY)",
             "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
             "lobby_mini_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
             "lobby_out_city_icon.png": "IN-GAME LOBBY (OUT_CITY)",
             "items_artifacts.png": "IN-GAME ITEMS (ARTIFACTS)",
             "items_resources.png": "IN-GAME ITEMS (RESOURCES)",
-            "lobby_icons.png": "LOBBY_MENU_EXPANDED"
+            "lobby_icons.png": "LOBBY_MENU_EXPANDED",
+            "lobby_icons_war_pet.png": "LOBBY_MENU_EXPANDED",
         }
         
         # Construction templates — loaded separately, NOT part of check_state
@@ -41,6 +45,8 @@ class GameStateDetector:
             "contructions/con_markers.png": "MARKERS_MENU",
             "contructions/con_alliance_menu.png": "ALLIANCE_MENU",
             "contructions/con_train_units.png": "TRAIN_UNITS",
+            "contructions/con_scout_sentry_post.png": "SCOUT_SENTRY_POST",
+            "contructions/con_tavern.png": "TAVERN",
         }
         
         # Special templates — loaded separately, called on specific conditions
@@ -51,6 +57,8 @@ class GameStateDetector:
             "accounts/character_management.png": "CHARACTER_MANAGEMENT",
             "special/mail_menu.png": "MAIL_MENU",
             "special/note.png": "NOTE",
+            "special/rss_statistics.png": "RESOURCE_STATISTICS",
+            "special/market.png": "MARKET_MENU",
         }
         self.special_templates = {}
         
@@ -212,24 +220,22 @@ class GameStateDetector:
             print(f"[ERROR] Screencap failed on {serial}: {e}")
             return None
 
-    def check_state(self, serial: str, threshold: float = 0.8) -> str:
-        """Determines the current game state via OpenCV Template Matching."""
-        screen = self.screencap_memory(serial)
-        
-        if screen is None:
-            return "ERROR_CAPTURE"
+    # ── Internal _from_screen methods (no ADB call, reuse existing screenshot) ──
 
-        # Check in priority order: Loading screens mask everything else
+    def _match_state_from_screen(self, screen: np.ndarray, threshold: float = 0.8) -> str:
+        """Core state matching logic against a pre-captured screen."""
         priority_checks = [
             "LOADING SCREEN (NETWORK ISSUE)",
             "LOADING SCREEN",
             "IN-GAME LOBBY (PROFILE MENU DETAIL)",
-            "IN-GAME LOBBY (PROFILE MENU)", 
+            "IN-GAME LOBBY (PROFILE MENU)",
             "IN-GAME LOBBY (EVENTS MENU)",
+            "IN-GAME LOBBY (BAZAAR)",
+            "IN-GAME LOBBY (HALL_NEW)",
             "IN-GAME ITEMS (ARTIFACTS)",
-            "IN-GAME ITEMS (RESOURCES)"
+            "IN-GAME ITEMS (RESOURCES)",
         ]
-        
+
         for state_name in priority_checks:
             if state_name in self.templates:
                 for template in self.templates[state_name]:
@@ -237,8 +243,7 @@ class GameStateDetector:
                     _, max_val, _, _ = cv2.minMaxLoc(res)
                     if max_val >= threshold:
                         return state_name
-                    
-        # Check standard Lobby States (Hammer/Magnifier)
+
         base_states = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
         for state_name in base_states:
             if state_name in self.templates:
@@ -250,15 +255,64 @@ class GameStateDetector:
 
         return "UNKNOWN / TRANSITION"
 
+    def _match_construction_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
+        """Construction matching logic against a pre-captured screen."""
+        checks = {target: self.construction_templates[target]} if target and target in self.construction_templates else self.construction_templates
+        for name, templates in checks.items():
+            for template in templates:
+                res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val >= threshold:
+                    return name
+        return None
+
+    def _match_special_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
+        """Special state matching logic against a pre-captured screen."""
+        checks = {target: self.special_templates[target]} if target and target in self.special_templates else self.special_templates
+        for name, templates in checks.items():
+            for template in templates:
+                res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val >= threshold:
+                    return name
+        return None
+
+    # ── Public API methods (thin wrappers: screencap + delegate) ──
+
+    def check_state(self, serial: str, threshold: float = 0.8) -> str:
+        """Determines the current game state via OpenCV Template Matching."""
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return "ERROR_CAPTURE"
+        return self._match_state_from_screen(screen, threshold)
+
+    def check_state_full(self, serial: str, threshold: float = 0.8) -> dict:
+        """
+        Comprehensive state check. Single screencap, checks ALL categories.
+        Returns dict with: state, construction, special, screen (numpy array).
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return {"state": "ERROR_CAPTURE", "construction": None, "special": None, "screen": None}
+
+        state = self._match_state_from_screen(screen, threshold)
+        construction = None
+        special = None
+
+        if state == "UNKNOWN / TRANSITION":
+            construction = self._match_construction_from_screen(screen, threshold=threshold)
+            if not construction:
+                special = self._match_special_from_screen(screen, threshold=threshold)
+
+        return {"state": state, "construction": construction, "special": special, "screen": screen}
+
     def is_menu_expanded(self, serial: str, threshold: float = 0.8) -> bool:
-        """Checks if the expandable lobby menu is currently open. Does NOT affect check_state results."""
+        """Checks if the expandable lobby menu is currently open."""
         if "LOBBY_MENU_EXPANDED" not in self.templates:
             return False
-        
         screen = self.screencap_memory(serial)
         if screen is None:
             return False
-        
         for template in self.templates["LOBBY_MENU_EXPANDED"]:
             res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(res)
@@ -267,45 +321,18 @@ class GameStateDetector:
         return False
 
     def check_construction(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
-        """
-        Checks for construction buildings on screen. Separate from check_state to keep it lightweight.
-        If target is specified, only checks that specific construction (e.g. 'HALL').
-        Returns the matched construction name or None.
-        """
+        """Checks for construction buildings. Returns matched name or None."""
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-        
-        checks = {target: self.construction_templates[target]} if target and target in self.construction_templates else self.construction_templates
-        
-        for name, templates in checks.items():
-            for template in templates:
-                res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(res)
-                if max_val >= threshold:
-                    return name
-        
-        return None
+        return self._match_construction_from_screen(screen, target, threshold)
 
     def check_special_state(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
-        """
-        Checks for special screens on demand (e.g. Server Maintenance).
-        Returns the matched special state name or None.
-        """
+        """Checks for special screens (e.g. Server Maintenance). Returns matched name or None."""
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-            
-        checks = {target: self.special_templates[target]} if target and target in self.special_templates else self.special_templates
-        
-        for name, templates in checks.items():
-            for template in templates:
-                res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(res)
-                if max_val >= threshold:
-                    return name
-                
-        return None
+        return self._match_special_from_screen(screen, target, threshold)
 
     def check_activity(self, serial: str, target: str = None, threshold: float = 0.98) -> tuple:
         """

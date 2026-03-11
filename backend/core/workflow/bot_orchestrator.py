@@ -630,13 +630,21 @@ class BotOrchestrator:
                     print(f"[BotOrchestrator] ⚠ lord_name may contain OCR noise: '{target_lord}'")
                 account_detector = AccountDetector(adb_path=config.adb_path)
 
-                account_ready, verified_account_id = await self._ensure_correct_account(
-                    serial,
-                    detector,
-                    account_detector,
-                    expected_game_id,
-                    target_lord,
-                )
+                # Skip _ensure_correct_account if early probe already verified this account
+                if last_account_id and last_account_id == expected_game_id:
+                    print(
+                        f"[BotOrchestrator] Skipping re-verification: early probe already confirmed account {expected_game_id}"
+                    )
+                    account_ready = True
+                    verified_account_id = last_account_id
+                else:
+                    account_ready, verified_account_id = await self._ensure_correct_account(
+                        serial,
+                        detector,
+                        account_detector,
+                        expected_game_id,
+                        target_lord,
+                    )
                 if not account_ready:
                     print(
                         f"[BotOrchestrator] Could not verify target account {expected_game_id} on Emu {emu_idx}. Skipping account."
