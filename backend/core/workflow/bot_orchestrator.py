@@ -1,7 +1,8 @@
 import asyncio
 import time
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any, Callable, Optional, Tuple
 from backend.core.workflow import (
+    adb_helper,
     executor,
     core_actions,
     workflow_registry,
@@ -45,7 +46,8 @@ class BotOrchestrator:
         self.ws_callback = ws_callback
         self.misc_config = misc_config or {}
         self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
-        
+        self.package_name = "com.farlightgames.samo.gp.vn"
+
         self.main_task: asyncio.Task = None
 
         # Sort accounts by emu_index so all accounts on the same emulator
@@ -244,6 +246,165 @@ class BotOrchestrator:
         await asyncio.sleep(5)
         return True
 
+    async def _ensure_lobby(
+        self, serial: str, detector: GameStateDetector, load_timeout: int = 120
+    ) -> bool:
+        """Ensure the game is running and at lobby before account-sensitive actions."""
+        return await asyncio.to_thread(
+            core_actions.startup_to_lobby,
+            serial,
+            detector,
+            self.package_name,
+            config.adb_path,
+            load_timeout,
+        )
+
+    def _log_account_verification_failure(
+        self,
+        expected_game_id: str,
+        actual_account_id: Optional[str],
+        context: str,
+    ):
+        """Log account verification failures with both expected and actual IDs when readable."""
+        if actual_account_id:
+            print(
+                f"[BotOrchestrator] Account verification failed during {context}: "
+                f"expected_game_id={expected_game_id}, actual_account_id={actual_account_id}"
+            )
+        else:
+            print(
+                f"[BotOrchestrator] Account verification failed during {context}: "
+                f"expected_game_id={expected_game_id}, actual_account_id=<unreadable>"
+            )
+
+    async def _read_live_account_id(
+        self, serial: str, detector: GameStateDetector, context: str
+    ) -> Dict[str, Any]:
+        """Read the active in-game account ID, retrying the ID extraction once if needed."""
+        lobby_ok = await self._ensure_lobby(serial, detector)
+        if not lobby_ok:
+            print(
+                f"[BotOrchestrator] Cannot verify account during {context}: lobby not reachable."
+            )
+            return {"lobby_ok": False, "account_id": None}
+
+        profile_ok = await asyncio.to_thread(core_actions.go_to_profile, serial, detector)
+        if not profile_ok:
+            print(
+                f"[BotOrchestrator] Cannot verify account during {context}: profile not reachable."
+            )
+            await asyncio.to_thread(core_actions.back_to_lobby, serial, detector)
+            return {"lobby_ok": True, "account_id": None}
+
+        account_id = None
+        try:
+            account_id = await asyncio.to_thread(
+                core_actions.extract_player_id,
+                serial,
+                detector,
+            )
+            if not account_id:
+                print(
+                    f"[BotOrchestrator] Account ID read failed during {context}. Retrying once..."
+                )
+                account_id = await asyncio.to_thread(
+                    core_actions.extract_player_id,
+                    serial,
+                    detector,
+                )
+        finally:
+            await asyncio.to_thread(core_actions.back_to_lobby, serial, detector)
+
+        if account_id:
+            print(
+                f"[BotOrchestrator] Live account verification during {context}: account_id={account_id}"
+            )
+        else:
+            print(
+                f"[BotOrchestrator] Live account verification during {context} could not read account_id."
+            )
+
+        return {"lobby_ok": True, "account_id": account_id}
+
+    async def _restart_game_app(
+        self, serial: str, detector: GameStateDetector
+    ) -> bool:
+        """Restart the game app as a last-resort recovery before the final swap attempt."""
+        print(f"[BotOrchestrator] Restarting game app on {serial} before final swap attempt...")
+        await asyncio.to_thread(
+            adb_helper._run_adb,
+            ["shell", "am", "force-stop", self.package_name],
+            serial,
+            15,
+        )
+        await asyncio.sleep(2)
+        return await self._ensure_lobby(serial, detector)
+
+    async def _ensure_correct_account(
+        self,
+        serial: str,
+        detector: GameStateDetector,
+        account_detector: AccountDetector,
+        expected_game_id: str,
+        target_lord: Optional[str],
+    ) -> Tuple[bool, Optional[str]]:
+        """Guarantee the live account matches the target account before activities run."""
+        verify_result = await self._read_live_account_id(
+            serial, detector, "pre-swap verification"
+        )
+        current_account_id = verify_result["account_id"]
+
+        if current_account_id == expected_game_id:
+            print(
+                f"[BotOrchestrator] Verified correct account already active: {expected_game_id}"
+            )
+            return True, current_account_id
+
+        self._log_account_verification_failure(
+            expected_game_id, current_account_id, "pre-swap verification"
+        )
+
+        for attempt in range(1, 4):
+            if attempt == 3:
+                restart_ok = await self._restart_game_app(serial, detector)
+                if not restart_ok:
+                    print(
+                        "[BotOrchestrator] App restart failed before final swap attempt."
+                    )
+
+            print(
+                f"[BotOrchestrator] Swap verification attempt {attempt}/3 for expected_game_id={expected_game_id}"
+            )
+            swap_ok = await asyncio.to_thread(
+                core_actions.swap_account,
+                serial,
+                account_detector,
+                detector,
+                target_lord,
+            )
+            if not swap_ok:
+                print(
+                    f"[BotOrchestrator] swap_account() reported failure on attempt {attempt}/3."
+                )
+
+            verify_result = await self._read_live_account_id(
+                serial, detector, f"post-swap verification attempt {attempt}"
+            )
+            current_account_id = verify_result["account_id"]
+            if current_account_id == expected_game_id:
+                print(
+                    f"[BotOrchestrator] Verified target account after swap attempt {attempt}: {expected_game_id}"
+                )
+                return True, current_account_id
+
+            self._log_account_verification_failure(
+                expected_game_id,
+                current_account_id,
+                f"post-swap verification attempt {attempt}",
+            )
+
+        return False, current_account_id
+
     async def start(self):
         """Main orchestrator loop."""
         if self.is_running:
@@ -353,27 +514,20 @@ class BotOrchestrator:
                 print(
                     f"[BotOrchestrator] --- CYCLE {self.cycle} | ACCOUNT {self.current_idx + 1}/{len(self.queue)} | EMU {emu_idx} ---"
                 )
-
-                # Check if swap is needed
-                swap_needed = False
                 if last_emu_index is not None:
-                    if last_emu_index == emu_idx:
-                        if last_account_id == acc_id:
-                            print(
-                                f"[BotOrchestrator] Account {acc_id} is already active on Emu {emu_idx}. Skipping swap."
-                            )
-                        else:
-                            # SAME EMULATOR -> Need in-game account swap
-                            swap_needed = True
-                    else:
+                    if last_emu_index != emu_idx:
                         # DIFFERENT EMULATOR -> Cross-emu swap
                         swap_ok = await self._handle_cross_emu_swap(last_emu_index, emu_idx)
                         if not swap_ok:
                             print(f"[BotOrchestrator] Cross-emu swap FAILED. Skipping account.")
                             self.account_statuses[acc_id] = "error"
-                            # Do NOT set last_emu_index — next account should retry boot
+                            # Do NOT set last_emu_index - next account should retry boot
                             self._advance_queue()
                             continue
+                    elif last_account_id:
+                        print(
+                            f"[BotOrchestrator] Last verified live account on Emu {emu_idx}: {last_account_id}. Re-verifying target {acc.get('game_id', '')}."
+                        )
                 else:
                     # BEGINNING OF RUN (last_emu_index is None) -> MUST LAUNCH FIRST EMULATOR
                     print(f"[BotOrchestrator] Launching initial Emu {emu_idx}...")
@@ -398,7 +552,7 @@ class BotOrchestrator:
                         if not boot_ok:
                             print(f"[BotOrchestrator] Emu {emu_idx} boot FAILED after retry. Skipping account.")
                             self.account_statuses[acc_id] = "error"
-                            # Do NOT set last_emu_index — next account should retry boot
+                            # Do NOT set last_emu_index - next account should retry boot
                             self._advance_queue()
                             continue
                         await asyncio.sleep(5)
@@ -413,42 +567,64 @@ class BotOrchestrator:
                     templates_dir=self.templates_dir,
                 )
 
-                # ── ALWAYS ENSURE GAME IS OPEN AND AT LOBBY ──
                 print(f"[BotOrchestrator] Ensuring game is running and at lobby on Emu {emu_idx}...")
-                lobby_ok = await asyncio.to_thread(
-                    core_actions.startup_to_lobby,
-                    serial,
-                    detector,
-                    "com.farlightgames.samo.gp.vn",
-                    config.adb_path,
-                    120
-                )
+                lobby_ok = await self._ensure_lobby(serial, detector, 120)
                 
                 if not lobby_ok:
                     print(f"[BotOrchestrator] Failed to reach lobby on Emu {emu_idx}. Skipping account.")
                     self.account_statuses[acc_id] = "error"
                     last_emu_index = emu_idx
-                    last_account_id = acc_id
                     self._advance_queue()
                     continue
 
-                if swap_needed:
-                    account_detector = AccountDetector(adb_path=config.adb_path)
-                    #target_lord = acc.get("lord_name")
-                    swap_ok = await asyncio.to_thread(
-                        core_actions.swap_account,
-                        serial,
-                        account_detector,
-                        detector,
-                        #target_lord
+                expected_game_id = str(acc.get("game_id") or "").strip()
+                if not expected_game_id:
+                    print(
+                        f"[BotOrchestrator] Account {acc_id} has no expected game_id. Skipping account."
                     )
-                    if not swap_ok:
+                    self.account_statuses[acc_id] = "error"
+                    last_emu_index = emu_idx
+                    self._advance_queue()
+                    continue
+
+                target_lord = (acc.get("lord_name") or "").strip() or None
+                account_detector = AccountDetector(adb_path=config.adb_path)
+
+                account_ready, verified_account_id = await self._ensure_correct_account(
+                    serial,
+                    detector,
+                    account_detector,
+                    expected_game_id,
+                    target_lord,
+                )
+                if not account_ready:
+                    print(
+                        f"[BotOrchestrator] Could not verify target account {expected_game_id} on Emu {emu_idx}. Skipping account."
+                    )
+                    self.account_statuses[acc_id] = "error"
+                    last_emu_index = emu_idx
+                    self._advance_queue()
+                    continue
+
+                if verified_account_id != expected_game_id:
+                    self._log_account_verification_failure(
+                        expected_game_id,
+                        verified_account_id,
+                        "final activity guard",
+                    )
+                    account_ready, verified_account_id = await self._ensure_correct_account(
+                        serial,
+                        detector,
+                        account_detector,
+                        expected_game_id,
+                        target_lord,
+                    )
+                    if not account_ready:
                         print(
-                            f"[BotOrchestrator] Account swap failed on Emu {emu_idx}. Skipping account."
+                            f"[BotOrchestrator] Final activity guard could not recover target account {expected_game_id}. Skipping account."
                         )
                         self.account_statuses[acc_id] = "error"
                         last_emu_index = emu_idx
-                        last_account_id = acc_id
                         self._advance_queue()
                         continue
 
@@ -633,7 +809,7 @@ class BotOrchestrator:
                     self.account_statuses[acc_id] = "error"
 
                 last_emu_index = emu_idx
-                last_account_id = acc_id
+                last_account_id = verified_account_id
 
                 self._advance_queue()
 
@@ -748,3 +924,8 @@ def get_all_orchestrator_statuses() -> dict:
             "all_on_cooldown": orch.is_running and all_pending,
         }
     return result
+
+
+
+
+

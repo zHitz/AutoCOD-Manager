@@ -1684,6 +1684,165 @@ async def get_task_checklist(
         return {"status": "error", "error": str(e)}
 
 
+@app.get("/api/task/account-history")
+async def get_task_account_history(
+    account_id: int,
+    date: str = None,
+    limit: int = 100,
+):
+    """Return detailed activity history for one account on the selected date."""
+    import aiosqlite
+    import json
+    from datetime import datetime as dt_cls
+
+    target_date = date or dt_cls.now().strftime("%Y-%m-%d")
+    limit = max(1, min(int(limit or 100), 300))
+
+    try:
+        async with aiosqlite.connect(config.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            account_cursor = await db.execute(
+                """SELECT
+                       a.id AS account_id,
+                       a.game_id,
+                       a.lord_name,
+                       a.provider,
+                       a.alliance,
+                       e.name AS emulator_name,
+                       e.emu_index
+                   FROM accounts a
+                   LEFT JOIN emulators e ON a.emulator_id = e.id
+                   WHERE a.id = ?""",
+                (account_id,),
+            )
+            account_row = await account_cursor.fetchone()
+            if not account_row:
+                return {"status": "error", "error": "Account not found"}
+
+            logs_cursor = await db.execute(
+                """SELECT
+                       id, run_id, account_id, game_id, emulator_id, group_id,
+                       activity_id, activity_name, status, error_code, error_message,
+                       started_at, finished_at, duration_ms, attempts, source,
+                       metadata_json, result_json
+                   FROM account_activity_logs
+                   WHERE account_id = ? AND date(started_at) = ?
+                   ORDER BY started_at DESC, id DESC
+                   LIMIT ?""",
+                (account_id, target_date, limit),
+            )
+            rows = [dict(r) for r in await logs_cursor.fetchall()]
+
+        items = []
+        activity_stats_map = {}
+        success_count = 0
+        failed_count = 0
+        running_count = 0
+        total_duration_ms = 0
+        latest_error = ""
+        latest_run = None
+
+        for row in rows:
+            metadata = row.get("metadata_json") or "{}"
+            result = row.get("result_json") or "{}"
+            try:
+                metadata = json.loads(metadata) if isinstance(metadata, str) else metadata
+            except Exception:
+                metadata = {"raw": metadata}
+            try:
+                result = json.loads(result) if isinstance(result, str) else result
+            except Exception:
+                result = {"raw": result}
+
+            duration_ms = int(row.get("duration_ms") or 0)
+            status = row.get("status") or ""
+            activity_id = row.get("activity_id") or "unknown"
+            started_at = row.get("started_at")
+
+            if latest_run is None and started_at:
+                latest_run = started_at
+            if status == "SUCCESS":
+                success_count += 1
+            elif status == "FAILED":
+                failed_count += 1
+                candidate_error = (row.get("error_message") or "").strip()
+                if (
+                    not latest_error
+                    and candidate_error
+                    and candidate_error.lower() != "unknown execution failure"
+                ):
+                    latest_error = candidate_error
+            elif status == "RUNNING":
+                running_count += 1
+
+            total_duration_ms += duration_ms
+
+            stat = activity_stats_map.setdefault(
+                activity_id,
+                {
+                    "activity_id": activity_id,
+                    "activity_name": row.get("activity_name") or activity_id,
+                    "total_runs": 0,
+                    "success_count": 0,
+                    "failed_count": 0,
+                    "running_count": 0,
+                    "total_duration_ms": 0,
+                    "last_run": started_at,
+                    "last_status": status,
+                },
+            )
+            stat["total_runs"] += 1
+            stat["total_duration_ms"] += duration_ms
+            if status == "SUCCESS":
+                stat["success_count"] += 1
+            elif status == "FAILED":
+                stat["failed_count"] += 1
+            elif status == "RUNNING":
+                stat["running_count"] += 1
+            if started_at and (not stat.get("last_run") or started_at > stat["last_run"]):
+                stat["last_run"] = started_at
+                stat["last_status"] = status
+
+            items.append({
+                **row,
+                "metadata": metadata,
+                "result": result,
+            })
+
+        activity_stats = []
+        for stat in activity_stats_map.values():
+            runs = stat["total_runs"] or 1
+            activity_stats.append({
+                **stat,
+                "avg_duration_ms": round(stat["total_duration_ms"] / runs),
+            })
+
+        activity_stats.sort(
+            key=lambda item: ((item.get("last_run") or ""), item.get("activity_name") or ""),
+            reverse=True,
+        )
+
+        return {
+            "status": "success",
+            "date": target_date,
+            "account": dict(account_row),
+            "summary": {
+                "total_runs": len(items),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "running_count": running_count,
+                "total_duration_ms": total_duration_ms,
+                "avg_duration_ms": round(total_duration_ms / len(items)) if items else 0,
+                "last_run": latest_run,
+                "latest_error": latest_error,
+            },
+            "activity_stats": activity_stats,
+            "items": items,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 @app.post("/api/task/checklist/rebuild-today")
 async def rebuild_task_checklist_today():
     """Utility endpoint to rebuild task_daily_state for today."""
@@ -1901,3 +2060,4 @@ async def startup():
 
     print(f"[API] Started on port {config.server_port}")
     print(f"[API] Devices found: {len(emulator_manager.get_all())}")
+
