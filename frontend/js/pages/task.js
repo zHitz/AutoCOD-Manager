@@ -710,6 +710,7 @@ const TaskPage = {
         this._applyFilters();
         const tbody = document.getElementById('task-tbody');
         if (tbody) {
+            tbody.innerHTML = this._renderGrid();
             tbody.addEventListener('click', (e) => {
                 const accountTrigger = e.target.closest('.task-account-open');
                 if (accountTrigger) {
@@ -733,6 +734,137 @@ const TaskPage = {
         const tableScroll = document.getElementById('task-table-scroll');
         if (tableScroll) tableScroll.addEventListener('scroll', () => this._syncScrollHint());
         window.requestAnimationFrame(() => this._syncScrollHint());
+    },
+
+    async _toggleActivityStatus(accId, actId, currentStatus, gameId) {
+        const newStatus = currentStatus === 'SUCCESS' ? 'UNDO' : 'SUCCESS';
+        try {
+            const res = await fetch('/api/task/checklist/mark', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_id: accId, activity_id: actId, status: newStatus, game_id: gameId || '' }),
+            });
+            const result = await res.json();
+            if (result.status === 'ok') {
+                await this._reloadAndRender();
+            } else {
+                console.warn('[TaskPage] Mark failed:', result.error);
+            }
+        } catch (err) {
+            console.error('[TaskPage] Toggle activity error:', err);
+        }
+    },
+
+    async _reloadAndRender() {
+        await this._loadRealData();
+        this._renderBodyOnly();
+        this._refreshStats();
+    },
+
+    _refreshStats() {
+        const stats = this._computeStats();
+        const root = document.querySelector('.task-stats-grid');
+        if (!root) return;
+        const values = root.querySelectorAll('.task-stat-value');
+        if (values[0]) values[0].textContent = stats.totalAccounts;
+        if (values[1]) values[1].textContent = `${stats.doneTasks}/${stats.totalTasks}`;
+        if (values[2]) values[2].textContent = stats.overdue;
+        if (values[3]) values[3].textContent = `${stats.coverage}%`;
+        const subs = root.querySelectorAll('.task-stat-sub');
+        if (subs[3]) subs[3].innerHTML = `Target: <b>${stats.target}%</b> · ${stats.gap}% remaining.`;
+    },
+
+    async _saveTemplate() {
+        const checked = Array.from(document.querySelectorAll('.task-setting-checkbox:checked')).map(cb => cb.value);
+        try {
+            await fetch('/api/task/checklist/templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'Default Strategy', scope: 'org', scope_id: 0, items: checked.map((id, i) => ({ activity_id: id, sort_order: i, is_critical: 0 })) }),
+            });
+            this._showSettingsPanel = false;
+            await this._reloadAndRender();
+        } catch (err) {
+            console.error('[TaskPage] Save template error:', err);
+        }
+    },
+
+    async init() {
+        await this._loadRealData();
+        this._renderBodyOnly();
+
+        // Date picker
+        const datePicker = document.getElementById('task-date-picker');
+        if (datePicker) datePicker.addEventListener('change', (e) => {
+            this._selectedDate = e.target.value;
+            this._page = 1;
+            this._reloadAndRender();
+        });
+
+        // Group filter
+        const groupFilter = document.getElementById('task-group-filter');
+        if (groupFilter) groupFilter.addEventListener('change', (e) => {
+            this._selectedGroupId = e.target.value;
+            this._page = 1;
+            this._reloadAndRender();
+        });
+
+        // Search
+        const searchInput = document.getElementById('task-search');
+        if (searchInput) searchInput.addEventListener('input', (e) => {
+            this._search = e.target.value;
+            this._renderBodyOnly();
+        });
+
+        // Status filter
+        const statusFilter = document.getElementById('task-status-filter');
+        if (statusFilter) statusFilter.addEventListener('change', (e) => {
+            this._statusFilter = e.target.value;
+            this._renderBodyOnly();
+        });
+
+        // Clear filters
+        const resetBtn = document.getElementById('task-reset-view');
+        if (resetBtn) resetBtn.addEventListener('click', () => {
+            this._search = '';
+            this._statusFilter = 'all';
+            this._priorityFilter = 'all';
+            if (searchInput) searchInput.value = '';
+            if (statusFilter) statusFilter.value = 'all';
+            this._renderBodyOnly();
+        });
+
+        // Pagination
+        const prevBtn = document.getElementById('task-prev-page');
+        const nextBtn = document.getElementById('task-next-page');
+        if (prevBtn) prevBtn.addEventListener('click', () => {
+            if (this._page > 1) { this._page--; this._reloadAndRender(); }
+        });
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+            if (this._page < (this._pagination.total_pages || 1)) { this._page++; this._reloadAndRender(); }
+        });
+
+        // Settings toggle
+        const settingsToggle = document.getElementById('task-settings-toggle');
+        if (settingsToggle) settingsToggle.addEventListener('click', () => {
+            this._showSettingsPanel = !this._showSettingsPanel;
+            const container = document.querySelector('.task-page');
+            const existing = container?.querySelector('[style*="Configure Column"]')?.parentElement;
+            if (this._showSettingsPanel) {
+                const settingsHtml = this._renderSettingsPanel();
+                const mainGrid = container?.querySelector('.task-main-grid');
+                if (mainGrid && settingsHtml) mainGrid.insertAdjacentHTML('beforebegin', settingsHtml);
+                const closeBtn = document.getElementById('task-settings-close');
+                if (closeBtn) closeBtn.addEventListener('click', () => {
+                    this._showSettingsPanel = false;
+                    document.getElementById('task-settings-close')?.closest('div')?.remove();
+                });
+                const saveBtn = document.getElementById('task-settings-save');
+                if (saveBtn) saveBtn.addEventListener('click', () => this._saveTemplate());
+            } else if (existing) {
+                existing.remove();
+            }
+        });
     },
 
     destroy() {
