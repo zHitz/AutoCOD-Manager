@@ -467,10 +467,14 @@ def start_full_scan(
     with _lock:
         existing = _running_scans.get(key)
         if existing and existing.get("status") == "running":
-            return {
-                "success": False,
-                "error": f"Scan already running on #{emulator_index}",
-            }
+            start_t = existing.get("start_time", 0)
+            if time.time() - start_t > 1200:  # 20 minutes timeout
+                print(f"[FullScan] ⚠️ Zombie scan detected on #{emulator_index} (>20m). Forcing new scan.")
+            else:
+                return {
+                    "success": False,
+                    "error": f"Scan already running on #{emulator_index}",
+                }
 
     thread = threading.Thread(
         target=_scan_worker,

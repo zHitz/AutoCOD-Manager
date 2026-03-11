@@ -35,6 +35,6 @@ config.json
 # Project specific ignores
 scan_captures/
 RAW_SCREENS/
-
+backend/core/workflow/templates/_unknown_captures/
 
 .agent/

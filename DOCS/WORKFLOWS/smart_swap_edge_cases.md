@@ -1,0 +1,30 @@
+# Smart Swap Queue & Cooldown Edge Cases
+
+Tài liệu này tổng hợp toàn bộ các trường hợp (edge cases), điều kiện kích hoạt và hành vi dự kiến của hệ thống **Smart Swap Queue**, **Smart Wait (Force Cooldown Wait)**, và **OCR Name Sanitization** trên Bot Orchestrator.
+
+## Bảng tổng hợp các tình huống (Scenarios)
+
+| # | Tình huống (Scenario) | Trạng thái hiện tại | Cooldown & Config | Hành vi dự kiến (Expected Behavior) | Giải thích logic (Rationale) |
+|---|---|---|---|---|---|
+| **1** | **Early Probe Reorder (Boot)**<br>Chạy cycle đầu tiên khi vừa bật giả lập. | **Active Account:** B<br>**Queue gốc:** `[A, B, C]` | - | **Kết quả:** Reorder thành `[B, A, C]`. Chạy B luôn không cần swap.<br>**Action:** `_read_live_account_id` → `_reorder_queue...` | Probe sớm giúp xác định account đang nằm trên màn hình. Đẩy nó lên đầu để tiết kiệm 1 lần swap ngay vòng đầu tiên. |
+| **2** | **Boundary Reorder (Next Cycle)**<br>Hết 1 vòng chạy. | **Active Account:** C<br>**Queue gốc:** `[A, B, C]` (C vừa chạy xong) | - | **Kết quả:** Reorder lại thành `[C, A, B]`. | Tương tự Early Probe, cuối vòng lặp thì Orchestrator luôn tự động xếp account cuối cùng vừa chạy xong lên đầu danh sách vòng tiếp theo. |
+| **3** | **Normal Swap**<br>Chuyển account bình thường. | **Active Account:** A<br>**Target:** B | B đã sẵn sàng. | **Kết quả:** Swap A → B. Chạy B. | Quá trình diễn ra bình thường vì A đã chạy xong và B đã sẵn sàng. |
+| **4** | **Smart Wait Kích Hoạt**<br>Account đang active bị dính cooldown nhưng sắp hết. | **Active Account:** A<br>**Target:** A | A còn cooldown: **10 phút**<br>Threshold (`swap_wait_threshold_min`): **15 phút** | **Kết quả:** Báo động `Smart Wait`, Orchestrator đứng im **chờ 10 phút**. Vừa hết 10 phút → Chạy A. | Vi `10 <= 15` và **chuẩn account đang mở**, bot thà đợi 10 phút còn hơn là swap sang account khác rồi tí nữa lại swap về. |
+| **5** | **Smart Wait Bị Bỏ Qua (Quá lâu)**<br>Account đang active bị cooldown quá lâu. | **Active Account:** A<br>**Target:** A | A còn cooldown: **20 phút**<br>Threshold: **15 phút** | **Kết quả:** Skip A, nhảy điểm tới account tiếp theo trong queue (ví dụ B). Swap từ A → B. | Wait threshold là 15m, mà bắt đợi 20m thì lâu quá nên skip luôn cho account khác làm việc. |
+| **6** | **Skip Cooldown (Target KHÔNG Active)**<br>Account tiếp theo dính cooldown. | **Active Account:** A<br>**Target:** B | B còn cooldown: **1 phút**<br>Threshold: **15 phút** | **Kết quả:** Khác với case #4. Ở đây **bỏ qua Threshold hoàn toàn**. Lập tức Skip B, chuyển sang xử lý account tiếp theo (VD: C). | Smart Wait **Chỉ áp dụng cho Active Account**. B không phải là account đang mở, bắt giả lập chờ 1 phút cho B là vô lý trong khi C có thể đã sẵn sàng ngay. |
+| **7** | **All Accounts On Cooldown**<br>Tất cả account trong Queue đều chưa sẵn sàng. | **Active Account:** A<br>**Queue:** `[A, B]` | A còn: **10m**<br>B còn: **5m** | **Kết quả:** Tính toán thời gian ngắn nhất (min = 5m). `Sleeping 5.0m until next account is ready.` | Đỡ tốn tài nguyên rà soát liên tục. Orchestrator ngủ 1 mạch tới khi đứa gần nhất (B) tỉnh. |
+| **8** | **Unknown Account Active**<br>Tự tay login một account lạ hoắc nằm ngoài hệ thống. | **Active Account:** X (Account lạ)<br>**Target:** A | A sẵn sàng. | **Kết quả:** Trượt Pre-swap Verification. Log: `Account verification failed: expected=A, actual=X` → Kích hoạt quy trình Swap X → A. | Safeguard tiêu chuẩn. Tránh việc bot bấm nhầm tài nguyên trên tay user. |
+| **9** | **Skip Double Verification**<br>Cập nhật tối ưu cycle time mới nhất. | **Active Account:** A<br>**Target:** A | Đầu cycle 1. | **Kết quả:** Bỏ qua Pre-swap Verification. Log: `Skipping re-verification...` | Do `Early Probe` ở Case #1 đã thực hiện đọc ID rồi, Orchestrator tin tưởng và gán luôn ID, tiết kiệm ~13s mở Profile/Copy check lần 2. |
+| **10** | **OCR Name có Rác (Noise)**<br>Tên hiển thị bị nhiễu dấu phẩy, quotes. | **Active Account:** A<br>**Target:** B | Tên gốc của B: `dragonball "Goten` | **Kết quả:** Thất bại tìm kiếm tên gốc. Kích hoạt Sanitizer biến tên B thành `Goten`. Quét lại OCR trúng phóc → Swap thành công. | Giải quyết các trường hợp Sync Tool của OCR chụp ảnh bìa mờ, dính clan tag, ký tự đặc biệt. |
+| **11** | **Manual Stop Interrupting Sleep**<br>User bấm Dừng (Stop) khi Bot đang trong pha Smart Wait. | **Active Account:** A | Chờ cooldown 10 phút... | **Kết quả:** Không bị đơ cứng. Script lập tức cancel, thoát loop và bắn sự kiện WebSocket "STOPPED". | Code lúc sleep sử dụng chunking (`while remaining_cd > 0 and not self.stop_requested:`), chia nhỏ các khoảng ngủ 10s một vòng để không lock Main Thread. |
+| **12** | **Fast-Fail Missing Account**<br>Nhân vật C cần swap hoàn toàn không tồn tại trong danh sách của thiết bị. | **Active Account:** A<br>**Target:** C | C không có trên emulator này. | **Kết quả:** OCR quét sấp mặt 5 lần không thấy. Bắn lỗi `AccountNotFoundError` văng ngược ra Orchestrator. Hủy ngay lập tức vòng lặp Swap 3 attempts vô ích. Skip luôn account C. | Tránh kẹt bot. Nếu nhân vật thật sự không tồn tại ở thiết bị đó, việc cố chấp thử lại hay Force Stop game là vô nghĩa và phí thời gian (tiết kiệm ~3 phút ngâm bot). |
+
+---
+
+## Các biến liên quan tới config (`misc_config`)
+
+Để tuỳ chỉnh sức mạnh của Orchestrator, bạn có thể truyền các thông số vào tham số `misc_config` lúc khởi tạo:
+
+- `cooldown_min`: Phút giới hạn cho mỗi account (Global cooldown).
+- `swap_wait_threshold_min`: Threshold giới hạn để kích hoạt *Smart Wait* (nếu set = `0` tiến trình sẽ tắt tính năng Wait và Skip liên tục).
+- Ngoài ra, mỗi *Activity* bên trong cũng có `cooldown_minutes` để config thời gian chờ độc lập giữa các nhiệm vụ riêng lẻ (Activity-level cooldown).

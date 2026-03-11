@@ -11,6 +11,16 @@ from backend.core.workflow import (
 import uuid
 from backend.core.workflow.state_detector import GameStateDetector
 from backend.core.workflow.account_detector import AccountDetector
+from backend.core.workflow.swap_logger import (
+    log_cross_emu_swap,
+    log_account_verification,
+    log_swap_attempt,
+    log_ensure_correct_account,
+    log_restart_recovery,
+    log_queue_reorder,
+    log_early_probe,
+    log_main_loop_swap_decision,
+)
 from backend.core.ldplayer_manager import (
     list_all_instances,
     quit_instance,
@@ -46,6 +56,7 @@ class BotOrchestrator:
         self.ws_callback = ws_callback
         self.misc_config = misc_config or {}
         self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
+        self.continue_on_error = self.misc_config.get("continue_on_error", False)
         self.package_name = "com.farlightgames.samo.gp.vn"
 
         self.main_task: asyncio.Task = None
@@ -224,26 +235,32 @@ class BotOrchestrator:
         logging.info(
             f"Cross-Emu Swap: Switching from Emu {old_emu_index} to Emu {new_emu_index}"
         )
+        log_cross_emu_swap(old_emu_index, new_emu_index, "start", True)
 
         print(f"[BotOrchestrator] Quitting Emu {old_emu_index}...")
         await asyncio.to_thread(quit_instance, old_emu_index)
+        log_cross_emu_swap(old_emu_index, new_emu_index, "quit_old", True)
 
         await asyncio.sleep(3)  # Wait for LDPlayer to close properly
 
         print(f"[BotOrchestrator] Launching Emu {new_emu_index}...")
         await asyncio.to_thread(launch_instance, new_emu_index)
+        log_cross_emu_swap(old_emu_index, new_emu_index, "launch_new", True)
 
         print(f"[BotOrchestrator] Waiting for Emu {new_emu_index} to fully boot...")
         boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 120)
         if not boot_ok:
             # Retry once with shorter timeout
             print(f"[BotOrchestrator] Boot timeout. Retrying with 60s...")
+            log_cross_emu_swap(old_emu_index, new_emu_index, "boot_retry", False, "First boot timeout, retrying 60s")
             boot_ok = await asyncio.to_thread(wait_for_device, new_emu_index, 60)
         if not boot_ok:
             print(f"[BotOrchestrator] Emu {new_emu_index} boot FAILED after retry.")
+            log_cross_emu_swap(old_emu_index, new_emu_index, "complete", False, "Boot FAILED after retry")
             return False
         # Short grace period for OS services to settle after boot_completed
         await asyncio.sleep(5)
+        log_cross_emu_swap(old_emu_index, new_emu_index, "complete", True)
         return True
 
     async def _ensure_lobby(
@@ -276,6 +293,14 @@ class BotOrchestrator:
                 f"[BotOrchestrator] Account verification failed during {context}: "
                 f"expected_game_id={expected_game_id}, actual_account_id=<unreadable>"
             )
+        log_account_verification(
+            serial="<orchestrator>",
+            context=context,
+            expected_game_id=expected_game_id,
+            actual_account_id=actual_account_id,
+            match=False,
+            detail="Verification failure logged",
+        )
 
     async def _read_live_account_id(
         self, serial: str, detector: GameStateDetector, context: str
@@ -286,6 +311,7 @@ class BotOrchestrator:
             print(
                 f"[BotOrchestrator] Cannot verify account during {context}: lobby not reachable."
             )
+            log_account_verification(serial, context, "<unknown>", None, False, "Lobby not reachable")
             return {"lobby_ok": False, "account_id": None}
 
         profile_ok = await asyncio.to_thread(core_actions.go_to_profile, serial, detector)
@@ -293,6 +319,7 @@ class BotOrchestrator:
             print(
                 f"[BotOrchestrator] Cannot verify account during {context}: profile not reachable."
             )
+            log_account_verification(serial, context, "<unknown>", None, False, "Profile not reachable")
             await asyncio.to_thread(core_actions.back_to_lobby, serial, detector)
             return {"lobby_ok": True, "account_id": None}
 
@@ -307,6 +334,7 @@ class BotOrchestrator:
                 print(
                     f"[BotOrchestrator] Account ID read failed during {context}. Retrying once..."
                 )
+                log_account_verification(serial, context, "<unknown>", None, False, "First extract failed, retrying")
                 account_id = await asyncio.to_thread(
                     core_actions.extract_player_id,
                     serial,
@@ -319,18 +347,21 @@ class BotOrchestrator:
             print(
                 f"[BotOrchestrator] Live account verification during {context}: account_id={account_id}"
             )
+            log_account_verification(serial, context, "<live_read>", account_id, True, f"Read OK: {account_id}")
         else:
             print(
                 f"[BotOrchestrator] Live account verification during {context} could not read account_id."
             )
+            log_account_verification(serial, context, "<unknown>", None, False, "Could not read account_id after retry")
 
         return {"lobby_ok": True, "account_id": account_id}
 
     async def _restart_game_app(
-        self, serial: str, detector: GameStateDetector
+        self, serial: str, detector: GameStateDetector, expected_game_id: str = ""
     ) -> bool:
         """Restart the game app as a last-resort recovery before the final swap attempt."""
         print(f"[BotOrchestrator] Restarting game app on {serial} before final swap attempt...")
+        log_restart_recovery(serial, expected_game_id, False, "Initiating force-stop")
         await asyncio.to_thread(
             adb_helper._run_adb,
             ["shell", "am", "force-stop", self.package_name],
@@ -338,7 +369,9 @@ class BotOrchestrator:
             15,
         )
         await asyncio.sleep(2)
-        return await self._ensure_lobby(serial, detector)
+        lobby_ok = await self._ensure_lobby(serial, detector)
+        log_restart_recovery(serial, expected_game_id, lobby_ok, f"After restart lobby_ok={lobby_ok}")
+        return lobby_ok
 
     async def _ensure_correct_account(
         self,
@@ -347,26 +380,46 @@ class BotOrchestrator:
         account_detector: AccountDetector,
         expected_game_id: str,
         target_lord: Optional[str],
+        known_current_account_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """Guarantee the live account matches the target account before activities run."""
-        verify_result = await self._read_live_account_id(
-            serial, detector, "pre-swap verification"
+        log_ensure_correct_account(
+            serial, expected_game_id, "start", True,
+            known_current_id=known_current_account_id,
+            detail=f"target_lord={target_lord}",
         )
-        current_account_id = verify_result["account_id"]
+        
+        if known_current_account_id:
+            current_account_id = known_current_account_id
+        else:
+            verify_result = await self._read_live_account_id(
+                serial, detector, "pre-swap verification"
+            )
+            current_account_id = verify_result["account_id"]
 
         if current_account_id == expected_game_id:
             print(
                 f"[BotOrchestrator] Verified correct account already active: {expected_game_id}"
+            )
+            log_ensure_correct_account(
+                serial, expected_game_id, "already_correct", True,
+                known_current_id=current_account_id,
+                final_id=current_account_id,
             )
             return True, current_account_id
 
         self._log_account_verification_failure(
             expected_game_id, current_account_id, "pre-swap verification"
         )
+        log_ensure_correct_account(
+            serial, expected_game_id, "mismatch_detected", False,
+            known_current_id=current_account_id,
+            detail=f"Current={current_account_id}, starting swap loop",
+        )
 
         for attempt in range(1, 4):
             if attempt == 3:
-                restart_ok = await self._restart_game_app(serial, detector)
+                restart_ok = await self._restart_game_app(serial, detector, expected_game_id)
                 if not restart_ok:
                     print(
                         "[BotOrchestrator] App restart failed before final swap attempt."
@@ -375,12 +428,31 @@ class BotOrchestrator:
             print(
                 f"[BotOrchestrator] Swap verification attempt {attempt}/3 for expected_game_id={expected_game_id}"
             )
-            swap_ok = await asyncio.to_thread(
-                core_actions.swap_account,
-                serial,
-                account_detector,
-                detector,
-                target_lord,
+            swap_ok = False
+            try:
+                swap_ok = await asyncio.to_thread(
+                    core_actions.swap_account,
+                    serial,
+                    account_detector,
+                    detector,
+                    target_lord,
+                )
+            except Exception as e:
+                # AccountNotFoundError raised by swap_account when OCR can't find target
+                from workflow.account_detector import AccountNotFoundError
+                if isinstance(e, AccountNotFoundError):
+                    print(f"[BotOrchestrator] FAST-FAIL: {e}")
+                    log_swap_attempt(
+                        serial, attempt, 3, expected_game_id, target_lord,
+                        swap_result=False,
+                        detail=f"Fast-Fail: {e}",
+                    )
+                    break  # Break retry loop immediately
+                raise  # Re-raise any other unexpected exceptions
+            log_swap_attempt(
+                serial, attempt, 3, expected_game_id, target_lord,
+                swap_result=swap_ok,
+                detail="swap_account() returned" if swap_ok else "swap_account() reported failure",
             )
             if not swap_ok:
                 print(
@@ -391,9 +463,22 @@ class BotOrchestrator:
                 serial, detector, f"post-swap verification attempt {attempt}"
             )
             current_account_id = verify_result["account_id"]
-            if current_account_id == expected_game_id:
+            match = current_account_id == expected_game_id
+            log_swap_attempt(
+                serial, attempt, 3, expected_game_id, target_lord,
+                swap_result=swap_ok,
+                post_verify_id=current_account_id,
+                final_match=match,
+                detail=f"Post-verify: {'MATCH' if match else 'MISMATCH'}",
+            )
+            if match:
                 print(
                     f"[BotOrchestrator] Verified target account after swap attempt {attempt}: {expected_game_id}"
+                )
+                log_ensure_correct_account(
+                    serial, expected_game_id, "swap_loop_done", True,
+                    final_id=current_account_id,
+                    detail=f"Matched on attempt {attempt}/3",
                 )
                 return True, current_account_id
 
@@ -403,6 +488,11 @@ class BotOrchestrator:
                 f"post-swap verification attempt {attempt}",
             )
 
+        log_ensure_correct_account(
+            serial, expected_game_id, "failed", False,
+            final_id=current_account_id,
+            detail="All 3 swap attempts exhausted",
+        )
         return False, current_account_id
 
     async def start(self):
@@ -477,12 +567,38 @@ class BotOrchestrator:
                     # ── SMART WAIT: if active account's cooldown ends soon, wait instead of swapping ──
                     expected_gid_for_wait = str(acc.get("game_id") or "").strip()
                     swap_wait_threshold = self.misc_config.get("swap_wait_threshold_min", 0) * 60
-                    if (
-                        swap_wait_threshold > 0
-                        and remaining_cd <= swap_wait_threshold
-                        and last_account_id
-                        and expected_gid_for_wait == last_account_id
-                    ):
+                    
+                    # Detailed debug logging for Smart Wait evaluation
+                    is_active_account = bool(last_account_id and expected_gid_for_wait == last_account_id)
+                    is_within_threshold = (swap_wait_threshold > 0 and remaining_cd <= swap_wait_threshold)
+                    
+                    if swap_wait_threshold > 0:
+                        decision = 'Waiting' if (is_active_account and is_within_threshold) else 'Skipped'
+                        if decision == 'Skipped':
+                            if not is_active_account:
+                                decision = 'Skipped (Not Active)'
+                            elif not is_within_threshold:
+                                decision = 'Skipped (Over Threshold)'
+                                
+                        eval_msg = (
+                            f"[BotOrchestrator] Smart Wait Eval for {acc_id}: "
+                            f"CD=({remaining_cd/60:.1f}m / {swap_wait_threshold/60:.0f}m) "
+                            f"| ActiveID='{last_account_id}' vs TargetID='{expected_gid_for_wait}' "
+                            f"-> {decision}"
+                        )
+                        print(eval_msg)
+                        
+                        # Log to file for historical debugging
+                        log_smart_wait_eval(
+                            serial=f"emulator-{5554 + emu_idx * 2}",
+                            target_account_id=acc_id,
+                            active_account_id=last_account_id or "UNKNOWN",
+                            remaining_cd_sec=remaining_cd,
+                            threshold_sec=swap_wait_threshold,
+                            decision=decision,
+                        )
+
+                    if is_active_account and is_within_threshold:
                         print(
                             f"[BotOrchestrator] Smart Wait: account {acc_id} is active and cooldown ends in "
                             f"{remaining_cd/60:.1f}m (threshold: {swap_wait_threshold/60:.0f}m). Waiting..."
@@ -539,6 +655,12 @@ class BotOrchestrator:
                 if last_emu_index is not None:
                     if last_emu_index != emu_idx:
                         # DIFFERENT EMULATOR -> Cross-emu swap
+                        log_main_loop_swap_decision(
+                            acc_id, str(acc.get('game_id', '')), emu_idx,
+                            last_emu_idx=last_emu_index, last_account_id=last_account_id,
+                            decision="cross_emu_swap",
+                            detail=f"Emu {last_emu_index} -> {emu_idx}",
+                        )
                         swap_ok = await self._handle_cross_emu_swap(last_emu_index, emu_idx)
                         if not swap_ok:
                             print(f"[BotOrchestrator] Cross-emu swap FAILED. Skipping account.")
@@ -546,12 +668,28 @@ class BotOrchestrator:
                             # Do NOT set last_emu_index - next account should retry boot
                             self._advance_queue()
                             continue
+                        
+                        # Reset known live account since we just booted a new emulator
+                        last_account_id = None
+                        self._last_verified_account_id = None
                     elif last_account_id:
+                        log_main_loop_swap_decision(
+                            acc_id, str(acc.get('game_id', '')), emu_idx,
+                            last_emu_idx=last_emu_index, last_account_id=last_account_id,
+                            decision="in_game_swap" if last_account_id != str(acc.get('game_id', '')) else "no_swap_needed",
+                            detail=f"Same emu, last_account={last_account_id}",
+                        )
                         print(
                             f"[BotOrchestrator] Last verified live account on Emu {emu_idx}: {last_account_id}. Re-verifying target {acc.get('game_id', '')}."
                         )
                 else:
                     # BEGINNING OF RUN (last_emu_index is None) -> MUST LAUNCH FIRST EMULATOR
+                    log_main_loop_swap_decision(
+                        acc_id, str(acc.get('game_id', '')), emu_idx,
+                        last_emu_idx=None, last_account_id=None,
+                        decision="first_launch",
+                        detail=f"Initial boot of Emu {emu_idx}",
+                    )
                     print(f"[BotOrchestrator] Launching initial Emu {emu_idx}...")
 
                     # Check if already running to save wait time
@@ -609,11 +747,32 @@ class BotOrchestrator:
                             f"[BotOrchestrator] Smart Queue: detected active account "
                             f"{last_account_id} on Emu {emu_idx}. Reordering queue..."
                         )
+                        log_early_probe(
+                            serial, emu_idx, last_account_id,
+                            detail="Detected active account, triggering queue reorder",
+                        )
                         self._reorder_queue_for_active_account(last_account_id)
-                        acc = self.queue[self.current_idx]
-                        acc_id = str(acc["id"])
-                        emu_idx = int(acc.get("emu_index") or 0)
-                        emu_name = name_map.get(emu_idx, f"Emulator-{emu_idx}")
+                        
+                        # Fix misaligned current_idx: Reset to the start of this emulator's group
+                        # and let the main loop re-evaluate from the newly ordered head!
+                        first_idx_for_emu = next(
+                            (i for i, a in enumerate(self.queue) if int(a.get("emu_index") or 0) == emu_idx), 
+                            self.current_idx
+                        )
+                        print(
+                            f"[BotOrchestrator] Restarting evaluation for Emu {emu_idx} at index {first_idx_for_emu} after reorder."
+                        )
+                        self.current_idx = first_idx_for_emu
+                        
+                        # Preserve last_emu_index so the next iteration doesn't reset last_account_id 
+                        # and cause an infinite probe loop.
+                        last_emu_index = emu_idx
+                        continue
+                    else:
+                        log_early_probe(
+                            serial, emu_idx, None,
+                            detail="Early probe could not detect account ID",
+                        )
 
                 expected_game_id = str(acc.get("game_id") or "").strip()
                 if not expected_game_id:
@@ -635,6 +794,12 @@ class BotOrchestrator:
                     print(
                         f"[BotOrchestrator] Skipping re-verification: early probe already confirmed account {expected_game_id}"
                     )
+                    log_main_loop_swap_decision(
+                        acc_id, expected_game_id, emu_idx,
+                        last_emu_idx=last_emu_index, last_account_id=last_account_id,
+                        decision="skip_verified",
+                        detail="Early probe already confirmed correct account",
+                    )
                     account_ready = True
                     verified_account_id = last_account_id
                 else:
@@ -644,6 +809,7 @@ class BotOrchestrator:
                         account_detector,
                         expected_game_id,
                         target_lord,
+                        known_current_account_id=last_account_id,
                     )
                 if not account_ready:
                     print(
@@ -840,7 +1006,11 @@ class BotOrchestrator:
                     )
 
                     if not account_success:
-                        break  # stop processing activities for this account on error
+                        if self.continue_on_error:
+                            print(f"[BotOrchestrator] Activity '{act_id_or_name}' failed, but continue_on_error is globally enabled. Continuing.")
+                            account_success = True
+                        else:
+                            break  # stop processing activities for this account on error
 
                 # End of activities loop for this account
                 # Log finalized account status and broadcast fresh metrics
@@ -912,6 +1082,8 @@ class BotOrchestrator:
         """
         from collections import OrderedDict
 
+        old_order = [str(a.get('game_id', '')) for a in self.queue]
+
         groups = OrderedDict()
         for acc in self.queue:
             emu = acc.get("emu_index") or 999
@@ -935,12 +1107,20 @@ class BotOrchestrator:
             reordered.extend(accs)
 
         if changed:
-            old_order = [str(a.get('game_id', '')) for a in self.queue]
             self.queue = reordered
             new_order = [str(a.get('game_id', '')) for a in self.queue]
             print(
                 f"[BotOrchestrator] Smart Queue: reordered for active account {active_account_id}. "
                 f"Order: {old_order} → {new_order}"
+            )
+            log_queue_reorder(
+                active_account_id, old_order, new_order,
+                trigger="early_probe" if self.cycle == 1 else "cycle_end",
+            )
+        else:
+            log_queue_reorder(
+                active_account_id, old_order, old_order,
+                trigger="no_change",
             )
 
 

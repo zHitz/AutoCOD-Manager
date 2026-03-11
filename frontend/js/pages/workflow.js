@@ -926,7 +926,7 @@ const WF3 = {
     },
 
     getMiscConfig(groupId) {
-        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false, skip_cooldown: false };
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false, skip_cooldown: false, continue_on_error: false };
         if (!groupId) return defaultMisc;
         const conf = this._groupConfigs[groupId];
         if (conf && conf.misc) {
@@ -941,6 +941,7 @@ const WF3 = {
         const limitEl = document.getElementById('misc-limit-min');
         const chooseStartEl = document.getElementById('misc-choose-start-account');
         const skipCdEl = document.getElementById('misc-skip-cooldown');
+        const continueOnErrEl = document.getElementById('misc-continue-on-error');
 
         if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
 
@@ -948,7 +949,8 @@ const WF3 = {
             cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
             limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
             choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
-            skip_cooldown: skipCdEl ? skipCdEl.checked : false
+            skip_cooldown: skipCdEl ? skipCdEl.checked : false,
+            continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false
         };
 
         this._saveConfigToBackend(groupId);
@@ -1809,7 +1811,7 @@ const WF3 = {
                 </label>
             </div>
             
-            <div class="acv-misc-item">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
                 <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
                     <input type="checkbox" id="misc-skip-cooldown" onchange="WF3.saveMiscConfig(${groupId})" ${misc.skip_cooldown ? 'checked' : ''} style="margin-top: 3px;">
                     <div>
@@ -1818,6 +1820,20 @@ const WF3 = {
                         </div>
                         <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
                             Ignore all account and activity cooldowns. Bot will re-run everything immediately.
+                        </div>
+                    </div>
+                </label>
+            </div>
+            
+            <div class="acv-misc-item">
+                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                    <input type="checkbox" id="misc-continue-on-error" onchange="WF3.saveMiscConfig(${groupId})" ${misc.continue_on_error ? 'checked' : ''} style="margin-top: 3px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; color: #ef4444;">
+                            <span>🛡️</span> Continue on Error
+                        </div>
+                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
+                            If an activity fails, log the error but continue executing the next activities instead of swapping the account immediately.
                         </div>
                     </div>
                 </label>

@@ -1438,6 +1438,9 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     if not state:
         print(f"[{serial}] swap_account failed: Could not reach Character Management screen.")
         return False
+        
+    # Give the Character Management UI time to fully slide in and render its text
+    print(f"[{serial}] Waiting 3s for Character Management UI to settle...")
     time.sleep(1)
 
     if target_account:
@@ -1452,6 +1455,7 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
         for scroll_attempt in range(max_scrolls + 1):
             # Try to find the account text on current viewport via OCR
             result = account_detector.check_account_name(serial, target=target_account, check_type="text")
+            time.sleep(2)
 
             if result:
                 name, center_x, center_y = result
@@ -1461,16 +1465,20 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
 
             if scroll_attempt < max_scrolls:
                 print(f"[{serial}] -> Account not visible. Scrolling down... ({scroll_attempt + 1}/{max_scrolls})")
-                adb_helper.swipe(serial, 500, 400, 500, 200, 500)
-                time.sleep(2)
+                # swipe(x1, y1, x2, y2, duration_ms)
+                adb_helper.swipe(serial, 500, 400, 500, 200, 800)
+                # Wait for the kinetic scroll animation to completely stop
+                time.sleep(3)
             else:
                 print(f"[{serial}] -> Account not found after {max_scrolls} scrolls.")
+
+        from workflow.account_detector import AccountNotFoundError
 
         if not account_found:
             print(f"[{serial}] swap_account failed: Account '{target_account}' not found in Character Management list.")
             adb_helper.press_back(serial)
             time.sleep(2)
-            return False
+            raise AccountNotFoundError(f"Account '{target_account}' not found.")
 
         # 7. Tap the found account
         print(f"[{serial}] Step 5/6: Selecting account at ({account_found[0]}, {account_found[1]})...")

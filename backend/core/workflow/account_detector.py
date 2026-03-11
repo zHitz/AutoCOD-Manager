@@ -31,6 +31,55 @@ pytesseract.pytesseract.tesseract_cmd = config.tesseract_path
 
 from workflow import adb_helper
 from workflow.ocr_name_utils import sanitize_lord_name
+from workflow.ocr_swap_logger import log_ocr_swap_attempt
+
+
+class AccountNotFoundError(Exception):
+    """Raised when the target account is not found in the Character Management list."""
+    pass
+
+
+def _preprocess_strategies(scaled_gray: np.ndarray) -> list:
+    """
+    Returns a list of (name, preprocessed_image) tuples.
+    Multiple strategies handle different game font styles and backgrounds.
+    """
+    strategies = []
+
+    # Strategy 1: CLAHE (good for standard text with uneven lighting)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(scaled_gray)
+    strategies.append(("CLAHE", enhanced))
+
+    # Strategy 2: Adaptive Threshold (best for stylized game fonts on gradient backgrounds)
+    thresh_adaptive = cv2.adaptiveThreshold(
+        scaled_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10
+    )
+    strategies.append(("AdaptiveThresh", thresh_adaptive))
+
+    # Strategy 3: OTSU Threshold (good global binarization)
+    _, thresh_otsu = cv2.threshold(scaled_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    strategies.append(("OTSU", thresh_otsu))
+
+    return strategies
+
+
+def _search_ocr_data(data: dict, search_term: str, scale: int) -> tuple:
+    """Searches OCR output data for a target text match. Returns (cx, cy, word, conf) or None."""
+    for i in range(len(data["text"])):
+        word = data["text"][i].strip()
+        if word and search_term in word.lower():
+            x = data["left"][i]
+            y = data["top"][i]
+            w_box = data["width"][i]
+            h_box = data["height"][i]
+            conf = data["conf"][i]
+
+            if conf != "-1" and int(conf) > 30:
+                center_x = (x + w_box // 2) // scale
+                center_y = (y + h_box // 2) // scale
+                return (center_x, center_y, word, int(conf))
+    return None
 
 
 class AccountDetector:
@@ -64,14 +113,12 @@ class AccountDetector:
         tesseract_config: str = "--psm 6",
     ) -> tuple:
         """
-        Runs OCR on the given serial's screen. Finds the first occurrence of target (case-insensitive)
-        and returns its center (x, y) along with the exact matched text.
+        Multi-strategy OCR: tries multiple preprocessing + PSM modes to find target.
+        Returns (target, center_x, center_y) on match, or None if all strategies fail.
 
-        Uses multi-strategy search:
-          Strategy 1: Exact substring match with raw target
-          Strategy 2: Sanitized name fallback (strips OCR noise, alliance tags)
-
-        Applies image preprocessing (Scaling + Contrast) to improve accuracy on game fonts.
+        Uses multi-strategy search for both image preprocessing and name matching:
+          Image: CLAHE -> AdaptiveThreshold -> OTSU (x2 PSM modes each)
+          Name:  Exact substring match -> Sanitized name fallback
         """
         if check_type != "text":
             return None
@@ -80,21 +127,13 @@ class AccountDetector:
         if screen_img is None:
             return None
 
-        # --- IMAGE PRE-PROCESSING CHO TESSERACT ---
-        scale = 2
+        # --- IMAGE PRE-PROCESSING ---
+        scale = 3
         h, w = screen_img.shape[:2]
         scaled = cv2.resize(
             screen_img, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC
         )
-
         gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
-
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-
-        data = pytesseract.image_to_data(
-            enhanced, config=tesseract_config, output_type=Output.DICT
-        )
 
         # Build search candidates: exact first, sanitized fallback
         raw_lower = target.lower().strip()
@@ -104,48 +143,56 @@ class AccountDetector:
         if sanitized and sanitized != raw_lower:
             candidates.append(sanitized)
 
-        for search_term in candidates:
-            result = self._find_text_in_ocr_data(data, search_term, scale)
-            if result:
-                label = "exact" if search_term == raw_lower else "sanitized"
-                print(f"[OCR] Matched via {label} strategy: '{search_term}'")
-                return (target, result[0], result[1])
+        psm_modes = ["--psm 6", "--psm 11"]
 
-        # Debug: dump OCR words when nothing matched
-        all_words = [
-            w.strip() for w in data["text"] if w.strip()
-        ]
-        print(
-            f"[OCR] No match for '{target}' (candidates: {candidates}). "
-            f"OCR words on screen: {all_words[:30]}"
-        )
-        return None
+        # Try each preprocessing strategy x each PSM mode x each name candidate
+        for strategy_name, processed_img in _preprocess_strategies(gray):
+            for psm in psm_modes:
+                data = pytesseract.image_to_data(
+                    processed_img, config=psm, output_type=Output.DICT
+                )
 
-    def _find_text_in_ocr_data(
-        self, data: dict, search_term: str, scale: int
-    ) -> tuple:
-        """Search for a term in OCR data dict. Returns (center_x, center_y) or None."""
+                for search_term in candidates:
+                    result = _search_ocr_data(data, search_term, scale)
+                    if result:
+                        cx, cy, word, conf = result
+                        label = "exact" if search_term == raw_lower else "sanitized"
+                        print(
+                            f"[OCR] Matched via {label} strategy: '{search_term}' "
+                            f"| word='{word}' at ({cx}, {cy}) conf:{conf}% "
+                            f"| img:{strategy_name} {psm}"
+                        )
+                        all_words = [w.strip() for w in data["text"] if w.strip()]
+                        log_ocr_swap_attempt(
+                            serial=serial,
+                            raw_target=target,
+                            candidates=candidates,
+                            ocr_words=all_words,
+                            matched_strategy=f"{label}|{strategy_name}|{psm}",
+                            matched_term=search_term,
+                        )
+                        return (target, cx, cy)
+
+        # Debug: dump all words from the best strategy (AdaptiveThresh) so user can see what OCR read
+        print(f"[OCR] All strategies failed for '{target}' (candidates: {candidates}).")
+        print("[OCR] Words from AdaptiveThresh --psm 6:")
+        best_img = _preprocess_strategies(gray)[1][1]  # AdaptiveThresh
+        data = pytesseract.image_to_data(best_img, config="--psm 6", output_type=Output.DICT)
+        all_words = []
         for i in range(len(data["text"])):
-            word = data["text"][i].strip()
-            if not word:
-                continue
+            w = data["text"][i].strip()
+            if w:
+                all_words.append(w)
+                print(f"  '{w}' (conf:{data['conf'][i]})")
 
-            if search_term in word.lower():
-                x = data["left"][i]
-                y = data["top"][i]
-                w_box = data["width"][i]
-                h_box = data["height"][i]
-                conf = data["conf"][i]
-
-                if conf != "-1" and int(conf) > 40:
-                    center_x = (x + (w_box // 2)) // scale
-                    center_y = (y + (h_box // 2)) // scale
-
-                    print(
-                        f"[OCR] Found '{word}' at center ({center_x}, {center_y}) | conf: {conf}%"
-                    )
-                    return (center_x, center_y)
-
+        log_ocr_swap_attempt(
+            serial=serial,
+            raw_target=target,
+            candidates=candidates,
+            ocr_words=all_words[:30],
+            matched_strategy=None,
+            matched_term=None,
+        )
         return None
 
     def check_account_name_basic(

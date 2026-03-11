@@ -22,7 +22,8 @@ backend/core/workflow/
 │   ├── activities/        # Activity templates (legion, training...)
 │   ├── alliance/          # Alliance templates
 │   ├── accounts/          # Account management templates
-│   └── icon_markers/      # Icon/marker templates for locating items
+│   ├── icon_markers/      # Icon/marker templates for locating items
+│   └── _unknown_captures/ # Auto-saved UNKNOWN screenshots (debug mode)
 └── activities/            # Các activity script riêng lẻ
 ```
 
@@ -53,38 +54,71 @@ backend/core/workflow/
 
 ## 2. State Detector — Hệ Thống Nhận Diện
 
-### 2.1 Các loại Template
+### 2.1 Performance Optimizations
 
-| Loại | Config Dict | Dùng bởi | Mục đích |
-|------|------------|---------|---------|
-| **State** | `state_configs` | `check_state()` | Nhận diện trạng thái chính (Lobby, Loading, Menu...) |
-| **Construction** | `construction_configs` | `check_construction()` | Nhận diện buildings (Hall, Market, Tavern...) |
-| **Special** | `special_configs` | `check_special_state()` | Nhận diện popup đặc biệt (Server Maintenance, Mail...) |
-| **Activity** | `activity_configs` | `check_activity()` | Tìm vị trí icons + trả toạ độ center |
-| **Alliance** | `alliance_configs` | `check_alliance()` | Nhận diện giao diện alliance |
-| **Icon** | `icon_configs` | `locate_icon()` | Tìm vị trí icon tài nguyên trên bản đồ |
-| **Account** | `account_configs` | `check_account_state()` | Nhận diện tên account đang login |
+State Detector sử dụng **5 tối ưu** để đạt tốc độ cao nhất:
 
-### 2.2 Phân cấp Methods
+| # | Optimization | Mô tả | Tốc độ tăng |
+|---|-------------|-------|------------|
+| 1 | **Grayscale Matching** | Match trên ảnh 1-channel thay vì 3-channel BGR | ~3x nhanh hơn |
+| 2 | **ROI Cropping** | Chỉ scan vùng nhỏ trên screen thay vì full 960×540 | ~5-10x nhanh hơn |
+| 3 | **Early Exit Cache** | Check state trước đó TRƯỚC, nếu match thì return ngay | ~90% skip |
+| 4 | **Screenshot Cache** | Nếu 2 lần gọi liên tiếp < 100ms, dùng lại screenshot cũ | Giảm ADB calls |
+| 5 | **Unified Loader** | Load tất cả template categories bằng 1 method | Clean code |
 
-```
-                    ┌─ check_state()         # 1 screencap, check state_configs
-                    │
-screencap_memory()─►├─ check_state_full()    # 1 screencap, check TẤT CẢ (state → construction → special)
-                    │
-                    ├─ check_construction()   # 1 screencap, check construction_configs
-                    │
-                    ├─ check_special_state()  # 1 screencap, check special_configs
-                    │
-                    └─ check_activity()       # 1 screencap, trả (name, x, y)
+### 2.2 Template Storage Format
 
-Internal (no ADB):
-  _match_state_from_screen(screen)         # Dùng nội bộ, nhận numpy array
-  _match_construction_from_screen(screen)  # Dùng nội bộ, nhận numpy array
-  _match_special_from_screen(screen)       # Dùng nội bộ, nhận numpy array
+Mỗi template được lưu trong RAM dưới dạng dict:
+
+```python
+# Cấu trúc: {state_name: [entry, entry, ...]}
+# Mỗi entry:
+{
+    "color": np.ndarray,   # Ảnh gốc BGR (dùng cho debug/display)
+    "gray": np.ndarray,    # Ảnh grayscale (dùng cho matching — nhanh 3x)
+    "roi": (x1, y1, x2, y2) | None   # Vùng scan trên screen (None = full screen)
+}
 ```
 
-### 2.3 `check_state_full()` — Method Quan Trọng Nhất
+### 2.3 Các loại Template
+
+| Loại | Config Dict | Dùng bởi | Trả về | Threshold |
+|------|-----------|---------|--------|-----------|
+| **State** | `state_configs` | `check_state()` | State name (`str`) | 0.8 |
+| **Construction** | `construction_configs` | `check_construction()` | Name (`str`) hoặc `None` | 0.8 |
+| **Special** | `special_configs` | `check_special_state()` | Name (`str`) hoặc `None` | 0.8 |
+| **Activity** | `activity_configs` | `check_activity()` | `(name, x, y)` hoặc `None` | 0.98 |
+| **Alliance** | `alliance_configs` | `check_alliance()` | `(name, x, y)` hoặc `None` | 0.98 |
+| **Icon** | `icon_configs` | `locate_icon()` | `(name, x, y)` hoặc `None` | 0.8 |
+| **Account** | `account_configs` | `check_account_state()` | `(name, x, y)` hoặc `None` | 0.95 |
+
+### 2.4 Matching Pipeline
+
+```
+screencap_memory(serial)
+    │
+    ▼ (cached nếu < 100ms)
+screen (BGR) ──► cvtColor ──► screen_gray (1-channel)
+                                    │
+              ┌─────────────────────┤
+              ▼                     ▼
+    [Early Exit Cache]      [Priority Scan]
+    Check last matched      Check all templates
+    state FIRST              in priority order
+              │                     │
+              ▼                     ▼
+         _match_single(screen_gray, entry, threshold)
+              │
+              ├── ROI crop (nếu roi_hints có entry cho template)
+              │   screen_gray[y1:y2, x1:x2]
+              │
+              ├── cv2.matchTemplate(region, tmpl_gray, TM_CCOEFF_NORMED)
+              │
+              └── max_val >= threshold? → MATCH!
+                  (coordinates auto-adjusted nếu dùng ROI)
+```
+
+### 2.5 `check_state_full()` — Method Quan Trọng Nhất
 
 ```python
 result = detector.check_state_full(serial)
@@ -92,20 +126,20 @@ result = detector.check_state_full(serial)
 #     "state": "UNKNOWN / TRANSITION",    # hoặc tên state
 #     "construction": "HALL",              # hoặc None
 #     "special": "MAIL_MENU",             # hoặc None
-#     "screen": <numpy array>             # screenshot, tái sử dụng được
+#     "screen": <numpy array>             # screenshot BGR, tái sử dụng được
 # }
 ```
 
 **Khi nào dùng `check_state()` vs `check_state_full()`:**
-- `check_state()` — Khi chỉ cần biết state chính, không cần check construction/special
-- `check_state_full()` — Khi cần xác định chính xác game đang ở đâu (dùng trong `back_to_lobby`)
+- `check_state()` — Khi chỉ cần biết state chính
+- `check_state_full()` — Khi cần xác định chính xác (dùng trong `back_to_lobby`)
 
-### 2.4 Quy tắc Priority trong `check_state()`
-
-Templates được check **theo thứ tự ưu tiên** — match đầu tiên sẽ return ngay:
+### 2.6 Priority Order trong `check_state()`
 
 ```
-1. LOADING SCREEN (NETWORK ISSUE)    ← Ưu tiên cao nhất
+0. [Early Exit] Last matched state     ← Check trước nhất (90% hit)
+─── Nếu miss ───
+1. LOADING SCREEN (NETWORK ISSUE)      ← Priority checks
 2. LOADING SCREEN
 3. IN-GAME LOBBY (PROFILE MENU DETAIL)
 4. IN-GAME LOBBY (PROFILE MENU)
@@ -114,172 +148,253 @@ Templates được check **theo thứ tự ưu tiên** — match đầu tiên s�
 7. IN-GAME LOBBY (HALL_NEW)
 8. IN-GAME ITEMS (ARTIFACTS)
 9. IN-GAME ITEMS (RESOURCES)
---- Nếu không match ---
-10. IN-GAME LOBBY (IN_CITY)           ← Lobby states check cuối
+─── Base states ───
+10. IN-GAME LOBBY (IN_CITY)
 11. IN-GAME LOBBY (OUT_CITY)
---- Nếu vẫn không match ---
-12. "UNKNOWN / TRANSITION"            ← Fallback
+─── Fallback ───
+12. "UNKNOWN / TRANSITION"
 ```
 
 ---
 
 ## 3. Core Actions — Các Hàm Điều Hướng
 
-### 3.1 `back_to_lobby(serial, detector, timeout_sec=30, target_lobby=None)`
+### 3.1 `back_to_lobby(serial, detector, timeout_sec=30, target_lobby=None, debug=False)`
 
 Hàm cốt lõi nhất. Tự động quay về Lobby từ **bất kỳ state nào**.
 
-**Cơ chế hoạt động:**
-- Dùng vòng lặp **dựa trên thời gian** (`timeout_sec`), không phải số lần thử
-- Mỗi vòng lặp gọi `check_state_full()` — **1 lần ADB screencap** cho tất cả checks
-- Xử lý theo từng loại state:
+**Cơ chế:**
+- Vòng lặp **dựa trên thời gian** (`timeout_sec`)
+- Mỗi vòng gọi `check_state_full()` — **1 lần ADB screencap** cho tất cả checks
+- Xử lý theo state:
 
-| State phát hiện | Hành động | Sleep |
-|-----------------|----------|-------|
-| Lobby (IN_CITY / OUT_CITY) | Return True ✓ | — |
+| State | Hành động | Sleep |
+|-------|----------|-------|
+| Lobby | Return True ✓ | — |
+| BLACK SCREEN (brightness < 15) | Chờ kiên nhẫn, **KHÔNG bấm BACK** | 5s |
 | LOADING SCREEN | Chờ kiên nhẫn | 10s |
 | NETWORK ISSUE | Tap Confirm | 2s |
-| Construction (HALL, MARKET...) | Press BACK ngay | 1.5s |
-| Special (MAIL, NOTE...) | Press BACK ngay | 1.5s |
+| Construction | Press BACK ngay | 1.5s |
+| Special | Press BACK ngay | 1.5s |
 | UNKNOWN (grace < 5s) | Chờ thêm | 1.5s |
 | UNKNOWN (grace >= 5s) | Press BACK | 1.5s |
-| Known menu (Profile, Events...) | Press BACK (max 3 lần/state) | 1.5s |
+| Known menu | Press BACK (max 3/state) | 1.5s |
 
-**Tham số `target_lobby`:**
-```python
-back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
-# → Về lobby, rồi nếu đang ở OUT_CITY thì tap (50, 500) để swap sang IN_CITY
-```
+**Tham số `debug=True`:** Khi bật, tự động lưu screenshot mỗi lần gặp UNKNOWN vào `templates/_unknown_captures/` để review và tạo template mới.
 
-### 3.2 Các hàm điều hướng khác
+### 3.2 Các hàm khác
 
 | Hàm | Yêu cầu đang ở | Đi đến |
 |-----|----------------|--------|
 | `go_to_profile()` | Lobby | Profile Menu |
 | `go_to_profile_details()` | Lobby | Profile Menu Detail |
 | `go_to_resources()` | Lobby | Items → Resources tab |
-| `go_to_construction(name)` | Lobby | Construction screen (HALL, MARKET...) |
-| `go_to_farming(resource_type)` | Lobby (OUT_CITY) | World Map → Gather resource |
-| `capture_pet()` | Lobby (OUT_CITY) | Auto Capture Pet |
-| `go_to_pet_sanctuary()` | Lobby (OUT_CITY) | Pet Sanctuary |
-
-### 3.3 Hàm hỗ trợ
-
-| Hàm | Mô tả |
-|-----|-------|
-| `ensure_app_running(serial, pkg)` | Check app, boot nếu cần. Return True/False/None |
-| `startup_to_lobby(serial, detector, pkg)` | Boot game + chờ vào lobby (all-in-one) |
-| `wait_for_state(serial, detector, targets, timeout)` | Block cho đến khi đạt target state |
-| `check_app_crash(serial)` | Phát hiện app crash/freeze bằng pixel comparison |
-| `ensure_lobby_menu_open(serial, detector)` | Đảm bảo menu expand đang mở |
+| `go_to_construction(name)` | Lobby | Construction screen |
+| `go_to_farming(resource_type)` | Lobby (OUT_CITY) | World Map → Gather |
+| `ensure_app_running(serial, pkg)` | Any | Check app, boot nếu cần |
+| `startup_to_lobby(serial, detector)` | Any | Boot game + vào lobby |
+| `wait_for_state(serial, detector, targets)` | Any | Block cho đến target |
 
 ---
 
 ## 4. Hướng Dẫn Mở Rộng
 
-### 4.1 Thêm State mới vào Nhận Diện
+### 4.1 Thêm Template mới (Giảm UNKNOWN)
 
-**Bước 1:** Chụp screenshot trong game, crop phần nhận diện đặc trưng (icon, text nổi bật).
+#### Bước 1: Thu thập screenshot
 
-**Bước 2:** Lưu vào đúng thư mục template:
+**Cách nhanh:** Chạy `test_back_to_lobby.py` với `debug=True`:
+```bash
+python backend\core\test_back_to_lobby.py 1
+```
+Hoặc chạy collector chuyên dụng:
+```bash
+python backend\core\collect_unknown_states.py 1 120
+```
+Screenshots UNKNOWN tự lưu vào `templates/_unknown_captures/`.
+
+#### Bước 2: Crop template
+
+Mở screenshot, crop phần **đặc trưng nhất** (icon, nút bấm, text nổi bật):
+- **Không crop quá lớn** — template nhỏ match nhanh hơn
+- **Không crop quá nhỏ** — dễ false positive
+- **Kích thước lý tưởng:** 50×50 ~ 150×80 pixels
+- **Chọn vùng ÍT thay đổi** — tránh crop vùng có animation/counter
+
+#### Bước 3: Lưu file
+
 ```
 templates/              ← State chính (lobby_xxx.png)
-templates/contructions/ ← Construction buildings
-templates/special/      ← Special popup screens
+templates/contructions/ ← Construction buildings (con_xxx.png)
+templates/special/      ← Special popup (xxx.png)
 templates/activities/   ← Activity icons
 templates/alliance/     ← Alliance screens
 templates/icon_markers/ ← Map icons
+templates/accounts/     ← Account names
 ```
 
-**Bước 3:** Đăng ký trong `state_detector.py`:
+#### Bước 4: Đăng ký trong `state_detector.py`
+
 ```python
-# Thêm state chính (check_state sẽ nhận diện được)
+# Ví dụ: Thêm state chính
 self.state_configs = {
     "lobby_alliance.png": "IN-GAME LOBBY (ALLIANCE MENU)",   # ← THÊM
     # ... các state cũ ...
 }
 
-# Thêm construction (check_construction + check_state_full sẽ nhận diện được)
+# Ví dụ: Thêm construction
 self.construction_configs = {
     "contructions/con_forge.png": "FORGE",   # ← THÊM
     # ...
 }
+
+# Ví dụ: Thêm special screen
+self.special_configs = {
+    "special/gift_popup.png": "GIFT_POPUP",   # ← THÊM
+    # ...
+}
 ```
 
-**Bước 4:** Nếu state mới cần priority cao, thêm vào `priority_checks` trong `_match_state_from_screen()`.
+#### Bước 5 (Optional): Thêm ROI cho template mới
 
-### 4.2 Thêm Hàm Action mới vào `core_actions.py`
+Nếu biết template chỉ xuất hiện ở vùng cố định trên screen:
 
-**Pattern chuẩn** — mọi nav function nên tuân theo:
+```python
+self.roi_hints = {
+    # Format: "filename.png": (x1, y1, x2, y2)
+    # Screen size: 960 × 540
+    "lobby_alliance.png": (700, 0, 960, 100),   # Top-right area
+}
+```
+
+**Cách xác định ROI:**
+1. Mở screenshot gốc (960×540)
+2. Xác định vùng mà template icon **luôn xuất hiện** trên screen
+3. Thêm padding ~50px mỗi chiều cho an toàn
+4. Ghi vào `roi_hints`
+
+> ⚠️ **Nếu không chắc toạ độ ROI, ĐỪNG thêm.** Để `None` (full screen) vẫn hoạt động đúng, chỉ chậm hơn. ROI sai = template không bao giờ match!
+
+#### Bước 6 (Nếu state chính): Thêm vào Priority List
+
+Nếu state mới cần priority cao (check trước các state khác):
+
+```python
+# Trong _match_state_from_screen():
+priority_checks = [
+    "LOADING SCREEN (NETWORK ISSUE)",
+    "LOADING SCREEN",
+    "IN-GAME LOBBY (ALLIANCE MENU)",   # ← THÊM VÀO ĐÂY
+    # ...
+]
+```
+
+---
+
+### 4.2 Thêm ROI cho Template đã có
+
+**Mục đích:** Tăng tốc matching ~5-10x cho template cụ thể.
+
+```python
+# Trong state_detector.py > self.roi_hints:
+self.roi_hints = {
+    # ── Lobby indicators ── (thường ở bottom-left)
+    "lobby_hammer.png": (0, 380, 250, 540),
+    "lobby_magnifier.png": (0, 380, 250, 540),
+
+    # ── Profile buttons ── (thường ở top-left)
+    "lobby_profile_menu.png": (0, 0, 250, 120),
+
+    # ── Construction ── (thường ở top-center)
+    "contructions/con_hall.png": (300, 50, 700, 200),
+}
+```
+
+**Quy tắc:**
+1. ROI phải **LỚN HƠN** template image (nếu nhỏ hơn → auto fallback full screen)
+2. Padding 50-100px quanh vùng thực tế
+3. Test lại sau khi thêm ROI — nếu template không match nữa → ROI sai, bỏ ra
+
+---
+
+### 4.3 Thêm Hàm Action mới vào `core_actions.py`
+
+**Pattern chuẩn:**
 
 ```python
 def go_to_something(serial: str, detector: GameStateDetector) -> bool:
-    """
-    Mô tả ngắn. Yêu cầu đang ở state nào.
-    Returns True nếu thành công, False nếu thất bại.
-    """
+    """Mô tả ngắn. Returns True nếu thành công."""
     print(f"[{serial}] Navigating to Something...")
 
-    # 1. Đảm bảo đúng lobby (nếu cần)
+    # 1. Đảm bảo đúng lobby
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
-        print(f"[{serial}] [FAILED] Could not reach lobby.")
         return False
 
-    # 2. Thực hiện tap sequence
+    # 2. Tap
     adb_helper.tap(serial, x, y)
     time.sleep(2)
 
-    # 3. Xác nhận bằng wait_for_state
+    # 3. Xác nhận
     state = wait_for_state(serial, detector, ["TARGET_STATE"], timeout_sec=10)
     if not state:
-        print(f"[{serial}] [FAILED] Did not reach target.")
         return False
 
     print(f"[{serial}] -> Target reached!")
     return True
 ```
 
-**Quy tắc bắt buộc:**
-1. **Luôn return `bool`** — True = thành công, False = thất bại
-2. **Luôn dùng `wait_for_state()` để xác nhận** — không đoán mò bằng `time.sleep()` dài
-3. **Luôn log rõ ràng** — format: `[{serial}] [LEVEL] Message`
-4. **Gọi `back_to_lobby()` ở đầu** nếu cần đảm bảo vị trí bắt đầu
+**Quy tắc:**
+1. Return `bool` — True = OK, False = fail
+2. Dùng `wait_for_state()` để xác nhận — không đoán bằng `time.sleep()`
+3. Log format: `[{serial}] [LEVEL] Message`
+4. Gọi `back_to_lobby()` ở đầu nếu cần vị trí bắt đầu
 
-### 4.3 Đăng ký hàm mới vào Workflow Registry
+### 4.4 Đăng ký hàm vào Workflow Registry
 
-Thêm vào `FUNCTION_REGISTRY` trong `workflow_registry.py`:
-
+**workflow_registry.py:**
 ```python
 {
-    "id": "go_to_something",           # Khớp với tên trong executor.py
-    "label": "Go to Something",         # Hiển thị trên UI
+    "id": "go_to_something",
+    "label": "Go to Something",
     "category": "Core Actions",
     "icon": "🎯",
     "color": "#6366f1",
     "description": "Navigate to Something screen",
-    "params": [],                        # Thêm param nếu cần
+    "params": [],
 },
 ```
 
-Rồi thêm handler trong `executor.py`:
+**executor.py:**
 ```python
 elif fn_id == "go_to_something":
-    ok = await asyncio.to_thread(
-        core_actions.go_to_something, serial, detector
-    )
+    ok = await asyncio.to_thread(core_actions.go_to_something, serial, detector)
 ```
 
-### 4.4 Thêm Construction mới
+### 4.5 Thêm Construction mới
 
-**Bước 1:** Thêm template vào `contructions/` folder
-**Bước 2:** Đăng ký trong `state_detector.py > construction_configs`
-**Bước 3:** Thêm tap sequence trong `construction_data.py`:
+1. Template → `contructions/con_xxx.png`
+2. Đăng ký → `state_detector.py > construction_configs`
+3. Tap sequence → `construction_data.py`:
 ```python
 CONSTRUCTION_TAPS = {
-    "FORGE": [           # Tên PHẢI khớp với construction_configs
-        (x1, y1),        # Tap 1
-        (x2, y2),        # Tap 2
-    ],
+    "XXX": [(x1, y1), (x2, y2)],  # Tên PHẢI khớp construction_configs
+}
+```
+
+### 4.6 Chế độ Bỏ qua lỗi (continue_on_error)
+
+Mặc định, nếu một Activity bị lỗi (ví dụ `scan_full` thất bại), Orchestrator sẽ dừng tiến trình của account hiện tại và lập tức chuyển (swap) sang account tiếp theo để đảm bảo an toàn, tránh các trạng thái không lường trước. 
+Để cho phép Orchestrator tiếp tục chạy các Activity phía sau dù cho Activity hiện tại bị lỗi, bạn có thể thiết lập cờ `continue_on_error` thành `true` trong tab cấu hình phần **Misc** (Miscellaneous Settings) khi chạy một Workflow hay Target Group.
+
+**Cấu trúc cấu hình tại backend:**
+```json
+{
+    "group_id": 1,
+    "misc_config": {
+        "skip_cooldown": false,
+        "cooldown_min": 0,
+        "continue_on_error": true
+    }
 }
 ```
 
@@ -292,21 +407,46 @@ CONSTRUCTION_TAPS = {
 |-------|--------|
 | `LOADING SCREEN` | Đang tải game |
 | `LOADING SCREEN (NETWORK ISSUE)` | Lỗi mạng, cần tap Confirm |
-| `IN-GAME LOBBY (IN_CITY)` | Lobby chính — trong thành |
-| `IN-GAME LOBBY (OUT_CITY)` | Lobby chính — ngoài thành |
+| `IN-GAME LOBBY (IN_CITY)` | Lobby — trong thành |
+| `IN-GAME LOBBY (OUT_CITY)` | Lobby — ngoài thành |
 | `IN-GAME LOBBY (PROFILE MENU)` | Menu profile |
 | `IN-GAME LOBBY (PROFILE MENU DETAIL)` | Chi tiết profile |
 | `IN-GAME LOBBY (EVENTS MENU)` | Menu sự kiện |
-| `IN-GAME LOBBY (BAZAAR)` | Cửa hàng Bazaar |
-| `IN-GAME LOBBY (HALL_NEW)` | Màn hình Hall mới |
+| `IN-GAME LOBBY (BAZAAR)` | Cửa hàng |
+| `IN-GAME LOBBY (HALL_NEW)` | Hall mới |
 | `IN-GAME ITEMS (ARTIFACTS)` | Tab Artifacts |
 | `IN-GAME ITEMS (RESOURCES)` | Tab Resources |
-| `LOBBY_MENU_EXPANDED` | Menu mở rộng (chỉ dùng bởi `is_menu_expanded`) |
+| `LOBBY_MENU_EXPANDED` | Menu mở rộng |
 | `UNKNOWN / TRANSITION` | Không nhận diện được |
 | `ERROR_CAPTURE` | Lỗi ADB screencap |
 
-### Construction States (`check_construction`)
+### Construction States
 `HALL` · `MARKET` · `ELIXIR_HEALING` · `PET_SANCTUARY` · `PET_ENCLOSURE` · `MARKERS_MENU` · `ALLIANCE_MENU` · `TRAIN_UNITS` · `SCOUT_SENTRY_POST` · `TAVERN`
 
-### Special States (`check_special_state`)
-`SERVER_MAINTENANCE` · `AUTO_CAPTURE_PET` · `SETTINGS` · `CHARACTER_MANAGEMENT` · `MAIL_MENU` · `NOTE`
+### Special States
+`SERVER_MAINTENANCE` · `AUTO_CAPTURE_PET` · `SETTINGS` · `CHARACTER_MANAGEMENT` · `MAIL_MENU` · `NOTE` · `RESOURCE_STATISTICS` · `MARKET_MENU`
+
+---
+
+## 6. Debug & Troubleshooting
+
+### Scripts hỗ trợ
+
+| Script | Mục đích |
+|--------|---------|
+| `test_back_to_lobby.py 1` | Test back_to_lobby trên emulator index 1 (debug=True) |
+| `test_full_scan.py 1` | Test toàn bộ full scan pipeline |
+| `collect_unknown_states.py 1 120` | Thu thập UNKNOWN screenshots trong 120s |
+
+### Template không match?
+
+1. **Threshold quá cao** → giảm từ 0.8 xuống 0.75
+2. **Template quá lớn** → crop nhỏ hơn, lấy phần đặc trưng nhất
+3. **ROI sai** → bỏ ROI entry trong `roi_hints` (full screen fallback)
+4. **Game resolution khác** → templates phải crop từ cùng resolution
+
+### back_to_lobby chậm?
+
+1. Nhiều UNKNOWN → thêm templates (xem mục 4.1)
+2. Grace period quá dài → giảm trong `core_actions.py`
+3. Chưa có ROI → thêm ROI vào `roi_hints` (xem mục 4.2)

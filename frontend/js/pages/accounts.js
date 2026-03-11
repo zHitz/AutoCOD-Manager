@@ -1424,6 +1424,8 @@ const AccountsPage = {
                 return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}">${up ? '▲' : '▼'} ${up ? '+' : '-'}${fmt}</span>`;
             };
 
+            const timeAgo = acc.last_scan_at ? AccountsPage.formatDateTime(acc.last_scan_at) : 'Never';
+
             return `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
                     <div class="ov-section-title" style="margin:0;">Resource Stockpile</div>
