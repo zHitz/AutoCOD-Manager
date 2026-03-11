@@ -164,12 +164,15 @@ const AccountsPage = {
                 .badge-status-no  { background: rgba(239,68,68,0.1);  color: var(--red-500);     border: 1px solid rgba(239,68,68,0.25);  border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
 
                 /* Resource values in table */
-                .resource-val { font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; }
-                .resource-cell { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 78px; }
-                .resource-delta { width: 10px; display: inline-block; text-align: center; font-size: 10px; line-height: 1; font-family: sans-serif; }
+                .resource-val { font-weight: 600; letter-spacing: 0.3px; font-variant-numeric: tabular-nums; display: block; }
+                .resource-cell { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; min-width: 78px; line-height: 1.2; }
+                .resource-delta { font-size: 11px; font-weight: 700; font-family: sans-serif; display: flex; align-items: center; gap: 2px; }
                 .resource-delta.up { color: var(--emerald-500); }
                 .resource-delta.down { color: var(--red-500); }
-                .resource-delta.neutral, .resource-delta.empty { color: var(--muted-foreground); }
+                .resource-delta.neutral, .resource-delta.empty { color: var(--muted-foreground); opacity: 0; }
+                
+                /* Icon inside delta */
+                .delta-icon { font-size: 11px; }
 
                 /* Status dots */
                 .status-dot-on  { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); box-shadow: 0 0 5px var(--emerald-500); display: inline-block; flex-shrink: 0; }
@@ -451,9 +454,11 @@ const AccountsPage = {
                 .res-footer { display: flex; justify-content: space-between; font-size: 11px; }
                 .res-cap { color: var(--muted-foreground); }
                 .res-cap.warn { color: var(--red-500); font-weight: 600; }
-                .delta-up   { color: var(--emerald-500); font-weight: 700; }
-                .delta-down { color: var(--red-500); font-weight: 700; }
+                .delta-up   { color: var(--emerald-500); font-weight: 700; display: flex; align-items: center; gap: 2px; }
+                .delta-down { color: var(--red-500); font-weight: 700; display: flex; align-items: center; gap: 2px; }
                 .delta-loading { color: var(--muted-foreground); font-size: 11px; opacity: 0.5; }
+                
+                .delta-trend-icon { font-size: 12px; }
 
                 .pet-card {
                     background: var(--card);
@@ -673,11 +678,22 @@ const AccountsPage = {
             // Delta setup
             const mkInlineDelta = (key) => {
                 const cached = this._comparisonCache[gameId];
-                if (!cached || !cached.delta || cached.delta[key] == null) return '<span class="resource-delta empty"></span>';
+                if (!cached || !cached.delta || cached.delta[key] == null) return '<span class="resource-delta empty">•</span>';
                 if (cached.delta[key] === 0) return '<span class="resource-delta neutral" title="No change">•</span>';
                 const v = cached.delta[key];
                 const isUp = v > 0;
-                return `<span class="resource-delta ${isUp ? 'up' : 'down'}" title="${isUp ? '+' : ''}${v.toLocaleString()}">${isUp ? '▲' : '▼'}</span>`;
+                
+                // Format value
+                const abs = Math.abs(v);
+                let fmt;
+                if (abs >= 1e9) fmt = (abs / 1e9).toFixed(1) + 'B';
+                else if (abs >= 1e6) fmt = (abs / 1e6).toFixed(1) + 'M';
+                else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
+                else fmt = abs.toLocaleString();
+                
+                return `<span class="resource-delta ${isUp ? 'up' : 'down'}" title="${isUp ? '+' : ''}${v.toLocaleString()}">
+                            <span class="delta-icon">${isUp ? '↗' : '↘'}</span>${fmt}
+                        </span>`;
             };
             const runtimeStatus = this._getRuntimeStatus(row);
             const statusBadge = `<span title="${runtimeStatus.title}" style="${runtimeStatus.style}">${runtimeStatus.label}</span>`;
@@ -1290,7 +1306,7 @@ const AccountsPage = {
         else if (abs >= 1_000) formatted = (abs / 1_000).toFixed(1) + 'K';
         else formatted = abs.toLocaleString();
         const isUp = value > 0;
-        return `<span class="${isUp ? 'delta-up' : 'delta-down'}">${isUp ? '▲' : '▼'} ${isUp ? '+' : '-'}${formatted}</span>`;
+        return `<span class="${isUp ? 'delta-up' : 'delta-down'}"><span class="delta-trend-icon">${isUp ? '↗' : '↘'}</span>${formatted}</span>`;
     },
 
     _updateDeltaUI(delta, previous) {
@@ -1421,7 +1437,7 @@ const AccountsPage = {
                 else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
                 else fmt = abs.toLocaleString();
                 const up = v > 0;
-                return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}">${up ? '▲' : '▼'} ${up ? '+' : '-'}${fmt}</span>`;
+                return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}"><span class="delta-trend-icon">${up ? '↗' : '↘'}</span>${fmt}</span>`;
             };
 
             const timeAgo = acc.last_scan_at ? AccountsPage.formatDateTime(acc.last_scan_at) : 'Never';

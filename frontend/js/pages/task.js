@@ -101,117 +101,125 @@ const TaskPage = {
             : '';
 
         const summaryCards = [
-            { label: 'Total runs', value: summary.total_runs || 0, tone: 'var(--foreground)' },
-            { label: 'Success', value: summary.success_count || 0, tone: '#047857' },
-            { label: 'Failed', value: summary.failed_count || 0, tone: '#b91c1c' },
-            { label: 'Avg duration', value: this._formatDuration(summary.avg_duration_ms), tone: 'var(--foreground)' },
-            { label: 'Last run', value: this._formatDateTime(summary.last_run), tone: 'var(--foreground)', compact: true }
+            { label: 'Total runs', value: summary.total_runs || 0, cls: '' },
+            { label: 'Success', value: summary.success_count || 0, cls: 'th-stat-success' },
+            { label: 'Failed', value: summary.failed_count || 0, cls: 'th-stat-failed' },
+            { label: 'Avg duration', value: this._formatDuration(summary.avg_duration_ms), cls: '' },
+            { label: 'Last run', value: this._formatDateTime(summary.last_run), cls: 'th-stat-compact' }
         ];
 
         const summaryHtml = `
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;">
-                ${summaryCards.map((card) => `
-                    <div style="border:1px solid var(--border);border-radius:16px;padding:14px 16px;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.04));min-height:92px;">
-                        <div style="font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.08em;">${this._escapeHtml(card.label)}</div>
-                        <div style="font-size:${card.compact ? '13px' : '28px'};font-weight:800;line-height:${card.compact ? '1.5' : '1.2'};margin-top:8px;color:${card.tone};word-break:break-word;">${this._escapeHtml(card.value)}</div>
+            <div class="th-stat-grid">
+                ${summaryCards.map((c) => `
+                    <div class="th-stat-card ${c.cls}">
+                        <div class="th-stat-label">${this._escapeHtml(c.label)}</div>
+                        <div class="th-stat-value">${this._escapeHtml(c.value)}</div>
                     </div>
                 `).join('')}
-            </div>
-        `;
+            </div>`;
 
         const breakdownHtml = loading
-            ? '<div style="padding:18px;color:var(--muted-foreground);">Loading activity history...</div>'
+            ? '<div class="th-empty-state"><span class="spinner"></span> Loading activity history...</div>'
             : error
-                ? `<div style="padding:18px;color:#b91c1c;">${this._escapeHtml(error)}</div>`
+                ? `<div class="th-error-inline">${this._escapeHtml(error)}</div>`
                 : activityStats.length
-                    ? `<div style="display:flex;flex-direction:column;gap:10px;">${activityStats.map((stat) => `
-                        <div style="border:1px solid var(--border);border-radius:14px;background:var(--card);padding:14px 16px;">
-                            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                    ? `<div class="th-card-list">${activityStats.map((stat) => {
+                        const statusCls = stat.last_status === 'FAILED' ? 'overdue' : stat.last_status === 'SUCCESS' ? 'on-track' : 'at-risk';
+                        return `
+                        <div class="th-breakdown-card">
+                            <div class="th-breakdown-header">
                                 <div>
-                                    <div style="font-weight:800;font-size:14px;">${this._escapeHtml(stat.activity_name || stat.activity_id)}</div>
-                                    <div style="font-size:11px;color:var(--muted-foreground);margin-top:4px;">ID: ${this._escapeHtml(stat.activity_id || '--')}</div>
+                                    <div class="th-breakdown-name">${this._escapeHtml(stat.activity_name || stat.activity_id)}</div>
+                                    <div class="th-breakdown-id">ID: ${this._escapeHtml(stat.activity_id || '--')}</div>
                                 </div>
-                                <span class="task-pill task-status-pill ${stat.last_status === 'FAILED' ? 'overdue' : stat.last_status === 'SUCCESS' ? 'on-track' : 'at-risk'}">${this._escapeHtml(stat.last_status || '--')}</span>
+                                <span class="task-pill task-status-pill ${statusCls}">${this._escapeHtml(stat.last_status || '--')}</span>
                             </div>
-                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:12px;">
-                                <div><div style="font-size:11px;color:var(--muted-foreground);">Runs</div><div style="font-size:18px;font-weight:800;margin-top:4px;">${stat.total_runs || 0}</div></div>
-                                <div><div style="font-size:11px;color:var(--muted-foreground);">Success</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#047857;">${stat.success_count || 0}</div></div>
-                                <div><div style="font-size:11px;color:var(--muted-foreground);">Failed</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:#b91c1c;">${stat.failed_count || 0}</div></div>
-                                <div><div style="font-size:11px;color:var(--muted-foreground);">Avg duration</div><div style="font-size:18px;font-weight:800;margin-top:4px;">${this._escapeHtml(this._formatDuration(stat.avg_duration_ms))}</div></div>
-                                <div><div style="font-size:11px;color:var(--muted-foreground);">Last run</div><div style="font-size:12px;font-weight:700;line-height:1.5;margin-top:4px;">${this._escapeHtml(this._formatDateTime(stat.last_run))}</div></div>
+                            <div class="th-mini-stats">
+                                <div class="th-mini-stat"><div class="th-mini-stat-label">Runs</div><div class="th-mini-stat-value">${stat.total_runs || 0}</div></div>
+                                <div class="th-mini-stat"><div class="th-mini-stat-label">Success</div><div class="th-mini-stat-value th-text-success">${stat.success_count || 0}</div></div>
+                                <div class="th-mini-stat"><div class="th-mini-stat-label">Failed</div><div class="th-mini-stat-value th-text-failed">${stat.failed_count || 0}</div></div>
+                                <div class="th-mini-stat"><div class="th-mini-stat-label">Avg duration</div><div class="th-mini-stat-value">${this._escapeHtml(this._formatDuration(stat.avg_duration_ms))}</div></div>
+                                <div class="th-mini-stat"><div class="th-mini-stat-label">Last run</div><div class="th-mini-stat-value th-mini-stat-compact">${this._escapeHtml(this._formatDateTime(stat.last_run))}</div></div>
                             </div>
-                        </div>
-                    `).join('')}</div>`
-                    : '<div style="padding:18px;color:var(--muted-foreground);">No activity history for the selected date.</div>';
+                        </div>`;
+                    }).join('')}</div>`
+                    : '<div class="th-empty-state">No activity history for the selected date.</div>';
 
         const timelineHtml = loading
-            ? '<div style="padding:18px;color:var(--muted-foreground);">Loading execution timeline...</div>'
+            ? '<div class="th-empty-state"><span class="spinner"></span> Loading execution timeline...</div>'
             : error
-                ? `<div style="padding:18px;color:#b91c1c;">${this._escapeHtml(error)}</div>`
+                ? `<div class="th-error-inline">${this._escapeHtml(error)}</div>`
                 : items.length
                     ? items.map((item) => {
                         const metadata = this._escapeHtml(JSON.stringify(item.metadata || {}, null, 2));
                         const result = this._escapeHtml(JSON.stringify(item.result || {}, null, 2));
-                        const errorHtml = item.error_message
-                            ? `<div style="margin-top:10px;padding:10px 12px;border-radius:12px;background:rgba(185,28,28,.06);border:1px solid rgba(185,28,28,.14);color:#991b1b;font-size:12px;line-height:1.5;"><b>Error:</b> ${this._escapeHtml(item.error_message)}</div>`
-                            : '';
-                        const statusClass = item.status === 'FAILED' ? 'overdue' : item.status === 'SUCCESS' ? 'on-track' : 'at-risk';
+                        const statusCls = item.status === 'FAILED' ? 'overdue' : item.status === 'SUCCESS' ? 'on-track' : 'at-risk';
+                        const borderColor = item.status === 'FAILED' ? 'var(--red-500)' : item.status === 'SUCCESS' ? 'var(--emerald-500)' : 'var(--orange-500)';
                         return `
-                            <div style="border:1px solid var(--border);border-radius:16px;padding:14px 16px;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.03));">
-                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
-                                    <div>
-                                        <div style="font-weight:800;font-size:14px;">${this._escapeHtml(item.activity_name || item.activity_id)}</div>
-                                        <div style="font-size:11px;color:var(--muted-foreground);margin-top:5px;line-height:1.6;word-break:break-word;">Run ${this._escapeHtml(item.run_id || '--')} | ${this._escapeHtml(item.source || '--')} | attempts ${item.attempts || 1}</div>
+                            <div class="th-timeline-item" style="border-left-color:${borderColor};">
+                                <div class="th-timeline-header">
+                                    <div class="th-timeline-info">
+                                        <div class="th-timeline-name">${this._escapeHtml(item.activity_name || item.activity_id)}</div>
+                                        <div class="th-timeline-meta">${this._escapeHtml(item.run_id || '--')} · ${this._escapeHtml(item.source || '--')} · attempts ${item.attempts || 1}</div>
                                     </div>
-                                    <span class="task-pill task-status-pill ${statusClass}">${this._escapeHtml(item.status || '--')}</span>
+                                    <span class="task-pill task-status-pill ${statusCls}">${this._escapeHtml(item.status || '--')}</span>
                                 </div>
-                                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:12px;font-size:12px;">
-                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Started</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDateTime(item.started_at))}</div></div>
-                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Finished</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDateTime(item.finished_at))}</div></div>
-                                    <div><div style="font-size:11px;color:var(--muted-foreground);margin-bottom:4px;">Duration</div><div style="font-weight:700;line-height:1.5;">${this._escapeHtml(this._formatDuration(item.duration_ms))}</div></div>
+                                <div class="th-timeline-stats">
+                                    <div class="th-mini-stat"><div class="th-mini-stat-label">Started</div><div class="th-mini-stat-value th-mini-stat-compact">${this._escapeHtml(this._formatDateTime(item.started_at))}</div></div>
+                                    <div class="th-mini-stat"><div class="th-mini-stat-label">Finished</div><div class="th-mini-stat-value th-mini-stat-compact">${this._escapeHtml(this._formatDateTime(item.finished_at))}</div></div>
+                                    <div class="th-mini-stat"><div class="th-mini-stat-label">Duration</div><div class="th-mini-stat-value th-mini-stat-compact">${this._escapeHtml(this._formatDuration(item.duration_ms))}</div></div>
                                 </div>
-                                ${errorHtml}
-                                <details style="margin-top:12px;">
-                                    <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700;">Show metadata and result</summary>
-                                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:10px;">
+                                ${item.error_message ? `<div class="th-error-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> ${this._escapeHtml(item.error_message)}</div>` : ''}
+                                <details class="th-details">
+                                    <summary class="th-details-summary">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>
+                                        Show metadata & result
+                                    </summary>
+                                    <div class="th-details-grid">
                                         <div>
-                                            <div style="font-size:11px;font-weight:700;margin-bottom:6px;">Metadata</div>
-                                            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:var(--background);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11px;max-height:220px;overflow:auto;">${metadata}</pre>
+                                            <div class="th-details-label">Metadata</div>
+                                            <pre class="th-details-pre">${metadata}</pre>
                                         </div>
                                         <div>
-                                            <div style="font-size:11px;font-weight:700;margin-bottom:6px;">Result</div>
-                                            <pre style="margin:0;white-space:pre-wrap;word-break:break-word;background:var(--background);border:1px solid var(--border);border-radius:10px;padding:10px;font-size:11px;max-height:220px;overflow:auto;">${result}</pre>
+                                            <div class="th-details-label">Result</div>
+                                            <pre class="th-details-pre">${result}</pre>
                                         </div>
                                     </div>
                                 </details>
-                            </div>
-                        `;
+                            </div>`;
                     }).join('')
-                    : '<div style="padding:18px;color:var(--muted-foreground);">No activity runs for this account on the selected date.</div>';
+                    : '<div class="th-empty-state">No activity runs for this account on the selected date.</div>';
 
         return `
-            <div style="padding:22px 24px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(180deg,var(--card),rgba(148,163,184,.05));">
-                <div style="min-width:0;">
-                    <div style="font-size:28px;font-weight:900;letter-spacing:-.03em;line-height:1.2;word-break:break-word;">${this._escapeHtml(account.accountName || account.lord_name || 'Activity history')}</div>
-                    <div style="font-size:12px;color:var(--muted-foreground);margin-top:8px;line-height:1.6;word-break:break-word;">${this._escapeHtml(account.gameId || account.game_id || '--')} | ${this._escapeHtml(account.emulator || account.emulator_name || '--')} | ${this._escapeHtml(this._selectedDate)}</div>
+            <div class="th-panel-header">
+                <div class="th-panel-header-info">
+                    <div class="th-panel-title">${this._escapeHtml(account.accountName || account.lord_name || 'Activity history')}</div>
+                    <div class="th-panel-subtitle">${this._escapeHtml(account.gameId || account.game_id || '--')} · ${this._escapeHtml(account.emulator || account.emulator_name || '--')} · ${this._escapeHtml(this._selectedDate)}</div>
                 </div>
-                <button class="btn btn-sm btn-ghost" id="task-history-close" style="flex:0 0 auto;">Close</button>
+                <button class="th-close-btn" id="task-history-close" title="Close panel">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
             </div>
-            <div style="padding:18px 22px 22px;overflow:auto;display:flex;flex-direction:column;gap:16px;background:var(--background);">
+            <div class="th-panel-body">
                 ${summaryHtml}
-                ${visibleLatestError ? `<div style="border:1px solid rgba(185,28,28,.18);background:linear-gradient(180deg,rgba(185,28,28,.08),rgba(185,28,28,.03));color:#991b1b;border-radius:14px;padding:12px 14px;font-size:12px;line-height:1.5;"><b>Latest error:</b> ${this._escapeHtml(visibleLatestError)}</div>` : ''}
-                <div style="display:flex;gap:8px;padding:4px;background:var(--card);border:1px solid var(--border);border-radius:14px;width:max-content;max-width:100%;overflow:auto;">
-                    <button class="task-history-tab-btn btn btn-sm" data-history-tab="timeline" style="border:none;background:var(--foreground);color:var(--background);white-space:nowrap;">Execution timeline</button>
-                    <button class="task-history-tab-btn btn btn-sm btn-ghost" data-history-tab="breakdown" style="border:none;white-space:nowrap;">Activity breakdown</button>
+                ${visibleLatestError ? `<div class="th-error-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ${this._escapeHtml(visibleLatestError)}</div>` : ''}
+                <div class="th-tab-bar">
+                    <button class="th-tab active" data-history-tab="timeline">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Execution timeline
+                    </button>
+                    <button class="th-tab" data-history-tab="breakdown">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                        Activity breakdown
+                    </button>
                 </div>
-                <section data-history-panel="timeline" style="display:block;">
-                    <div style="display:flex;flex-direction:column;gap:12px;">${timelineHtml}</div>
+                <section data-history-panel="timeline" class="th-tab-panel active">
+                    <div class="th-card-list">${timelineHtml}</div>
                 </section>
-                <section data-history-panel="breakdown" style="display:none;">
+                <section data-history-panel="breakdown" class="th-tab-panel">
                     ${breakdownHtml}
                 </section>
-            </div>
-        `;
+            </div>`;
     },
 
     _mountHistoryPanel(account, payload = {}, loading = false, error = '') {
@@ -241,14 +249,8 @@ const TaskPage = {
         tabButtons.forEach((button) => {
             button.addEventListener('click', () => {
                 const nextTab = button.dataset.historyTab;
-                tabButtons.forEach((btn) => {
-                    const isActive = btn.dataset.historyTab === nextTab;
-                    btn.style.background = isActive ? 'var(--foreground)' : 'transparent';
-                    btn.style.color = isActive ? 'var(--background)' : 'var(--foreground)';
-                });
-                tabPanels.forEach((section) => {
-                    section.style.display = section.dataset.historyPanel === nextTab ? 'block' : 'none';
-                });
+                tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.historyTab === nextTab));
+                tabPanels.forEach((section) => section.classList.toggle('active', section.dataset.historyPanel === nextTab));
             });
         });
     },
@@ -482,7 +484,7 @@ const TaskPage = {
         `).join('');
 
         return `
-            <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;">
+            <div id="task-settings-panel" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;">
                 <div style="font-weight:600;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
                     <span>⚙️ Configure Column Templates</span>
                     <button class="btn btn-sm btn-ghost" id="task-settings-close">✕</button>
@@ -543,6 +545,187 @@ const TaskPage = {
                 
                 .spinner-inline { display: inline-block; animation: spin 1s linear infinite; }
                 @keyframes spin { 100% { transform: rotate(360deg); } }
+
+                /* ── History Panel (th- prefix) ── */
+                .th-panel-header {
+                    padding: 20px 24px 16px;
+                    border-bottom: 1px solid var(--border);
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 16px;
+                    align-items: flex-start;
+                    background: var(--card);
+                    flex-shrink: 0;
+                }
+                .th-panel-header-info { min-width: 0; }
+                .th-panel-title { font-size: 22px; font-weight: 800; letter-spacing: -.03em; line-height: 1.2; word-break: break-word; }
+                .th-panel-subtitle { font-size: 12px; color: var(--muted-foreground); margin-top: 6px; line-height: 1.6; word-break: break-word; }
+                .th-close-btn {
+                    flex: 0 0 auto;
+                    width: 32px; height: 32px;
+                    display: flex; align-items: center; justify-content: center;
+                    border-radius: var(--radius-md);
+                    border: 1px solid var(--border);
+                    background: var(--card);
+                    color: var(--muted-foreground);
+                    cursor: pointer;
+                    transition: all var(--duration-fast);
+                }
+                .th-close-btn:hover { background: var(--destructive); color: #fff; border-color: var(--destructive); }
+
+                .th-panel-body {
+                    padding: 18px 24px 28px;
+                    overflow-y: auto;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 16px;
+                    background: var(--background);
+                    flex: 1;
+                }
+
+                /* Stat cards */
+                .th-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+                .th-stat-card {
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-lg);
+                    padding: 12px 14px;
+                    background: var(--card);
+                    transition: box-shadow var(--duration-fast);
+                }
+                .th-stat-card:hover { box-shadow: var(--shadow-sm); }
+                .th-stat-label { font-size: 10px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+                .th-stat-value { font-size: 26px; font-weight: 800; line-height: 1.2; margin-top: 6px; color: var(--foreground); }
+                .th-stat-success .th-stat-value { color: var(--emerald-500); }
+                .th-stat-failed .th-stat-value { color: var(--red-500); }
+                .th-stat-compact .th-stat-value { font-size: 13px; font-weight: 700; line-height: 1.5; }
+
+                /* Tab bar */
+                .th-tab-bar {
+                    display: flex;
+                    gap: 4px;
+                    padding: 3px;
+                    background: var(--muted);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-lg);
+                    width: max-content;
+                    max-width: 100%;
+                }
+                .th-tab {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 7px 14px;
+                    border: none;
+                    background: transparent;
+                    color: var(--muted-foreground);
+                    font-size: 12px;
+                    font-weight: 600;
+                    font-family: var(--font-sans);
+                    border-radius: calc(var(--radius-lg) - 2px);
+                    cursor: pointer;
+                    white-space: nowrap;
+                    transition: all var(--duration-fast);
+                }
+                .th-tab:hover { color: var(--foreground); }
+                .th-tab.active {
+                    background: var(--card);
+                    color: var(--foreground);
+                    box-shadow: var(--shadow-sm);
+                }
+                .th-tab svg { flex-shrink: 0; }
+
+                .th-tab-panel { display: none; }
+                .th-tab-panel.active { display: block; }
+
+                /* Card list (shared) */
+                .th-card-list { display: flex; flex-direction: column; gap: 10px; }
+                .th-empty-state { padding: 24px 18px; color: var(--muted-foreground); font-size: 13px; text-align: center; }
+                .th-error-inline { padding: 18px; color: var(--red-500); font-size: 13px; }
+
+                /* Error banner */
+                .th-error-banner {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 8px;
+                    border: 1px solid rgba(239,68,68,.18);
+                    background: rgba(239,68,68,.05);
+                    color: #991b1b;
+                    border-radius: var(--radius-lg);
+                    padding: 10px 14px;
+                    font-size: 12px;
+                    line-height: 1.5;
+                }
+                .th-error-banner svg { flex-shrink: 0; margin-top: 1px; }
+
+                /* Timeline items */
+                .th-timeline-item {
+                    border: 1px solid var(--border);
+                    border-left: 3px solid var(--border);
+                    border-radius: var(--radius-lg);
+                    padding: 14px 16px;
+                    background: var(--card);
+                    transition: box-shadow var(--duration-fast);
+                }
+                .th-timeline-item:hover { box-shadow: var(--shadow-sm); }
+                .th-timeline-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+                .th-timeline-info { min-width: 0; }
+                .th-timeline-name { font-weight: 700; font-size: 13px; }
+                .th-timeline-meta { font-size: 11px; color: var(--muted-foreground); margin-top: 4px; line-height: 1.6; word-break: break-word; font-family: var(--font-mono); }
+                .th-timeline-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 12px; }
+
+                /* Mini stats (shared between timeline and breakdown) */
+                .th-mini-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin-top: 12px; }
+                .th-mini-stat-label { font-size: 10px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+                .th-mini-stat-value { font-size: 17px; font-weight: 800; margin-top: 3px; }
+                .th-mini-stat-compact { font-size: 12px; font-weight: 700; line-height: 1.5; }
+                .th-text-success { color: var(--emerald-500); }
+                .th-text-failed { color: var(--red-500); }
+
+                /* Breakdown cards */
+                .th-breakdown-card {
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-lg);
+                    background: var(--card);
+                    padding: 14px 16px;
+                    transition: box-shadow var(--duration-fast);
+                }
+                .th-breakdown-card:hover { box-shadow: var(--shadow-sm); }
+                .th-breakdown-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+                .th-breakdown-name { font-weight: 700; font-size: 13px; }
+                .th-breakdown-id { font-size: 11px; color: var(--muted-foreground); margin-top: 3px; font-family: var(--font-mono); }
+
+                /* Details accordion */
+                .th-details { margin-top: 12px; }
+                .th-details-summary {
+                    cursor: pointer;
+                    font-size: 12px;
+                    color: var(--indigo-500);
+                    font-weight: 700;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 5px;
+                    user-select: none;
+                    transition: color var(--duration-fast);
+                }
+                .th-details-summary:hover { color: var(--indigo-600); }
+                .th-details-summary svg { flex-shrink: 0; transition: transform var(--duration-fast); }
+                details[open] > .th-details-summary svg { transform: rotate(180deg); }
+                .th-details-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
+                .th-details-label { font-size: 11px; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); }
+                .th-details-pre {
+                    margin: 0;
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    background: var(--muted);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-md);
+                    padding: 10px;
+                    font-family: var(--font-mono);
+                    font-size: 11px;
+                    max-height: 220px;
+                    overflow: auto;
+                    line-height: 1.5;
+                }
             </style>
 
             <div class="task-page">
@@ -601,7 +784,7 @@ const TaskPage = {
                         <div class="task-table-scroll" id="task-table-scroll">
                             <table class="task-table">
                                 <thead>
-                                    <tr>
+                                    <tr id="task-thead-row">
                                         <th class="task-sticky-col"><span class="th-content">Account</span></th>
                                         <th><span class="th-content">Status</span></th>
                                         <th><span class="th-content">Priority</span></th>
@@ -706,8 +889,22 @@ const TaskPage = {
         }
     },
 
+    _syncThead() {
+        const theadRow = document.getElementById('task-thead-row');
+        if (!theadRow) return;
+        theadRow.innerHTML = `
+            <th class="task-sticky-col"><span class="th-content">Account</span></th>
+            <th><span class="th-content">Status</span></th>
+            <th><span class="th-content">Priority</span></th>
+            ${this._checklistTemplates.map((item) => `<th><span class="th-content">${item.shortLabel}</span></th>`).join('')}
+            <th><span class="th-content">Progress</span></th>
+            <th><span class="th-content">Note</span></th>
+        `;
+    },
+
     _renderBodyOnly() {
         this._applyFilters();
+        this._syncThead();
         const tbody = document.getElementById('task-tbody');
         if (tbody) {
             tbody.innerHTML = this._renderGrid();
@@ -847,23 +1044,23 @@ const TaskPage = {
         // Settings toggle
         const settingsToggle = document.getElementById('task-settings-toggle');
         if (settingsToggle) settingsToggle.addEventListener('click', () => {
-            this._showSettingsPanel = !this._showSettingsPanel;
-            const container = document.querySelector('.task-page');
-            const existing = container?.querySelector('[style*="Configure Column"]')?.parentElement;
-            if (this._showSettingsPanel) {
-                const settingsHtml = this._renderSettingsPanel();
-                const mainGrid = container?.querySelector('.task-main-grid');
-                if (mainGrid && settingsHtml) mainGrid.insertAdjacentHTML('beforebegin', settingsHtml);
-                const closeBtn = document.getElementById('task-settings-close');
-                if (closeBtn) closeBtn.addEventListener('click', () => {
-                    this._showSettingsPanel = false;
-                    document.getElementById('task-settings-close')?.closest('div')?.remove();
-                });
-                const saveBtn = document.getElementById('task-settings-save');
-                if (saveBtn) saveBtn.addEventListener('click', () => this._saveTemplate());
-            } else if (existing) {
+            const existing = document.getElementById('task-settings-panel');
+            if (existing) {
                 existing.remove();
+                this._showSettingsPanel = false;
+                return;
             }
+            this._showSettingsPanel = true;
+            const settingsHtml = this._renderSettingsPanel();
+            const mainGrid = document.querySelector('.task-main-grid');
+            if (mainGrid && settingsHtml) mainGrid.insertAdjacentHTML('beforebegin', settingsHtml);
+            const closeBtn = document.getElementById('task-settings-close');
+            if (closeBtn) closeBtn.addEventListener('click', () => {
+                this._showSettingsPanel = false;
+                document.getElementById('task-settings-panel')?.remove();
+            });
+            const saveBtn = document.getElementById('task-settings-save');
+            if (saveBtn) saveBtn.addEventListener('click', () => this._saveTemplate());
         });
     },
 
