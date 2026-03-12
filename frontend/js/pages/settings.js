@@ -138,7 +138,7 @@ ocr_key_2"></textarea>
                                 <div style="width:48px;height:48px;border-radius:50%;background:var(--indigo-500);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;flex-shrink:0">A</div>
                                 <div>
                                     <h4 class="font-semibold">COD Game Automation Manager</h4>
-                                    <p class="text-sm text-muted">v1.0.0 • pywebview + FastAPI + SQLite</p>
+                                    <p class="text-sm text-muted" id="cfg-about-version">pywebview + FastAPI + SQLite</p>
                                 </div>
                             </div>
                             <div class="setting-row" style="padding:0;border:none">
@@ -149,7 +149,7 @@ ocr_key_2"></textarea>
                                 <button class="btn btn-outline btn-sm" id="cfg-release-notes-btn" type="button">View</button>
                             </div>
                             <div id="cfg-release-notes-panel" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--gray-200);border-radius:10px;background:var(--gray-50)">
-                                <p class="form-desc" style="margin-bottom:8px"><strong>v1.0.0</strong></p>
+                                <p class="form-desc" style="margin-bottom:8px"><strong id="cfg-release-version"></strong></p>
                                 <ul class="form-desc" style="margin:0;padding-left:18px;display:grid;gap:4px">
                                     <li>Initial dashboard and task management workflow.</li>
                                     <li>Added OCR API key management in Settings.</li>
@@ -240,6 +240,13 @@ ocr_key_2"></textarea>
 
             const debugSwitch = document.getElementById('cfg-debug-switch');
             if (debugSwitch) debugSwitch.setAttribute('aria-checked', cfg.debug_screenshots ? 'true' : 'false');
+
+            // Update version displays from config
+            const ver = cfg.app_version || '0.0.0';
+            const aboutVer = document.getElementById('cfg-about-version');
+            if (aboutVer) aboutVer.textContent = `v${ver} • pywebview + FastAPI + SQLite`;
+            const releaseVer = document.getElementById('cfg-release-version');
+            if (releaseVer) releaseVer.textContent = `v${ver}`;
         } catch (e) {
             Toast.error('Error', 'Failed to load config');
         }

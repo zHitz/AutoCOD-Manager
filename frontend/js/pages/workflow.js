@@ -247,7 +247,7 @@ const WorkflowPage = {
               <!-- Activity Log pane -->
               <div id="acv-rtab-log" class="acv-panel-body acv-log-pane">
                 <div id="wf-activity-console" class="acv-console">
-                  <div class="acv-log-line acv-log-info"><span class="acv-log-ts">[06:04:31]</span> Call of Dragons Bot v1.0.2.0 — Ready</div>
+                  <div class="acv-log-line acv-log-info"><span class="acv-log-ts">[06:04:31]</span> Call of Dragons Bot — Ready</div>
                   <div class="acv-log-line acv-log-muted"><span class="acv-log-ts">[06:04:31]</span> Activities run top to bottom. Check/Uncheck to enable/disable.</div>
                 </div>
               </div>
@@ -926,7 +926,7 @@ const WF3 = {
     },
 
     getMiscConfig(groupId) {
-        const defaultMisc = { cooldown_min: 30, limit_min: 45, choose_start_account: false, skip_cooldown: false, continue_on_error: false };
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, swap_wait_threshold_min: 5, choose_start_account: false, skip_cooldown: false, continue_on_error: false };
         if (!groupId) return defaultMisc;
         const conf = this._groupConfigs[groupId];
         if (conf && conf.misc) {
@@ -939,6 +939,7 @@ const WF3 = {
         if (!groupId) return;
         const cdEl = document.getElementById('misc-cooldown-min');
         const limitEl = document.getElementById('misc-limit-min');
+        const swapWaitEl = document.getElementById('misc-swap-wait-threshold');
         const chooseStartEl = document.getElementById('misc-choose-start-account');
         const skipCdEl = document.getElementById('misc-skip-cooldown');
         const continueOnErrEl = document.getElementById('misc-continue-on-error');
@@ -948,6 +949,7 @@ const WF3 = {
         this._groupConfigs[groupId].misc = {
             cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
             limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
+            swap_wait_threshold_min: swapWaitEl ? parseInt(swapWaitEl.value) || 0 : 5,
             choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
             skip_cooldown: skipCdEl ? skipCdEl.checked : false,
             continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false
@@ -1794,6 +1796,18 @@ const WF3 = {
                 </div>
                 <div>
                     <input type="number" class="acv-input-num" id="misc-limit-min" value="${misc.limit_min}" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
+                </div>
+            </div>
+            
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
+                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                    <span>🔄</span> Smart Wait Threshold
+                </div>
+                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
+                    If the active account's cooldown ends within this window, wait instead of swapping to a different account (avoids swap-back). Set to 0 to disable.
+                </div>
+                <div>
+                    <input type="number" class="acv-input-num" id="misc-swap-wait-threshold" value="${misc.swap_wait_threshold_min || 0}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
                 </div>
             </div>
             

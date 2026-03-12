@@ -24,7 +24,7 @@ import os
 # Resolve frontend path
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
-app = FastAPI(title="COD Game Automation Manager", version="1.0.0")
+app = FastAPI(title="COD Game Automation Manager", version=config.app_version)
 
 # Allow loading screen (html= origin is null) to reach the API
 from fastapi.middleware.cors import CORSMiddleware

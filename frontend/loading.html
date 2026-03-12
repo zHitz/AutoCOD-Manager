@@ -165,7 +165,7 @@
             </svg>
         </div>
         <div class="logo-text">COD Manager</div>
-        <div class="logo-version">v1.0.4</div>
+        <div class="logo-version" id="logo-version">v--</div>
     </div>
 
     <div class="spinner-container">
@@ -185,6 +185,14 @@
                     signal: AbortSignal.timeout(1500)
                 });
                 if (res.ok) {
+                    // Update version from config response
+                    try {
+                        const cfg = await res.json();
+                        if (cfg.app_version) {
+                            document.getElementById('logo-version').textContent = 'v' + cfg.app_version;
+                        }
+                    } catch (_) { }
+
                     // Server is ready!
                     document.getElementById('status').textContent = 'Connected — Loading app...';
                     document.getElementById('status').classList.add('connected');

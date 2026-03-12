@@ -16,6 +16,8 @@ const TaskPage = {
     _hasLoadedRealData: false,
     _wsSetup: false,
     _loadError: '',
+    _runningAccountIds: new Set(),
+    _wsWorkflowHandler: null,
 
     _selectedDate: getLocalDateInputValue(),
     _selectedGroupId: '',
@@ -354,6 +356,9 @@ const TaskPage = {
             this._page = Number(this._pagination.page || this._page);
             this._pageSize = Number(this._pagination.page_size || this._pageSize);
             this._hasLoadedRealData = true;
+
+            // Fetch running workflow accounts from all active orchestrators
+            await this._fetchRunningAccounts();
         } catch (error) {
             console.warn('[TaskPage] Failed to load data:', error);
             this._accounts = [];
@@ -583,6 +588,31 @@ const TaskPage = {
                 
                 .spinner-inline { display: inline-block; animation: spin 1s linear infinite; }
                 @keyframes spin { 100% { transform: rotate(360deg); } }
+
+                /* ── Active Workflow Highlight ── */
+                .task-row-active-workflow td { background: rgba(59,130,246,.06); }
+                .task-row-active-workflow .task-sticky-col { background: rgba(59,130,246,.06); border-left: 3px solid var(--indigo-500); }
+                .task-row-active-workflow:hover td,
+                .task-row-active-workflow.selected td { background: rgba(59,130,246,.12); }
+                .task-row-active-workflow:hover .task-sticky-col,
+                .task-row-active-workflow.selected .task-sticky-col { background: rgba(59,130,246,.12); }
+                .task-workflow-badge {
+                    display: inline-flex; align-items: center; gap: 4px;
+                    font-size: 10px; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: .4px; color: var(--indigo-500);
+                    background: rgba(99,102,241,.1); border-radius: 999px;
+                    padding: 2px 8px; margin-left: 6px;
+                    animation: task-wf-pulse 2s ease-in-out infinite;
+                }
+                .task-wf-dot {
+                    width: 6px; height: 6px; border-radius: 50%;
+                    background: var(--indigo-500);
+                    animation: task-wf-pulse 2s ease-in-out infinite;
+                }
+                @keyframes task-wf-pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.4; }
+                }
 
                 /* ── History Panel (th- prefix) ── */
                 .th-panel-header {
@@ -962,11 +992,16 @@ const TaskPage = {
         const progress = acc.progress;
         const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
         const statusLabel = acc.status === 'on-track' ? 'On track' : acc.status === 'at-risk' ? 'At risk' : 'Overdue';
+        const isRunningWorkflow = this._runningAccountIds.has(acc.id);
+        const rowClasses = `task-row ${index === this._selectedIndex ? 'selected' : ''} ${isRunningWorkflow ? 'task-row-active-workflow' : ''}`;
+        const workflowBadge = isRunningWorkflow
+            ? '<span class="task-workflow-badge"><span class="task-wf-dot"></span>Running</span>'
+            : '';
 
         return `
-            <tr id="${this._rowId(acc.id)}" class="task-row ${index === this._selectedIndex ? 'selected' : ''}" data-id="${acc.id}">
+            <tr id="${this._rowId(acc.id)}" class="${rowClasses}" data-id="${acc.id}">
                 <td class="task-sticky-col">
-                    <button class="task-account-open" data-account-open="${acc.id}" style="background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-align:left;">${acc.accountName}</button>
+                    <button class="task-account-open" data-account-open="${acc.id}" style="background:none;border:none;padding:0;color:inherit;font:inherit;font-weight:600;cursor:pointer;text-align:left;">${acc.accountName}</button>${workflowBadge}
                     <div class="task-account-meta">${acc.emulator} · ${acc.owner} · ${acc.region}</div>
                 </td>
                 <td><span id="row-status-${this._normalizeDomPart(acc.id)}" class="task-pill task-status-pill ${acc.status}">${statusLabel}</span></td>
@@ -1124,10 +1159,92 @@ const TaskPage = {
         }
     },
 
+    async _fetchRunningAccounts() {
+        try {
+            const result = await this._safeFetchJson('/api/bot/status', {});
+            const data = result.data || {};
+            const newSet = new Set();
+
+            if (data.data && data.data.account_statuses) {
+                // Single group response
+                for (const [accId, status] of Object.entries(data.data.account_statuses)) {
+                    if (status === 'running') newSet.add(Number(accId));
+                }
+            } else if (data.data && data.data.accounts) {
+                // Single group with accounts array
+                for (const acc of data.data.accounts) {
+                    if (acc.status === 'running') newSet.add(Number(acc.id));
+                }
+            }
+
+            // Also try all-groups overview and fetch details for running groups
+            if (data.groups) {
+                for (const [gid, gStatus] of Object.entries(data.groups)) {
+                    if (gStatus.is_running) {
+                        const groupResult = await this._safeFetchJson(`/api/bot/status?group_id=${gid}`, {});
+                        const gData = groupResult.data?.data;
+                        if (gData?.account_statuses) {
+                            for (const [accId, status] of Object.entries(gData.account_statuses)) {
+                                if (status === 'running') newSet.add(Number(accId));
+                            }
+                        }
+                    }
+                }
+            }
+
+            this._runningAccountIds = newSet;
+        } catch (err) {
+            console.warn('[TaskPage] Failed to fetch running accounts:', err);
+        }
+    },
+
+    _patchWorkflowHighlights() {
+        const tbody = document.getElementById('task-tbody');
+        if (!tbody) return;
+
+        const rows = tbody.querySelectorAll('.task-row');
+        rows.forEach(row => {
+            const accId = Number(row.dataset.id);
+            const isRunning = this._runningAccountIds.has(accId);
+            const hasClass = row.classList.contains('task-row-active-workflow');
+
+            if (isRunning && !hasClass) {
+                row.classList.add('task-row-active-workflow');
+                const nameBtn = row.querySelector('.task-account-open');
+                if (nameBtn && !nameBtn.parentElement.querySelector('.task-workflow-badge')) {
+                    nameBtn.insertAdjacentHTML('afterend',
+                        '<span class="task-workflow-badge"><span class="task-wf-dot"></span>Running</span>');
+                }
+            } else if (!isRunning && hasClass) {
+                row.classList.remove('task-row-active-workflow');
+                const badge = row.querySelector('.task-workflow-badge');
+                if (badge) badge.remove();
+            }
+        });
+    },
+
     async init() {
         await this._loadRealData();
         this._renderBodyOnly();
         this._refreshStats();
+
+        // Subscribe to real-time workflow status updates
+        this._wsWorkflowHandler = (data) => {
+            if (!data || !data.accounts) return;
+            const newSet = new Set();
+            for (const acc of data.accounts) {
+                if (acc.status === 'running') newSet.add(Number(acc.id));
+            }
+            const changed = newSet.size !== this._runningAccountIds.size
+                || [...newSet].some(id => !this._runningAccountIds.has(id));
+            if (changed) {
+                this._runningAccountIds = newSet;
+                this._patchWorkflowHighlights();
+            }
+        };
+        if (typeof wsClient !== 'undefined') {
+            wsClient.on('bot_queue_update', this._wsWorkflowHandler);
+        }
 
         // Date picker
         const datePicker = document.getElementById('task-date-picker');
@@ -1191,5 +1308,9 @@ const TaskPage = {
 
     destroy() {
         this._closeHistoryPanel();
+        if (this._wsWorkflowHandler && typeof wsClient !== 'undefined') {
+            wsClient.off('bot_queue_update', this._wsWorkflowHandler);
+            this._wsWorkflowHandler = null;
+        }
     }
 };

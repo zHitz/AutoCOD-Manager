@@ -33,6 +33,7 @@ class AppConfig:
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
+        self.app_version = data.get("app_version", "0.0.0")
         self.adb_path = data.get("adb_path", r"C:\LDPlayer\LDPlayer9\adb.exe")
         self.tesseract_path = data.get(
             "tesseract_path", r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -76,6 +77,7 @@ class AppConfig:
     def to_dict(self) -> dict:
         """Serialize config for API response."""
         return {
+            "app_version": self.app_version,
             "adb_path": self.adb_path,
             "tesseract_path": self.tesseract_path,
             "resolution": self.resolution,

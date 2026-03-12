@@ -1,4 +1,4 @@
-# 🚀 Release Notes - Version 1.0.9
+# 🚀 Release Notes - Version 1.1.6
 *Install Apps System, Full Scan Fix, OCR Validation, Daily Delta Tracking & Workflow V3 Theme Sync*
 
 Bản cập nhật tập trung vào **bảo vệ dữ liệu scan** (OCR Validation Gate, Smart Merge), **theo dõi biến động tài nguyên** (Scan Comparison với delta ▲/▼ hằng ngày), **hệ thống cài app** (APK Manager) và đồng bộ theme Workflow.

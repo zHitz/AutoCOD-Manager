@@ -24,7 +24,7 @@ export class BotPayloadBuilder {
         });
 
         // Parse misc setting defaults
-        const defaultMisc = { cooldown_min: 30, limit_min: 45 };
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, swap_wait_threshold_min: 5 };
         const misc = (groupConfig && groupConfig.misc) ? { ...defaultMisc, ...groupConfig.misc } : defaultMisc;
 
         const payloadObj = {
