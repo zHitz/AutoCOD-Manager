@@ -185,7 +185,11 @@ def wait_for_state(serial: str, detector: GameStateDetector, target_states: list
         if check_mode == "construction":
             current_state = detector.check_construction(serial)
         elif check_mode == "special":
-            current_state = detector.check_special_state(serial)
+            current_state = None
+            for t in target_states:
+                if detector.check_special_state(serial, target=t):
+                    current_state = t
+                    break
         elif check_mode == "activity":
             result = detector.check_activity(serial)
             current_state = result[0] if result else None
@@ -641,7 +645,7 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
 
     # 8. Check if not enough warrants or capture in progress
     print(f"[{serial}] Checking outcome of Auto Capture...")
-    outcome = wait_for_state(serial, detector, ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"], timeout_sec=10, check_mode="special")
+    outcome = wait_for_state(serial, detector, ["AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"], timeout_sec=10, check_mode="special")
     
     if outcome is None:
         print(f"[{serial}] Auto capture started & game pushed to map! Capture successful.")
@@ -924,16 +928,20 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> bool:
         time.sleep(2)
         return False
         
-    gather_state = detector.check_activity(serial, target="RSS_GATHER", threshold=0.8)
-    if not gather_state:
-        print(f"[{serial}] 'Gather' button not found. Aborting.")
+    # Check for Gather or Build button (RSS Center needs Build first if not yet built)
+    action_state = detector.check_activity(serial, target="RSS_GATHER", threshold=0.8)
+    if not action_state:
+        action_state = detector.check_activity(serial, target="RSS_BUILD", threshold=0.8)
+    if not action_state:
+        print(f"[{serial}] Neither 'Gather' nor 'Build' button found. Aborting.")
         adb_helper.tap(serial, 50, 500)
         time.sleep(2)
         return False
-        
-    g_x, g_y = gather_state[1], gather_state[2]
-    print(f"[{serial}] Tapping Gather ({g_x}, {g_y})...")
-    adb_helper.tap(serial, g_x, g_y)
+    
+    time.sleep(2)
+    a_x, a_y = action_state[1], action_state[2]
+    print(f"[{serial}] Tapping {action_state[0]} ({a_x}, {a_y})...")
+    adb_helper.tap(serial, a_x, a_y)
     time.sleep(3)
     
     # Create new legion

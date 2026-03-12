@@ -475,6 +475,9 @@ def start_full_scan(
                     "success": False,
                     "error": f"Scan already running on #{emulator_index}",
                 }
+        # Clear previous completed/failed scan state for this emulator
+        if existing and existing.get("status") in ("completed", "failed"):
+            del _running_scans[key]
 
     thread = threading.Thread(
         target=_scan_worker,

@@ -142,14 +142,20 @@ const HistoryPage = {
                     const queueHistory = await API.getQueueHistory(200);
                     items = this.normalizeHistoryPayload(queueHistory);
                 } catch (_) {
-                    // Continue to mock fallback in catch below.
+                    // Continue to mock fallback below.
                 }
             }
 
-            this.state.items = items.map((item) => this.normalizeHistoryItem(item));
-            this.state.useMockData = false;
+            if (items.length) {
+                this.state.items = items.map((item) => this.normalizeHistoryItem(item));
+                this.state.useMockData = false;
+            } else {
+                console.warn('[History] All APIs returned empty, using mock data.');
+                this.state.items = [...this.mockItems];
+                this.state.useMockData = true;
+            }
         } catch (e) {
-            console.warn('[History] API failed, using mock:', e);
+            console.warn('[History] Unexpected error, using mock:', e);
             this.state.error = null;
             this.state.items = [...this.mockItems];
             this.state.useMockData = true;
@@ -541,26 +547,18 @@ const HistoryPage = {
         const stateArea = document.getElementById('history-state-area');
         if (stateArea) {
             stateArea.onclick = (e) => {
-                const btn = e.target.closest('[data-toggle-row]');
-                if (btn) {
-                    const rowId = btn.dataset.toggleRow;
-                    this.toggleRow(rowId);
+                const actionBtn = e.target.closest('[data-action]');
+                if (actionBtn) {
+                    const action = actionBtn.dataset.action;
+                    if (action === 'retry-load') return this.load();
+                    if (action === 'run-scan') return App.router.navigate('scan-operations');
+                    if (action === 'learn-more') return window.open('https://github.com/mlem16/COD_CHECK', '_blank');
+                    return;
+                }
 
-                    const actionBtn = e.target.closest('[data-action]');
-                    if (actionBtn) {
-                        const action = actionBtn.dataset.action;
-                        if (action === 'retry-load') return this.load();
-                        if (action === 'run-scan') return App.router.navigate('scan-operations');
-                        if (action === 'learn-more') return window.open('https://github.com/mlem16/COD_CHECK', '_blank');
-                    }
-                } else {
-                    const actionBtn = e.target.closest('[data-action]');
-                    if (actionBtn) {
-                        const action = actionBtn.dataset.action;
-                        if (action === 'retry-load') return this.load();
-                        if (action === 'run-scan') return App.router.navigate('scan-operations');
-                        if (action === 'learn-more') return window.open('https://github.com/mlem16/COD_CHECK', '_blank');
-                    }
+                const toggleBtn = e.target.closest('[data-toggle-row]');
+                if (toggleBtn) {
+                    this.toggleRow(toggleBtn.dataset.toggleRow);
                 }
             };
         }

@@ -263,6 +263,7 @@ CREATE TABLE IF NOT EXISTS task_template_items (
     activity_id  TEXT NOT NULL,
     sort_order   INTEGER DEFAULT 0,
     is_critical  INTEGER DEFAULT 0,
+    required_runs INTEGER DEFAULT 1,
     FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE
 );
 """
@@ -455,6 +456,13 @@ class Database:
         # Migrate v1 data if needed
         _migrate_v1_to_v2(conn)
         _migrate_v2_to_v3(conn)
+
+        # Add required_runs column if missing (KPI support)
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(task_template_items)").fetchall()]
+        if "required_runs" not in cols:
+            conn.execute("ALTER TABLE task_template_items ADD COLUMN required_runs INTEGER DEFAULT 1")
+            conn.commit()
+            print("[DB Migration] Added required_runs column to task_template_items")
 
         conn.close()
         self._initialized = True

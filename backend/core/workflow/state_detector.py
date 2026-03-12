@@ -76,6 +76,8 @@ class GameStateDetector:
         self.special_configs = {
             "loading_server_maintenance.png": "SERVER_MAINTENANCE",
             "auto_capture_pet.png": "AUTO_CAPTURE_PET",
+            "pets/Auto-capture_in_progress.png": "AUTO_CAPTURE_IN_PROGRESS",
+            "pets/Auto-capture_start_icon.png": "AUTO_CAPTURE_START",
             "accounts/settings.png": "SETTINGS",
             "accounts/character_management.png": "CHARACTER_MANAGEMENT",
             "special/mail_menu.png": "MAIL_MENU",
@@ -98,6 +100,7 @@ class GameStateDetector:
             "activities/legion_gather.png": "RSS_GATHER",
             "activities/train_icon.png": "TRAINING_ICON",
             "activities/btn_train.png": "BTN_TRAIN",
+            "activities/build.png": "RSS_BUILD",
         }
 
         # Alliance templates
@@ -143,6 +146,9 @@ class GameStateDetector:
             # "lobby_profile_menu.png": (0, 0, 250, 120),
             # "lobby_profile_detail.png": (0, 0, 250, 120),
             # "lobby_profile.png": (0, 0, 250, 120),
+            # Pet capture — bottom button area only
+            "pets/Auto-capture_in_progress.png": (305, 411, 761, 509),
+            "pets/Auto-capture_start_icon.png": (305, 411, 761, 509),
         }
 
         self._load_templates()

@@ -313,14 +313,16 @@ const TaskPage = {
                     key: t.activity_id,
                     label: regMap.get(t.activity_id) || t.activity_id,
                     shortLabel: regMap.get(t.activity_id) || t.activity_id,
-                    critical: t.is_critical === 1
+                    critical: t.is_critical === 1,
+                    requiredRuns: t.required_runs || 1
                 }));
             } else {
                 this._checklistTemplates = this._activityRegistry.map(act => ({
                     key: act.id,
                     label: act.name || act.id,
                     shortLabel: act.name || act.id,
-                    critical: !!act.is_critical
+                    critical: !!act.is_critical,
+                    requiredRuns: 1
                 }));
             }
 
@@ -366,24 +368,22 @@ const TaskPage = {
     _mapFromChecklist(account, checklistData, index) {
         const gameId = account?.game_id || '';
         const activities = checklistData?.activities || {};
-        const backendStats = checklistData?.stats || null;
 
-        let doneCount = Number(backendStats?.done ?? 0);
-        let totalCount = Number(backendStats?.total ?? this._checklistTemplates.length);
-        let failedCount = Number(backendStats?.failed ?? 0);
+        // Always derive totals from the checklist templates (the actual tracked activities).
+        // Backend stats.total only counts activities with execution logs, which is 0
+        // when no runs have occurred yet — causing the "0/0" dashboard bug.
+        const totalCount = this._checklistTemplates.length;
+        let doneCount = 0;
+        let failedCount = 0;
 
-        if (!backendStats) {
-            doneCount = 0;
-            totalCount = this._checklistTemplates.length;
-            failedCount = 0;
-
-            this._checklistTemplates.forEach(t => {
-                const act = activities[t.key];
-                if (!act) return;
-                if (act.status === 'SUCCESS') doneCount++;
-                if (act.status === 'FAILED') failedCount++;
-            });
-        }
+        this._checklistTemplates.forEach(t => {
+            const act = activities[t.key];
+            if (!act) return;
+            const runsToday = act.runs_today || (act.status === 'SUCCESS' ? 1 : 0);
+            const needed = t.requiredRuns || 1;
+            if (runsToday >= needed) doneCount++;
+            if (act.status === 'FAILED') failedCount++;
+        });
 
         let status = 'on-track';
         if (totalCount > 0) {
@@ -472,31 +472,69 @@ const TaskPage = {
         return `<span style="opacity:0.3;font-size:14px;">☐</span>`;
     },
 
-    _renderSettingsPanel() {
-        if (!this._showSettingsPanel) return '';
+    _openSettingsModal() {
+        if (document.getElementById('ts-modal-overlay')) return;
 
-        const templateSet = new Set(this._checklistTemplates.map(t => t.key));
-        const checkboxes = this._activityRegistry.map(act => `
-            <label class="setting-row" style="margin:0;padding:6px;border:1px solid var(--border);border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;width:100%;">
-                <input type="checkbox" class="task-setting-checkbox" value="${act.id}" ${templateSet.has(act.id) ? 'checked' : ''}/>
-                <span class="form-label" style="margin:0;font-size:11px;">${act.name || act.id}</span>
-            </label>
-        `).join('');
+        const templateMap = new Map(this._checklistTemplates.map(t => [t.key, t]));
 
-        return `
-            <div id="task-settings-panel" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;">
-                <div style="font-weight:600;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
-                    <span>⚙️ Configure Column Templates</span>
-                    <button class="btn btn-sm btn-ghost" id="task-settings-close">✕</button>
+        const activityCards = this._activityRegistry.map((act, i) => {
+            const tmpl = templateMap.get(act.id);
+            const checked = !!tmpl;
+            const runs = tmpl ? (tmpl.requiredRuns || 1) : 1;
+            return `
+                <div class="ts-activity-card">
+                    <label class="ts-toggle-row">
+                        <input type="checkbox" class="ts-act-check" value="${act.id}" ${checked ? 'checked' : ''} />
+                        <div class="ts-act-info">
+                            <div class="ts-act-name">${this._escapeHtml(act.name || act.id)}</div>
+                            <div class="ts-act-id">${this._escapeHtml(act.id)}</div>
+                        </div>
+                    </label>
+                    <div class="ts-runs-control">
+                        <label class="ts-runs-label">Required runs</label>
+                        <input type="number" class="ts-runs-input" data-act-id="${act.id}" value="${runs}" min="1" max="99" />
+                    </div>
+                </div>`;
+        }).join('');
+
+        const html = `
+            <div id="ts-modal-overlay" class="ts-overlay">
+                <div class="ts-modal">
+                    <div class="ts-header">
+                        <div>
+                            <div class="ts-title">Task Checklist Settings</div>
+                            <div class="ts-subtitle">Configure which activities to track and their KPI targets.</div>
+                        </div>
+                        <button class="th-close-btn" id="ts-modal-close" title="Close">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+                    <div class="ts-note">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        Per-group templates coming soon. Current settings apply to all accounts.
+                    </div>
+                    <div class="ts-body">
+                        ${activityCards}
+                    </div>
+                    <div class="ts-footer">
+                        <button class="btn btn-sm btn-ghost" id="ts-modal-cancel">Cancel</button>
+                        <button class="btn btn-sm btn-default" id="ts-modal-save">Save Settings</button>
+                    </div>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:8px;">
-                    ${checkboxes}
-                </div>
-                <div style="margin-top:16px;display:flex;justify-content:flex-end;">
-                    <button class="btn btn-sm btn-default" id="task-settings-save">Save Template</button>
-                </div>
-            </div>
-        `;
+            </div>`;
+
+        document.body.insertAdjacentHTML('beforeend', html);
+
+        document.getElementById('ts-modal-close')?.addEventListener('click', () => this._closeSettingsModal());
+        document.getElementById('ts-modal-cancel')?.addEventListener('click', () => this._closeSettingsModal());
+        document.getElementById('ts-modal-save')?.addEventListener('click', () => this._saveTemplate());
+        document.getElementById('ts-modal-overlay')?.addEventListener('click', (e) => {
+            if (e.target.id === 'ts-modal-overlay') this._closeSettingsModal();
+        });
+    },
+
+    _closeSettingsModal() {
+        document.getElementById('ts-modal-overlay')?.remove();
     },
 
     render() {
@@ -726,6 +764,97 @@ const TaskPage = {
                     overflow: auto;
                     line-height: 1.5;
                 }
+
+                /* -- Settings Modal (ts- prefix) -- */
+                .ts-overlay {
+                    position: fixed; inset: 0;
+                    background: rgba(15,23,42,.45);
+                    backdrop-filter: blur(4px);
+                    z-index: 60;
+                    display: flex; align-items: center; justify-content: center;
+                    animation: ts-fadeIn var(--duration-fast) ease-out;
+                }
+                @keyframes ts-fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                .ts-modal {
+                    background: var(--card);
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-lg);
+                    box-shadow: var(--shadow-xl);
+                    width: min(640px, 92vw);
+                    max-height: 85vh;
+                    display: flex; flex-direction: column;
+                    animation: ts-slideUp var(--duration-normal) ease-out;
+                }
+                @keyframes ts-slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+                .ts-header {
+                    padding: 20px 24px 16px;
+                    border-bottom: 1px solid var(--border);
+                    display: flex; justify-content: space-between; gap: 16px; align-items: flex-start;
+                    flex-shrink: 0;
+                }
+                .ts-title { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+                .ts-subtitle { font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+                .ts-note {
+                    margin: 16px 24px 0;
+                    display: flex; align-items: center; gap: 8px;
+                    padding: 10px 14px;
+                    background: rgba(59,130,246,.06);
+                    border: 1px solid rgba(59,130,246,.15);
+                    border-radius: var(--radius-md);
+                    font-size: 12px; color: var(--info);
+                    flex-shrink: 0;
+                }
+                .ts-note svg { flex-shrink: 0; }
+                .ts-body {
+                    padding: 16px 24px;
+                    overflow-y: auto;
+                    display: flex; flex-direction: column; gap: 8px;
+                    flex: 1;
+                }
+                .ts-activity-card {
+                    border: 1px solid var(--border);
+                    border-radius: var(--radius-md);
+                    padding: 10px 14px;
+                    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+                    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+                }
+                .ts-activity-card:hover { border-color: var(--ring); box-shadow: var(--shadow-sm); }
+                .ts-toggle-row {
+                    display: flex; align-items: center; gap: 10px;
+                    cursor: pointer; min-width: 0; flex: 1;
+                }
+                .ts-toggle-row input[type="checkbox"] {
+                    width: 16px; height: 16px;
+                    accent-color: var(--indigo-500);
+                    flex-shrink: 0; cursor: pointer;
+                }
+                .ts-act-info { min-width: 0; }
+                .ts-act-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .ts-act-id { font-size: 10px; color: var(--muted-foreground); font-family: var(--font-mono); margin-top: 1px; }
+                .ts-runs-control {
+                    display: flex; align-items: center; gap: 8px;
+                    flex-shrink: 0;
+                }
+                .ts-runs-label { font-size: 10px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; font-weight: 600; }
+                .ts-runs-input {
+                    width: 52px; height: 30px;
+                    border: 1px solid var(--input);
+                    border-radius: var(--radius-sm);
+                    padding: 0 8px;
+                    font-family: var(--font-mono);
+                    font-size: 13px; font-weight: 700;
+                    text-align: center;
+                    background: var(--background);
+                    color: var(--foreground);
+                    transition: border-color var(--duration-fast);
+                }
+                .ts-runs-input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+                .ts-footer {
+                    padding: 14px 24px;
+                    border-top: 1px solid var(--border);
+                    display: flex; justify-content: flex-end; gap: 8px;
+                    flex-shrink: 0;
+                }
             </style>
 
             <div class="task-page">
@@ -777,7 +906,7 @@ const TaskPage = {
                     </div>
                 </div>
 
-                ${this._renderSettingsPanel()}
+                <!-- Settings is now a modal popup -->
 
                 <div class="task-main-grid">
                     <div class="task-table-wrap">
@@ -972,14 +1101,23 @@ const TaskPage = {
     },
 
     async _saveTemplate() {
-        const checked = Array.from(document.querySelectorAll('.task-setting-checkbox:checked')).map(cb => cb.value);
+        const checks = Array.from(document.querySelectorAll('.ts-act-check:checked')).map(cb => cb.value);
+        const runsInputs = document.querySelectorAll('.ts-runs-input');
+        const runsMap = new Map();
+        runsInputs.forEach(inp => runsMap.set(inp.dataset.actId, Math.max(1, parseInt(inp.value) || 1)));
+        const items = checks.map((id, i) => ({
+            activity_id: id,
+            sort_order: i,
+            is_critical: 0,
+            required_runs: runsMap.get(id) || 1
+        }));
         try {
             await fetch('/api/task/checklist/templates', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: 'Default Strategy', scope: 'org', scope_id: 0, items: checked.map((id, i) => ({ activity_id: id, sort_order: i, is_critical: 0 })) }),
+                body: JSON.stringify({ name: 'Default Strategy', scope: 'org', scope_id: 0, items }),
             });
-            this._showSettingsPanel = false;
+            this._closeSettingsModal();
             await this._reloadAndRender();
         } catch (err) {
             console.error('[TaskPage] Save template error:', err);
@@ -989,6 +1127,7 @@ const TaskPage = {
     async init() {
         await this._loadRealData();
         this._renderBodyOnly();
+        this._refreshStats();
 
         // Date picker
         const datePicker = document.getElementById('task-date-picker');
@@ -1041,26 +1180,12 @@ const TaskPage = {
             if (this._page < (this._pagination.total_pages || 1)) { this._page++; this._reloadAndRender(); }
         });
 
-        // Settings toggle
+        // Settings toggle -- open modal
         const settingsToggle = document.getElementById('task-settings-toggle');
         if (settingsToggle) settingsToggle.addEventListener('click', () => {
-            const existing = document.getElementById('task-settings-panel');
-            if (existing) {
-                existing.remove();
-                this._showSettingsPanel = false;
-                return;
-            }
-            this._showSettingsPanel = true;
-            const settingsHtml = this._renderSettingsPanel();
-            const mainGrid = document.querySelector('.task-main-grid');
-            if (mainGrid && settingsHtml) mainGrid.insertAdjacentHTML('beforebegin', settingsHtml);
-            const closeBtn = document.getElementById('task-settings-close');
-            if (closeBtn) closeBtn.addEventListener('click', () => {
-                this._showSettingsPanel = false;
-                document.getElementById('task-settings-panel')?.remove();
-            });
-            const saveBtn = document.getElementById('task-settings-save');
-            if (saveBtn) saveBtn.addEventListener('click', () => this._saveTemplate());
+            const existing = document.getElementById('ts-modal-overlay');
+            if (existing) { this._closeSettingsModal(); return; }
+            this._openSettingsModal();
         });
     },
 

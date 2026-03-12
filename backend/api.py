@@ -2030,9 +2030,10 @@ async def save_checklist_template(body: dict):
                     continue
                 sort_order = item.get("sort_order", i)
                 is_critical = item.get("is_critical", 0)
+                required_runs = item.get("required_runs", 1)
                 await db.execute(
-                    "INSERT INTO task_template_items (template_id, activity_id, sort_order, is_critical) VALUES (?, ?, ?, ?)",
-                    (template_id, activity_id, sort_order, is_critical),
+                    "INSERT INTO task_template_items (template_id, activity_id, sort_order, is_critical, required_runs) VALUES (?, ?, ?, ?, ?)",
+                    (template_id, activity_id, sort_order, is_critical, required_runs),
                 )
 
             await db.commit()
