@@ -1,0 +1,2416 @@
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workflow Builder</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #090b0e;
+      --surface: #0f1218;
+      --surface-2: #161b24;
+      --surface-3: #1d2535;
+      --border: #1f2736;
+      --border-2: #2a3347;
+      --text: #dce6f5;
+      --muted: #4a5878;
+      --muted-2: #2f3d55;
+      --font: 'IBM Plex Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --r: 8px;
+      --r-sm: 5px;
+      /* node type colors */
+      --c-trigger: #f59e0b;
+      --c-target: #6366f1;
+      --c-script: #22c55e;
+      --c-scan: #38bdf8;
+      --c-action: #fb923c;
+      --c-flow: #a78bfa;
+      --c-running: #4f9eff;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── TOP BAR ─────────────────────────────────────── */
+    #topbar {
+      height: 48px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-right: 20px;
+      border-right: 1px solid var(--border);
+      margin-right: 16px;
+    }
+
+    .topbar-brand h1 {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+      color: var(--text);
+    }
+
+    .topbar-brand .wf-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      background: rgba(99, 102, 241, .15);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, .3);
+      border-radius: 99px;
+    }
+
+    #wf-name-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      width: 200px;
+      border-bottom: 1px solid transparent;
+      transition: border-color .15s;
+      padding: 2px 4px;
+    }
+
+    #wf-name-input:focus {
+      border-bottom-color: var(--c-running);
+    }
+
+    .topbar-sep {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+      margin: 0 12px;
+    }
+
+    .tb-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 12px;
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--r-sm);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .tb-btn:hover {
+      color: var(--text);
+      border-color: var(--border-2);
+      background: var(--surface-3);
+    }
+
+    .tb-btn.run-btn {
+      background: rgba(34, 197, 94, .12);
+      color: #22c55e;
+      border-color: rgba(34, 197, 94, .25);
+    }
+
+    .tb-btn.run-btn:hover {
+      background: rgba(34, 197, 94, .2);
+    }
+
+    .tb-btn.run-btn.running {
+      background: rgba(79, 158, 255, .12);
+      color: var(--c-running);
+      border-color: rgba(79, 158, 255, .3);
+      animation: runPulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes runPulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(79, 158, 255, 0);
+      }
+
+      50% {
+        box-shadow: 0 0 0 6px rgba(79, 158, 255, .12);
+      }
+    }
+
+    .tb-btn.sched-btn {
+      background: rgba(245, 158, 11, .1);
+      color: var(--c-trigger);
+      border-color: rgba(245, 158, 11, .25);
+    }
+
+    .tb-btn.sched-btn:hover {
+      background: rgba(245, 158, 11, .18);
+    }
+
+    .tb-btn.active-sched {
+      position: relative;
+    }
+
+    .tb-btn.active-sched::after {
+      content: '';
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--c-trigger);
+      animation: dot-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes dot-pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1)
+      }
+
+      50% {
+        opacity: .5;
+        transform: scale(.7)
+      }
+    }
+
+    .topbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #wf-status {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 99px;
+      background: rgba(74, 88, 120, .2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      letter-spacing: .04em;
+    }
+
+    #wf-status.status-running {
+      background: rgba(79, 158, 255, .12);
+      color: var(--c-running);
+      border-color: rgba(79, 158, 255, .3);
+    }
+
+    #wf-status.status-success {
+      background: rgba(34, 197, 94, .12);
+      color: #22c55e;
+      border-color: rgba(34, 197, 94, .25);
+    }
+
+    #wf-status.status-error {
+      background: rgba(239, 68, 68, .12);
+      color: #ef4444;
+      border-color: rgba(239, 68, 68, .25);
+    }
+
+    /* ── MAIN LAYOUT ──────────────────────────────────── */
+    #main {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* ── LEFT SIDEBAR — PALETTE ──────────────────────── */
+    #palette {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #palette-header {
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #palette-header h3 {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    #palette-search {
+      margin-top: 8px;
+      position: relative;
+    }
+
+    #palette-search input {
+      width: 100%;
+      height: 28px;
+      padding: 0 8px 0 28px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    #palette-search input:focus {
+      border-color: var(--c-running);
+    }
+
+    #palette-search input::placeholder {
+      color: var(--muted);
+    }
+
+    #palette-search svg {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      pointer-events: none;
+    }
+
+    #palette-list {
+      overflow-y: auto;
+      flex: 1;
+      padding: 8px 0;
+    }
+
+    #palette-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #palette-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 99px;
+    }
+
+    .palette-group-label {
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted-2);
+      padding: 10px 14px 4px;
+    }
+
+    .palette-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      margin: 0 6px;
+      border-radius: 6px;
+      cursor: grab;
+      user-select: none;
+      transition: background .12s;
+      position: relative;
+    }
+
+    .palette-item:hover {
+      background: var(--surface-2);
+    }
+
+    .palette-item:active {
+      cursor: grabbing;
+    }
+
+    .palette-item .pi-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .palette-item .pi-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.2;
+    }
+
+    .palette-item .pi-sub {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.2;
+    }
+
+    /* dragging ghost */
+    #drag-ghost {
+      position: fixed;
+      pointer-events: none;
+      z-index: 10000;
+      opacity: .85;
+      transform: scale(.9);
+      transition: transform .1s;
+      display: none;
+    }
+
+    /* ── CANVAS AREA ──────────────────────────────────── */
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg);
+      cursor: default;
+      /* dot grid */
+      background-image: radial-gradient(circle, rgba(255, 255, 255, .07) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    #canvas-wrap.panning {
+      cursor: grabbing;
+    }
+
+    #canvas-wrap.connecting {
+      cursor: crosshair;
+    }
+
+    /* zoom controls */
+    #zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .zoom-btn {
+      width: 28px;
+      height: 28px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 300;
+      transition: all .15s;
+    }
+
+    .zoom-btn:hover {
+      color: var(--text);
+      border-color: var(--border-2);
+    }
+
+    #zoom-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* minimap */
+    #minimap {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      z-index: 50;
+      width: 160px;
+      height: 100px;
+      background: rgba(15, 18, 24, .9);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    #minimap-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* empty hint */
+    #canvas-hint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      color: var(--muted);
+      transition: opacity .3s;
+    }
+
+    #canvas-hint svg {
+      opacity: .15;
+      margin-bottom: 12px;
+    }
+
+    #canvas-hint p {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    #canvas-hint span {
+      font-size: 11px;
+      opacity: .6;
+    }
+
+    /* canvas transform container */
+    #canvas-tf {
+      position: absolute;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    /* ── SVG CONNECTIONS ──────────────────────────────── */
+    #svg-layer {
+      position: absolute;
+      width: 8000px;
+      height: 8000px;
+      top: -2000px;
+      left: -2000px;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    .conn-path {
+      fill: none;
+      stroke: var(--border-2);
+      stroke-width: 2;
+      pointer-events: stroke;
+      cursor: pointer;
+      transition: stroke .2s;
+    }
+
+    .conn-path:hover {
+      stroke: var(--muted);
+    }
+
+    .conn-path.selected {
+      stroke: var(--c-running);
+    }
+
+    .conn-path.animated {
+      stroke: var(--c-running);
+      stroke-dasharray: 6 4;
+      animation: flowAnim .8s linear infinite;
+    }
+
+    @keyframes flowAnim {
+      to {
+        stroke-dashoffset: -20;
+      }
+    }
+
+    .conn-path.success {
+      stroke: #22c55e;
+      stroke-dasharray: none;
+    }
+
+    .conn-path.error {
+      stroke: #ef4444;
+    }
+
+    .conn-ghost {
+      fill: none;
+      stroke: var(--c-running);
+      stroke-width: 2;
+      stroke-dasharray: 6 4;
+      pointer-events: none;
+      opacity: .6;
+    }
+
+    /* drop zone highlight while connecting */
+    .port-input.drop-target {
+      stroke: var(--c-running) !important;
+    }
+
+    /* ── NODES ────────────────────────────────────────── */
+    .node {
+      position: absolute;
+      min-width: 180px;
+      background: var(--surface-2);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      cursor: move;
+      user-select: none;
+      transition: border-color .15s, box-shadow .15s;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, .4);
+    }
+
+    .node:hover {
+      border-color: var(--border-2);
+      box-shadow: 0 6px 28px rgba(0, 0, 0, .5);
+    }
+
+    .node.selected {
+      border-color: var(--c-running);
+      box-shadow: 0 0 0 2px rgba(79, 158, 255, .2), 0 6px 28px rgba(0, 0, 0, .5);
+    }
+
+    .node.running {
+      border-color: var(--c-running);
+      animation: nodeRun 1s ease-in-out infinite;
+    }
+
+    @keyframes nodeRun {
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(79, 158, 255, 0)
+      }
+
+      50% {
+        box-shadow: 0 0 0 8px rgba(79, 158, 255, .15)
+      }
+    }
+
+    .node.success {
+      border-color: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, .2);
+    }
+
+    .node.error {
+      border-color: #ef4444;
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, .2);
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid var(--border);
+      border-radius: 9px 9px 0 0;
+      position: relative;
+    }
+
+    .node-type-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      border-radius: 9px 9px 0 0;
+    }
+
+    .node-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .node-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+      min-width: 0;
+    }
+
+    .node-subtitle {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .node-del {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity .15s, background .15s, color .15s;
+    }
+
+    .node:hover .node-del {
+      opacity: 1;
+    }
+
+    .node-del:hover {
+      background: rgba(239, 68, 68, .15);
+      color: #ef4444;
+    }
+
+    .node-body {
+      padding: 8px 12px 10px;
+    }
+
+    .node-prop {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10.5px;
+      margin-bottom: 4px;
+      gap: 6px;
+    }
+
+    .node-prop-label {
+      color: var(--muted);
+      font-family: var(--font-mono);
+    }
+
+    .node-prop-value {
+      color: var(--text);
+      font-weight: 600;
+      font-size: 10.5px;
+      background: rgba(255, 255, 255, .05);
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 110px;
+    }
+
+    .node-prop-value.highlight {
+      background: rgba(79, 158, 255, .1);
+      color: var(--c-running);
+      border-color: rgba(79, 158, 255, .2);
+    }
+
+    /* node status bar */
+    .node-status {
+      padding: 5px 12px 8px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      letter-spacing: .04em;
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .node-status.visible {
+      display: flex;
+    }
+
+    .node-status.s-running {
+      color: var(--c-running);
+    }
+
+    .node-status.s-success {
+      color: #22c55e;
+    }
+
+    .node-status.s-error {
+      color: #ef4444;
+    }
+
+    .status-spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    /* ── PORTS ────────────────────────────────────────── */
+    .port {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      cursor: crosshair;
+      border: 2px solid var(--border-2);
+      background: var(--surface);
+      transition: transform .12s, border-color .12s, background .12s;
+      z-index: 5;
+    }
+
+    .port:hover,
+    .port.active {
+      transform: scale(1.4);
+      border-color: var(--c-running);
+      background: var(--c-running);
+    }
+
+    .port-out {
+      right: -7px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .port-out:hover,
+    .port-out.active {
+      transform: translateY(-50%) scale(1.4);
+    }
+
+    .port-in {
+      left: -7px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .port-in:hover,
+    .port-in.active {
+      transform: translateY(-50%) scale(1.4);
+    }
+
+    .port-out-true {
+      right: -7px;
+      top: 30%;
+    }
+
+    .port-out-false {
+      right: -7px;
+      top: 70%;
+    }
+
+    .port-label {
+      position: absolute;
+      font-size: 9px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--muted);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .port-label-out {
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .port-label-true {
+      right: 14px;
+      top: 30%;
+      transform: translateY(-50%);
+    }
+
+    .port-label-false {
+      right: 14px;
+      top: 70%;
+      transform: translateY(-50%);
+    }
+
+    /* ── RIGHT CONFIG PANEL ───────────────────────────── */
+    #config-panel {
+      width: 260px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transform: translateX(100%);
+      transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    #config-panel.open {
+      transform: translateX(0);
+    }
+
+    #config-panel-header {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #config-panel-header h3 {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+    }
+
+    #config-close {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: none;
+      cursor: pointer;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all .15s;
+    }
+
+    #config-close:hover {
+      color: var(--text);
+      border-color: var(--border-2);
+    }
+
+    #config-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+    }
+
+    #config-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    #config-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 99px;
+    }
+
+    .cf-section {
+      margin-bottom: 18px;
+    }
+
+    .cf-label {
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .cf-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      font-weight: 500;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    .cf-input:focus {
+      border-color: var(--c-running);
+    }
+
+    .cf-select {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234a5878' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+    }
+
+    .cf-textarea {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      outline: none;
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    /* ── MODAL ────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9000;
+      backdrop-filter: blur(4px);
+      animation: fadeIn .15s ease;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0
+      }
+
+      to {
+        opacity: 1
+      }
+    }
+
+    .modal {
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: 12px;
+      padding: 0;
+      width: 420px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, .6);
+      animation: slideUp .2s ease;
+    }
+
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .modal-header {
+      padding: 18px 20px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-header h3 {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .modal-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 2px;
+    }
+
+    .modal-close:hover {
+      color: var(--text);
+    }
+
+    /* ── TOAST ────────────────────────────────────────── */
+    #toast-zone {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      pointer-events: none;
+    }
+
+    .toast {
+      padding: 9px 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .5);
+      animation: toastIn .25s ease both;
+    }
+
+    .toast.s {
+      border-color: rgba(34, 197, 94, .3);
+    }
+
+    .toast.i {
+      border-color: rgba(79, 158, 255, .3);
+    }
+
+    .toast.e {
+      border-color: rgba(239, 68, 68, .3);
+    }
+
+    .t-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .toast.s .t-dot {
+      background: #22c55e;
+    }
+
+    .toast.i .t-dot {
+      background: var(--c-running);
+    }
+
+    .toast.e .t-dot {
+      background: #ef4444;
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateX(12px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0)
+      }
+    }
+
+    .toast-out {
+      animation: toastOut .25s ease forwards;
+    }
+
+    @keyframes toastOut {
+      to {
+        opacity: 0;
+        transform: translateX(12px)
+      }
+    }
+
+    /* ── RUN LOG ──────────────────────────────────────── */
+    #run-log {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 480px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: 10px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, .6);
+      z-index: 200;
+      display: none;
+      overflow: hidden;
+    }
+
+    #run-log.visible {
+      display: block;
+      animation: slideUp .2s ease;
+    }
+
+    #run-log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #run-log-title {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    #run-log-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    #run-log-close:hover {
+      color: var(--text);
+    }
+
+    #run-log-body {
+      padding: 10px 14px;
+      max-height: 160px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    #run-log-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    #run-log-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+    }
+
+    .log-line {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 2px 0;
+    }
+
+    .log-line .log-time {
+      color: var(--muted-2);
+      flex-shrink: 0;
+    }
+
+    .log-line.log-run {
+      color: var(--c-running);
+    }
+
+    .log-line.log-ok {
+      color: #22c55e;
+    }
+
+    .log-line.log-err {
+      color: #ef4444;
+    }
+
+    .log-line.log-info {
+      color: var(--c-trigger);
+    }
+
+    /* misc */
+    button {
+      font-family: var(--font);
+    }
+
+    select option {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="topbar-brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2">
+        <circle cx="12" cy="12" r="3" />
+        <circle cx="4" cy="6" r="2" />
+        <circle cx="20" cy="6" r="2" />
+        <circle cx="4" cy="18" r="2" />
+        <circle cx="20" cy="18" r="2" />
+        <line x1="6" y1="7" x2="10" y2="11" />
+        <line x1="18" y1="7" x2="14" y2="11" />
+        <line x1="6" y1="17" x2="10" y2="13" />
+        <line x1="18" y1="17" x2="14" y2="13" />
+      </svg>
+      <h1>Workflow</h1>
+      <span class="wf-badge">BETA</span>
+    </div>
+    <input id="wf-name-input" type="text" value="Farm + Scan Automation" spellcheck="false" />
+    <div class="topbar-sep"></div>
+    <button class="tb-btn" onclick="WF.clearCanvas()" title="New workflow">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+      New
+    </button>
+    <button class="tb-btn sched-btn" id="btn-schedule" onclick="WF.openScheduleModal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      Schedule
+    </button>
+    <div class="topbar-sep"></div>
+    <div class="topbar-right">
+      <span id="wf-status">IDLE</span>
+      <button class="tb-btn run-btn" id="btn-run" onclick="WF.runWorkflow()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3" />
+        </svg>
+        Run Workflow
+      </button>
+      <button class="tb-btn" onclick="WF.saveWorkflow()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+          <polyline points="17 21 17 13 7 13 7 21" />
+          <polyline points="7 3 7 8 15 8" />
+        </svg>
+        Save
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+
+    <!-- PALETTE -->
+    <div id="palette">
+      <div id="palette-header">
+        <h3>Node Palette</h3>
+        <div id="palette-search">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input type="text" placeholder="Search nodes…" oninput="WF.filterPalette(this.value)" />
+        </div>
+      </div>
+      <div id="palette-list"></div>
+    </div>
+
+    <!-- CANVAS -->
+    <div id="canvas-wrap">
+      <div id="canvas-tf">
+        <svg id="svg-layer">
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 Z" fill="var(--border-2)" />
+            </marker>
+            <marker id="arrowhead-run" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 Z" fill="var(--c-running)" />
+            </marker>
+          </defs>
+          <g id="connections-group"></g>
+          <path id="conn-ghost" class="conn-ghost" d="" style="display:none;" />
+        </svg>
+        <div id="nodes-layer"></div>
+      </div>
+
+      <!-- Canvas hint -->
+      <div id="canvas-hint">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="2" y="8" width="6" height="4" rx="1" />
+          <rect x="16" y="8" width="6" height="4" rx="1" />
+          <rect x="9" y="3" width="6" height="4" rx="1" />
+          <rect x="9" y="17" width="6" height="4" rx="1" />
+          <line x1="8" y1="10" x2="9" y2="10" />
+          <line x1="15" y1="10" x2="16" y2="10" />
+          <line x1="12" y1="7" x2="12" y2="8" />
+          <line x1="12" y1="17" x2="12" y2="16" />
+        </svg>
+        <p>Drag nodes from the left panel</p>
+        <span>Click output → input ports to connect</span>
+      </div>
+
+      <!-- Zoom -->
+      <div id="zoom-controls">
+        <button class="zoom-btn" onclick="WF.zoom(1.2)">+</button>
+        <div id="zoom-label">100%</div>
+        <button class="zoom-btn" onclick="WF.zoom(1/1.2)">−</button>
+        <button class="zoom-btn" onclick="WF.resetView()" title="Reset view"
+          style="font-size:10px; font-family:var(--font-mono);">FIT</button>
+      </div>
+
+      <!-- Run log -->
+      <div id="run-log">
+        <div id="run-log-header">
+          <span id="run-log-title">Execution Log</span>
+          <button id="run-log-close" onclick="document.getElementById('run-log').classList.remove('visible')">✕</button>
+        </div>
+        <div id="run-log-body"></div>
+      </div>
+    </div>
+
+    <!-- CONFIG PANEL -->
+    <div id="config-panel">
+      <div id="config-panel-header">
+        <h3>Node Config</h3>
+        <button id="config-close" onclick="WF.closeConfig()">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8">
+            <line x1="1" y1="1" x2="9" y2="9" />
+            <line x1="9" y1="1" x2="1" y2="9" />
+          </svg>
+        </button>
+      </div>
+      <div id="config-body"></div>
+    </div>
+  </div>
+
+  <div id="toast-zone"></div>
+
+  <script>
+    // ═══════════════════════════════════════════════════
+    //  PALETTE DATA
+    // ═══════════════════════════════════════════════════
+    const PALETTE_NODES = [
+      {
+        group: 'Triggers',
+        items: [
+          { type: 'trigger-manual', label: 'Manual Trigger', sub: 'Click to start', icon: '▶', color: 'var(--c-trigger)', bg: 'rgba(245,158,11,.15)' },
+          { type: 'trigger-schedule', label: 'Schedule', sub: 'Cron / interval', icon: '⏰', color: 'var(--c-trigger)', bg: 'rgba(245,158,11,.15)' },
+          { type: 'trigger-online', label: 'On EMU Online', sub: 'Device event', icon: '📡', color: 'var(--c-trigger)', bg: 'rgba(245,158,11,.15)' },
+        ]
+      },
+      {
+        group: 'Emulator Control',
+        items: [
+          { type: 'emu-target', label: 'Select Emulators', sub: 'Choose targets', icon: '🎯', color: 'var(--c-target)', bg: 'rgba(99,102,241,.15)' },
+          { type: 'emu-start', label: 'Start Emulator', sub: 'Launch instance', icon: '⏵', color: 'var(--c-action)', bg: 'rgba(251,146,60,.15)' },
+          { type: 'emu-stop', label: 'Stop Emulator', sub: 'Kill instance', icon: '⏹', color: 'var(--c-action)', bg: 'rgba(251,146,60,.15)' },
+          { type: 'emu-restart', label: 'Restart Emulator', sub: 'Stop then start', icon: '🔄', color: 'var(--c-action)', bg: 'rgba(251,146,60,.15)' },
+        ]
+      },
+      {
+        group: 'Scripts',
+        items: [
+          { type: 'script-run', label: 'Run Macro', sub: 'Execute .record file', icon: '⚡', color: 'var(--c-script)', bg: 'rgba(34,197,94,.12)' },
+          { type: 'script-loop', label: 'Loop Script', sub: 'Repeat N times', icon: '🔁', color: 'var(--c-script)', bg: 'rgba(34,197,94,.12)' },
+        ]
+      },
+      {
+        group: 'Scan Operations',
+        items: [
+          { type: 'scan-profile', label: 'Profile Scan', sub: 'Name + power level', icon: '👤', color: 'var(--c-scan)', bg: 'rgba(56,189,248,.12)' },
+          { type: 'scan-resources', label: 'Resource Scan', sub: 'Gold, wood, ore, mana', icon: '📦', color: 'var(--c-scan)', bg: 'rgba(56,189,248,.12)' },
+          { type: 'scan-hall', label: 'Hall Level', sub: 'Town hall building', icon: '🏛', color: 'var(--c-scan)', bg: 'rgba(56,189,248,.12)' },
+          { type: 'scan-full', label: 'Full Scan', sub: 'All scans in sequence', icon: '🔍', color: 'var(--c-scan)', bg: 'rgba(56,189,248,.12)' },
+        ]
+      },
+      {
+        group: 'Flow Control',
+        items: [
+          { type: 'flow-delay', label: 'Delay', sub: 'Wait N seconds', icon: '⏳', color: 'var(--c-flow)', bg: 'rgba(167,139,250,.12)' },
+          { type: 'flow-loop', label: 'Loop', sub: 'Repeat N times', icon: '↩', color: 'var(--c-flow)', bg: 'rgba(167,139,250,.12)' },
+          { type: 'flow-condition', label: 'Condition', sub: 'If / else branch', icon: '⟨⟩', color: 'var(--c-flow)', bg: 'rgba(167,139,250,.12)' },
+          { type: 'flow-parallel', label: 'Parallel', sub: 'Run branches at once', icon: '⇉', color: 'var(--c-flow)', bg: 'rgba(167,139,250,.12)' },
+        ]
+      },
+    ];
+
+    // default configs per node type
+    const NODE_DEFAULTS = {
+      'trigger-manual': { label: 'Manual Trigger', config: { note: '' } },
+      'trigger-schedule': { label: 'Schedule', config: { interval: 'every_2h', cron: '0 */2 * * *', enabled: true } },
+      'trigger-online': { label: 'On EMU Online', config: { target: 'any' } },
+      'emu-target': { label: 'Select Emulators', config: { mode: 'tab', tab: 'Farming', count: 4 } },
+      'emu-start': { label: 'Start Emulator', config: { delay: 0 } },
+      'emu-stop': { label: 'Stop Emulator', config: { force: false } },
+      'emu-restart': { label: 'Restart Emulator', config: { wait: 3 } },
+      'script-run': { label: 'Run Macro', config: { file: 'FARM +4', loop: 1 } },
+      'script-loop': { label: 'Loop Script', config: { file: 'Swap_Charactor', times: 5 } },
+      'scan-profile': { label: 'Profile Scan', config: {} },
+      'scan-resources': { label: 'Resource Scan', config: {} },
+      'scan-hall': { label: 'Hall Level', config: {} },
+      'scan-full': { label: 'Full Scan', config: {} },
+      'flow-delay': { label: 'Delay', config: { seconds: 30, unit: 's' } },
+      'flow-loop': { label: 'Loop', config: { times: 3 } },
+      'flow-condition': { label: 'Condition', config: { field: 'power', op: '>', value: '1000000' } },
+      'flow-parallel': { label: 'Parallel', config: {} },
+    };
+
+    // ═══════════════════════════════════════════════════
+    //  WORKFLOW ENGINE
+    // ═══════════════════════════════════════════════════
+    const WF = {
+      nodes: new Map(),      // id → {id, type, x, y, config, ...}
+      connections: [],       // [{id, from, fromPort, to, toPort}]
+      selectedNode: null,
+      selectedConn: null,
+      nodeIdCtr: 0,
+      connIdCtr: 0,
+
+      // viewport
+      vp: { x: 0, y: 0, zoom: 1 },
+
+      // interaction state
+      draggingNode: null,   // { nodeId, startX, startY, nodeStartX, nodeStartY }
+      connectingFrom: null, // { nodeId, port, worldX, worldY }
+      isPanningCanvas: false,
+      panStart: null,
+
+      // schedule state
+      scheduleActive: false,
+      scheduleTimer: null,
+
+      // ── INIT ──────────────────────────────────────
+      init() {
+        this.renderPalette();
+        this.setupPaletteDrag();
+        this.setupCanvasEvents();
+        this.loadDemoWorkflow();
+        this.renderAll();
+      },
+
+      // ── PALETTE ───────────────────────────────────
+      renderPalette(filter = '') {
+        const list = document.getElementById('palette-list');
+        list.innerHTML = '';
+        PALETTE_NODES.forEach(group => {
+          const items = group.items.filter(i => !filter || i.label.toLowerCase().includes(filter.toLowerCase()) || i.sub.toLowerCase().includes(filter.toLowerCase()));
+          if (!items.length) return;
+          const groupLabel = document.createElement('div');
+          groupLabel.className = 'palette-group-label';
+          groupLabel.textContent = group.group;
+          list.appendChild(groupLabel);
+          items.forEach(item => {
+            const el = document.createElement('div');
+            el.className = 'palette-item';
+            el.dataset.nodeType = item.type;
+            el.innerHTML = `
+          <div class="pi-icon" style="background:${item.bg}; color:${item.color};">${item.icon}</div>
+          <div>
+            <div class="pi-label">${item.label}</div>
+            <div class="pi-sub">${item.sub}</div>
+          </div>`;
+            list.appendChild(el);
+          });
+        });
+      },
+      filterPalette(val) { this.renderPalette(val); this.setupPaletteDrag(); },
+
+      // ── PALETTE DRAG ──────────────────────────────
+      _ghostType: null,
+      _ghostInfo: null,
+
+      setupPaletteDrag() {
+        document.querySelectorAll('.palette-item').forEach(el => {
+          el.addEventListener('mousedown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const type = el.dataset.nodeType;
+            this._ghostType = type;
+            const info = this.getNodeDef(type);
+            this._ghostInfo = info;
+            // build ghost
+            const ghost = document.getElementById('drag-ghost');
+            ghost.innerHTML = this.buildNodeHTML({ type, ...NODE_DEFAULTS[type], id: 'ghost', x: 0, y: 0 });
+            ghost.style.display = 'block';
+            ghost.style.left = e.clientX - 90 + 'px';
+            ghost.style.top = e.clientY - 24 + 'px';
+            document.addEventListener('mousemove', this._onGhostMove);
+            document.addEventListener('mouseup', this._onGhostDrop);
+          });
+        });
+      },
+      _onGhostMove: null,
+      _onGhostDrop: null,
+
+      // ── CANVAS EVENTS ─────────────────────────────
+      setupCanvasEvents() {
+        const wrap = document.getElementById('canvas-wrap');
+
+        this._onGhostMove = (e) => {
+          const ghost = document.getElementById('drag-ghost');
+          if (ghost.style.display === 'none') return;
+          ghost.style.left = e.clientX - 90 + 'px';
+          ghost.style.top = e.clientY - 24 + 'px';
+        };
+        this._onGhostDrop = (e) => {
+          const ghost = document.getElementById('drag-ghost');
+          ghost.style.display = 'none';
+          document.removeEventListener('mousemove', this._onGhostMove);
+          document.removeEventListener('mouseup', this._onGhostDrop);
+
+          if (!this._ghostType) return;
+          // check if over canvas
+          const rect = wrap.getBoundingClientRect();
+          if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+
+          const worldX = (e.clientX - rect.left - this.vp.x) / this.vp.zoom;
+          const worldY = (e.clientY - rect.top - this.vp.y) / this.vp.zoom;
+          this.addNode(this._ghostType, worldX - 90, worldY - 28);
+          this._ghostType = null;
+        };
+
+        // canvas mouse events for pan + node drag + connection
+        wrap.addEventListener('mousedown', e => {
+          if (e.target === wrap || e.target.id === 'canvas-tf' || e.target.id === 'svg-layer' || e.target.closest('#connections-group')) {
+            if (e.button === 1 || (e.button === 0 && e.altKey)) {
+              this.isPanningCanvas = true;
+              this.panStart = { x: e.clientX - this.vp.x, y: e.clientY - this.vp.y };
+              wrap.classList.add('panning');
+              e.preventDefault();
+            } else if (e.button === 0) {
+              // deselect
+              if (!e.target.closest('.node') && !e.target.closest('.conn-path')) {
+                this.selectNode(null);
+                this.selectConn(null);
+              }
+              // cancel pending connection
+              if (this.connectingFrom && !e.target.classList.contains('port')) {
+                this.connectingFrom = null;
+                wrap.classList.remove('connecting');
+                document.getElementById('conn-ghost').style.display = 'none';
+              }
+            }
+          }
+        });
+
+        wrap.addEventListener('mousemove', e => {
+          if (this.isPanningCanvas) {
+            this.vp.x = e.clientX - this.panStart.x;
+            this.vp.y = e.clientY - this.panStart.y;
+            this.applyTransform();
+            return;
+          }
+          if (this.draggingNode) {
+            const rect = wrap.getBoundingClientRect();
+            const worldX = (e.clientX - rect.left - this.vp.x) / this.vp.zoom;
+            const worldY = (e.clientY - rect.top - this.vp.y) / this.vp.zoom;
+            const node = this.nodes.get(this.draggingNode.nodeId);
+            node.x = worldX - this.draggingNode.offX;
+            node.y = worldY - this.draggingNode.offY;
+            const el = document.getElementById(`node-${node.id}`);
+            if (el) { el.style.left = node.x + 'px'; el.style.top = node.y + 'px'; }
+            this.renderConnections();
+            return;
+          }
+          if (this.connectingFrom) {
+            const rect = wrap.getBoundingClientRect();
+            const wx = (e.clientX - rect.left - this.vp.x) / this.vp.zoom;
+            const wy = (e.clientY - rect.top - this.vp.y) / this.vp.zoom;
+            const ghost = document.getElementById('conn-ghost');
+            ghost.style.display = '';
+            const fx = this.connectingFrom.worldX;
+            const fy = this.connectingFrom.worldY;
+            const off = Math.max(80, Math.abs(wx - fx) * 0.5);
+            ghost.setAttribute('d', `M${fx},${fy} C${fx + off},${fy} ${wx - off},${wy} ${wx},${wy}`);
+          }
+        });
+
+        wrap.addEventListener('mouseup', e => {
+          if (this.isPanningCanvas) {
+            this.isPanningCanvas = false;
+            wrap.classList.remove('panning');
+          }
+          if (this.draggingNode) {
+            this.draggingNode = null;
+          }
+        });
+
+        // zoom
+        wrap.addEventListener('wheel', e => {
+          e.preventDefault();
+          const rect = wrap.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+          const newZoom = Math.min(2.5, Math.max(0.25, this.vp.zoom * factor));
+          this.vp.x = mx - (mx - this.vp.x) * (newZoom / this.vp.zoom);
+          this.vp.y = my - (my - this.vp.y) * (newZoom / this.vp.zoom);
+          this.vp.zoom = newZoom;
+          this.applyTransform();
+          this.updateZoomLabel();
+        }, { passive: false });
+
+        // keyboard
+        document.addEventListener('keydown', e => {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+            if (this.selectedNode) { this.deleteNode(this.selectedNode); }
+            else if (this.selectedConn) { this.deleteConn(this.selectedConn); }
+          }
+          if (e.key === 'Escape') {
+            this.connectingFrom = null;
+            document.getElementById('canvas-wrap').classList.remove('connecting');
+            document.getElementById('conn-ghost').style.display = 'none';
+          }
+        });
+      },
+
+      // ── NODE MANAGEMENT ───────────────────────────
+      addNode(type, x, y) {
+        const id = 'n' + (++this.nodeIdCtr);
+        const def = NODE_DEFAULTS[type] || { label: type, config: {} };
+        const node = {
+          id, type, x, y,
+          label: def.label,
+          config: JSON.parse(JSON.stringify(def.config)),
+          status: 'idle'
+        };
+        this.nodes.set(id, node);
+        this.renderNode(node);
+        document.getElementById('canvas-hint').style.opacity = '0';
+        this.selectNode(id);
+        return node;
+      },
+
+      deleteNode(id) {
+        this.nodes.delete(id);
+        this.connections = this.connections.filter(c => c.from !== id && c.to !== id);
+        document.getElementById(`node-${id}`)?.remove();
+        this.renderConnections();
+        if (this.selectedNode === id) { this.selectNode(null); this.closeConfig(); }
+        if (!this.nodes.size) document.getElementById('canvas-hint').style.opacity = '1';
+        Toast.show('i', 'Deleted', 'Node removed.');
+      },
+
+      renderNode(node) {
+        const layer = document.getElementById('nodes-layer');
+        let el = document.getElementById(`node-${node.id}`);
+        const isNew = !el;
+        if (isNew) {
+          el = document.createElement('div');
+          el.id = `node-${node.id}`;
+          el.className = 'node';
+          layer.appendChild(el);
+        }
+        el.style.left = node.x + 'px';
+        el.style.top = node.y + 'px';
+        el.innerHTML = this.buildNodeHTML(node);
+
+        // events
+        el.addEventListener('mousedown', e => {
+          if (e.target.classList.contains('port') || e.target.closest('.node-del')) return;
+          e.stopPropagation();
+          if (e.button !== 0) return;
+          const wrap = document.getElementById('canvas-wrap');
+          const rect = wrap.getBoundingClientRect();
+          const worldX = (e.clientX - rect.left - this.vp.x) / this.vp.zoom;
+          const worldY = (e.clientY - rect.top - this.vp.y) / this.vp.zoom;
+          this.draggingNode = {
+            nodeId: node.id,
+            offX: worldX - node.x,
+            offY: worldY - node.y
+          };
+          this.selectNode(node.id);
+        });
+
+        // port events
+        el.querySelectorAll('.port').forEach(port => {
+          port.addEventListener('mousedown', e => {
+            e.stopPropagation();
+            if (e.button !== 0) return;
+            const isOut = port.dataset.portType === 'out' || port.dataset.portType === 'out-true' || port.dataset.portType === 'out-false';
+            if (isOut) {
+              // start connection
+              const portRect = port.getBoundingClientRect();
+              const canvasRect = document.getElementById('canvas-wrap').getBoundingClientRect();
+              const wx = (portRect.left + portRect.width / 2 - canvasRect.left - this.vp.x) / this.vp.zoom;
+              const wy = (portRect.top + portRect.height / 2 - canvasRect.top - this.vp.y) / this.vp.zoom;
+              this.connectingFrom = { nodeId: node.id, port: port.dataset.portType, worldX: wx, worldY: wy };
+              document.getElementById('canvas-wrap').classList.add('connecting');
+            } else {
+              // complete connection
+              if (this.connectingFrom && this.connectingFrom.nodeId !== node.id) {
+                this.addConnection(this.connectingFrom.nodeId, this.connectingFrom.port, node.id, port.dataset.portType);
+                this.connectingFrom = null;
+                document.getElementById('canvas-wrap').classList.remove('connecting');
+                document.getElementById('conn-ghost').style.display = 'none';
+              }
+            }
+          });
+        });
+
+        if (isNew && node.id !== 'ghost') {
+          el.style.animation = 'fadeIn .2s ease both';
+        }
+      },
+
+      buildNodeHTML(node) {
+        const def = this.getNodeDef(node.type);
+        const props = this.getNodeProps(node);
+        const hasCondition = node.type === 'flow-condition';
+        const isGhost = node.id === 'ghost';
+
+        let portsHtml = '';
+        if (!isGhost) {
+          // input port (all except triggers)
+          if (!node.type.startsWith('trigger')) {
+            portsHtml += `<div class="port port-in" data-node="${node.id}" data-port-type="in" title="Input"></div>`;
+          }
+          if (hasCondition) {
+            portsHtml += `
+          <div class="port port-out-true" data-node="${node.id}" data-port-type="out-true" title="True →"></div>
+          <div class="port port-label port-label-true">TRUE</div>
+          <div class="port port-out-false" data-node="${node.id}" data-port-type="out-false" title="False →"></div>
+          <div class="port port-label port-label-false">FALSE</div>`;
+          } else {
+            portsHtml += `<div class="port port-out" data-node="${node.id}" data-port-type="out" title="Output →"></div>`;
+          }
+        }
+
+        let propsHtml = props.map(p => `
+      <div class="node-prop">
+        <span class="node-prop-label">${p.key}</span>
+        <span class="node-prop-value ${p.highlight ? 'highlight' : ''}">${p.value}</span>
+      </div>`).join('');
+
+        const statusEl = `<div class="node-status" id="nstatus-${node.id}">
+      <span class="status-spinner"></span><span id="nstatus-txt-${node.id}">Running…</span>
+    </div>`;
+
+        return `
+      <div class="node-type-bar" style="background:${def.color}; opacity:.7;"></div>
+      ${portsHtml}
+      <div class="node-header">
+        <div class="node-icon" style="background:${def.bg}; color:${def.color};">${def.icon}</div>
+        <div>
+          <div class="node-title">${node.label}</div>
+          <div class="node-subtitle">${def.sub}</div>
+        </div>
+        ${isGhost ? '' : `<button class="node-del" onclick="WF.deleteNode('${node.id}')" title="Delete node">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8">
+            <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
+          </svg>
+        </button>`}
+      </div>
+      ${propsHtml ? `<div class="node-body">${propsHtml}</div>` : ''}
+      ${isGhost ? '' : statusEl}
+    `;
+      },
+
+      getNodeProps(node) {
+        const c = node.config || {};
+        switch (node.type) {
+          case 'trigger-schedule': return [
+            { key: 'interval', value: c.interval?.replace('every_', 'Every ').replace('h', ' hours').replace('m', ' mins') || 'Every 2 hours' },
+            { key: 'status', value: c.enabled ? 'Active' : 'Paused', highlight: c.enabled }
+          ];
+          case 'emu-target': return [{ key: 'mode', value: c.mode === 'tab' ? `Tab: ${c.tab}` : 'All' }, { key: 'count', value: `${c.count} emus`, highlight: true }];
+          case 'script-run': return [{ key: 'file', value: c.file || '—' }, { key: 'loop', value: `×${c.loop || 1}`, highlight: true }];
+          case 'script-loop': return [{ key: 'file', value: c.file || '—' }, { key: 'times', value: `×${c.times || 1}`, highlight: true }];
+          case 'flow-delay': return [{ key: 'wait', value: `${c.seconds || 10}s`, highlight: true }];
+          case 'flow-loop': return [{ key: 'times', value: `×${c.times || 1}`, highlight: true }];
+          case 'flow-condition': return [{ key: 'if', value: `${c.field} ${c.op} ${c.value}`, highlight: true }];
+          case 'emu-restart': return [{ key: 'wait', value: `${c.wait || 3}s` }];
+          case 'trigger-manual': return [{ key: 'note', value: c.note || 'Click ▶ Run' }];
+          default: return [];
+        }
+      },
+
+      getNodeDef(type) {
+        for (const g of PALETTE_NODES) {
+          const f = g.items.find(i => i.type === type);
+          if (f) return f;
+        }
+        return { icon: '?', color: '#999', bg: '#222', sub: '' };
+      },
+
+      // ── CONNECTIONS ───────────────────────────────
+      addConnection(fromId, fromPort, toId, toPort) {
+        // prevent duplicates
+        if (this.connections.find(c => c.from === fromId && c.fromPort === fromPort && c.to === toId)) return;
+        const id = 'c' + (++this.connIdCtr);
+        this.connections.push({ id, from: fromId, fromPort, to: toId, toPort });
+        this.renderConnections();
+        Toast.show('s', 'Connected', `${this.nodes.get(fromId)?.label} → ${this.nodes.get(toId)?.label}`);
+      },
+
+      deleteConn(id) {
+        this.connections = this.connections.filter(c => c.id !== id);
+        this.renderConnections();
+      },
+
+      selectConn(id) {
+        this.selectedConn = id;
+        this.renderConnections();
+      },
+
+      getPortWorldPos(nodeId, portType) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return null;
+        const el = document.getElementById(`node-${nodeId}`);
+        if (!el) return null;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        switch (portType) {
+          case 'out': return { x: node.x + w, y: node.y + h / 2 };
+          case 'in': return { x: node.x, y: node.y + h / 2 };
+          case 'out-true': return { x: node.x + w, y: node.y + h * 0.3 };
+          case 'out-false': return { x: node.x + w, y: node.y + h * 0.7 };
+          default: return { x: node.x, y: node.y + h / 2 };
+        }
+      },
+
+      renderConnections() {
+        const g = document.getElementById('connections-group');
+        g.innerHTML = '';
+        const SVG_OFFSET = 2000;
+
+        this.connections.forEach(conn => {
+          const from = this.getPortWorldPos(conn.from, conn.fromPort);
+          const to = this.getPortWorldPos(conn.to, conn.toPort);
+          if (!from || !to) return;
+
+          const fx = from.x + SVG_OFFSET;
+          const fy = from.y + SVG_OFFSET;
+          const tx = to.x + SVG_OFFSET;
+          const ty = to.y + SVG_OFFSET;
+          const off = Math.max(60, Math.abs(tx - fx) * 0.5);
+          const d = `M${fx},${fy} C${fx + off},${fy} ${tx - off},${ty} ${tx},${ty}`;
+
+          const isAnim = conn.status === 'running';
+          const isSel = conn.id === this.selectedConn;
+
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', d);
+          path.setAttribute('class', `conn-path ${isAnim ? 'animated' : ''} ${conn.status === 'success' ? 'success' : ''} ${conn.status === 'error' ? 'error' : ''} ${isSel ? 'selected' : ''}`);
+          path.style.pointerEvents = 'stroke';
+          path.addEventListener('click', e => { e.stopPropagation(); this.selectConn(conn.id); });
+
+          // small dot at end
+          const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          dot.setAttribute('cx', tx);
+          dot.setAttribute('cy', ty);
+          dot.setAttribute('r', '3');
+          dot.setAttribute('fill', isAnim ? 'var(--c-running)' : 'var(--border-2)');
+          dot.style.pointerEvents = 'none';
+
+          g.appendChild(path);
+          g.appendChild(dot);
+        });
+      },
+
+      // ── SELECTION ─────────────────────────────────
+      selectNode(id) {
+        if (this.selectedNode) {
+          document.getElementById(`node-${this.selectedNode}`)?.classList.remove('selected');
+        }
+        this.selectedNode = id;
+        if (id) {
+          document.getElementById(`node-${id}`)?.classList.add('selected');
+          this.openConfig(id);
+        }
+      },
+
+      // ── CONFIG PANEL ──────────────────────────────
+      openConfig(nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+        const panel = document.getElementById('config-panel');
+        panel.classList.add('open');
+        this.renderConfigBody(node);
+      },
+      closeConfig() {
+        document.getElementById('config-panel').classList.remove('open');
+      },
+
+      renderConfigBody(node) {
+        const body = document.getElementById('config-body');
+        const def = this.getNodeDef(node.type);
+        body.innerHTML = `
+      <div class="cf-section">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+          <div style="width:36px;height:36px;border-radius:8px;background:${def.bg};color:${def.color};display:flex;align-items:center;justify-content:center;font-size:16px;">${def.icon}</div>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);">${node.label}</div>
+            <div style="font-size:10px;color:var(--muted);">${node.type}</div>
+          </div>
+        </div>
+      </div>
+      <div class="cf-section">
+        <label class="cf-label">Display Name</label>
+        <input class="cf-input" type="text" value="${node.label}" onchange="WF.updateNodeLabel('${node.id}', this.value)" />
+      </div>
+      ${this.buildConfigFields(node)}
+    `;
+      },
+
+      buildConfigFields(node) {
+        const c = node.config;
+        switch (node.type) {
+          case 'trigger-schedule': return `
+        <div class="cf-section">
+          <label class="cf-label">Interval</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','interval',this.value)">
+            ${[['every_15m', 'Every 15 minutes'], ['every_30m', 'Every 30 minutes'], ['every_1h', 'Every 1 hour'], ['every_2h', 'Every 2 hours'], ['every_6h', 'Every 6 hours'], ['every_12h', 'Every 12 hours'], ['every_24h', 'Every 24 hours']].map(([v, l]) => `<option value="${v}" ${c.interval === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <div class="cf-section">
+          <label class="cf-label">Cron Expression</label>
+          <input class="cf-input" type="text" value="${c.cron || '0 */2 * * *'}" onchange="WF.updateConfig('${node.id}','cron',this.value)" />
+        </div>`;
+          case 'emu-target': return `
+        <div class="cf-section">
+          <label class="cf-label">Target Mode</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','mode',this.value)">
+            <option value="all"       ${c.mode === 'all' ? 'selected' : ''}>All running emulators</option>
+            <option value="tab"       ${c.mode === 'tab' ? 'selected' : ''}>By tab group</option>
+            <option value="manual"    ${c.mode === 'manual' ? 'selected' : ''}>Manual selection</option>
+          </select>
+        </div>
+        <div class="cf-section">
+          <label class="cf-label">Tab Group</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','tab',this.value)">
+            ${['All Instances', 'Farming', 'Scanners'].map(t => `<option ${c.tab === t ? 'selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </div>`;
+          case 'script-run': case 'script-loop': return `
+        <div class="cf-section">
+          <label class="cf-label">Macro File</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','file',this.value)">
+            ${['FARM +4', 'Swap_Charactor', 'my_script(1)', 'Bắt_PET', 'Thà_PET', 'Check_PROFILE', 'CHECK', 'Gỗ', 'Vàng'].map(f => `<option ${c.file === f ? 'selected' : ''}>${f}</option>`).join('')}
+          </select>
+        </div>
+        <div class="cf-section">
+          <label class="cf-label">Repeat Times</label>
+          <input class="cf-input" type="number" min="1" max="100" value="${c.loop || c.times || 1}" onchange="WF.updateConfig('${node.id}','${node.type === 'script-loop' ? 'times' : 'loop'}',+this.value)" />
+        </div>`;
+          case 'flow-delay': return `
+        <div class="cf-section">
+          <label class="cf-label">Wait Duration (seconds)</label>
+          <input class="cf-input" type="number" min="1" max="3600" value="${c.seconds || 30}" onchange="WF.updateConfig('${node.id}','seconds',+this.value)" />
+        </div>`;
+          case 'flow-loop': return `
+        <div class="cf-section">
+          <label class="cf-label">Repeat Count</label>
+          <input class="cf-input" type="number" min="1" max="999" value="${c.times || 3}" onchange="WF.updateConfig('${node.id}','times',+this.value)" />
+        </div>`;
+          case 'flow-condition': return `
+        <div class="cf-section">
+          <label class="cf-label">Condition Field</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','field',this.value)">
+            ${['power', 'hall_level', 'gold', 'wood', 'ore', 'mana'].map(f => `<option ${c.field === f ? 'selected' : ''}>${f}</option>`).join('')}
+          </select>
+        </div>
+        <div class="cf-section">
+          <label class="cf-label">Operator</label>
+          <select class="cf-select" onchange="WF.updateConfig('${node.id}','op',this.value)">
+            ${['>', '>=', '<', '<=', '==', '!='].map(o => `<option ${c.op === o ? 'selected' : ''}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div class="cf-section">
+          <label class="cf-label">Value</label>
+          <input class="cf-input" type="text" value="${c.value || ''}" onchange="WF.updateConfig('${node.id}','value',this.value)" />
+        </div>`;
+          case 'emu-restart': return `
+        <div class="cf-section">
+          <label class="cf-label">Wait before restart (s)</label>
+          <input class="cf-input" type="number" min="1" max="60" value="${c.wait || 3}" onchange="WF.updateConfig('${node.id}','wait',+this.value)" />
+        </div>`;
+          default: return `<div style="font-size:11px;color:var(--muted);text-align:center;padding:20px 0;">No additional settings.</div>`;
+        }
+      },
+
+      updateNodeLabel(id, val) {
+        const node = this.nodes.get(id);
+        if (!node || !val.trim()) return;
+        node.label = val.trim();
+        this.renderNode(node);
+      },
+      updateConfig(id, key, val) {
+        const node = this.nodes.get(id);
+        if (!node) return;
+        node.config[key] = val;
+        this.renderNode(node);
+      },
+
+      // ── VIEWPORT ──────────────────────────────────
+      applyTransform() {
+        const tf = document.getElementById('canvas-tf');
+        tf.style.transform = `translate(${this.vp.x}px,${this.vp.y}px) scale(${this.vp.zoom})`;
+      },
+      updateZoomLabel() {
+        document.getElementById('zoom-label').textContent = Math.round(this.vp.zoom * 100) + '%';
+      },
+      zoom(factor) {
+        const wrap = document.getElementById('canvas-wrap');
+        const cx = wrap.offsetWidth / 2;
+        const cy = wrap.offsetHeight / 2;
+        const newZoom = Math.min(2.5, Math.max(0.25, this.vp.zoom * factor));
+        this.vp.x = cx - (cx - this.vp.x) * (newZoom / this.vp.zoom);
+        this.vp.y = cy - (cy - this.vp.y) * (newZoom / this.vp.zoom);
+        this.vp.zoom = newZoom;
+        this.applyTransform();
+        this.updateZoomLabel();
+      },
+      resetView() {
+        if (!this.nodes.size) { this.vp = { x: 120, y: 80, zoom: 1 }; this.applyTransform(); this.updateZoomLabel(); return; }
+        const wrap = document.getElementById('canvas-wrap');
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        this.nodes.forEach(n => {
+          const el = document.getElementById(`node-${n.id}`);
+          const w = el ? el.offsetWidth : 200;
+          const h = el ? el.offsetHeight : 80;
+          minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+          maxX = Math.max(maxX, n.x + w); maxY = Math.max(maxY, n.y + h);
+        });
+        const pad = 60;
+        const ww = wrap.offsetWidth - pad * 2;
+        const wh = wrap.offsetHeight - pad * 2;
+        const cw = maxX - minX; const ch = maxY - minY;
+        const z = Math.min(2, Math.max(.25, Math.min(ww / cw, wh / ch)));
+        this.vp.zoom = z;
+        this.vp.x = pad + (ww - cw * z) / 2 - minX * z;
+        this.vp.y = pad + (wh - ch * z) / 2 - minY * z;
+        this.applyTransform(); this.updateZoomLabel();
+      },
+
+      // ── RENDER ALL ────────────────────────────────
+      renderAll() {
+        document.getElementById('nodes-layer').innerHTML = '';
+        this.nodes.forEach(n => this.renderNode(n));
+        this.renderConnections();
+        document.getElementById('canvas-hint').style.opacity = this.nodes.size ? '0' : '1';
+      },
+
+      // ── RUN WORKFLOW ──────────────────────────────
+      isRunning: false,
+
+      async runWorkflow() {
+        if (this.isRunning) return;
+        if (!this.nodes.size) { Toast.show('e', 'Error', 'No nodes on canvas.'); return; }
+        this.isRunning = true;
+
+        const btn = document.getElementById('btn-run');
+        btn.classList.add('running');
+        btn.innerHTML = `<span class="status-spinner" style="width:11px;height:11px;"></span> Running…`;
+
+        const statusEl = document.getElementById('wf-status');
+        statusEl.textContent = 'RUNNING';
+        statusEl.className = 'status-running';
+
+        const runLog = document.getElementById('run-log');
+        const logBody = document.getElementById('run-log-body');
+        runLog.classList.add('visible');
+        logBody.innerHTML = '';
+
+        const addLog = (type, msg) => {
+          const t = new Date();
+          const ts = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+          const line = document.createElement('div');
+          line.className = `log-line log-${type}`;
+          line.innerHTML = `<span class="log-time">${ts}</span><span>${msg}</span>`;
+          logBody.appendChild(line);
+          logBody.scrollTop = logBody.scrollHeight;
+        };
+
+        // reset all node/conn states
+        this.nodes.forEach(n => { n.status = 'idle'; this.setNodeStatus(n.id, 'idle'); });
+        this.connections.forEach(c => { c.status = ''; });
+        this.renderConnections();
+
+        addLog('info', '▶  Workflow started');
+
+        // topological sort (simplified BFS from triggers)
+        const order = this.getExecutionOrder();
+        let allOk = true;
+
+        for (const nodeId of order) {
+          const node = this.nodes.get(nodeId);
+          if (!node) continue;
+
+          this.setNodeStatus(nodeId, 'running');
+          addLog('run', `⚡ ${node.label}…`);
+          await this.delay(600 + Math.random() * 800);
+
+          // mark incoming connections as animated
+          const incoming = this.connections.filter(c => c.to === nodeId);
+          incoming.forEach(c => { c.status = 'running'; });
+          this.renderConnections();
+          await this.delay(300);
+
+          // simulate result
+          const ok = Math.random() > 0.08;
+          if (ok) {
+            this.setNodeStatus(nodeId, 'success');
+            incoming.forEach(c => { c.status = 'success'; });
+            const dur = (Math.random() * 60 + 5).toFixed(1);
+            addLog('ok', `  ✓ ${node.label} completed (${dur}s)`);
+          } else {
+            this.setNodeStatus(nodeId, 'error');
+            incoming.forEach(c => { c.status = 'error'; });
+            addLog('err', `  ✗ ${node.label} failed`);
+            allOk = false;
+          }
+          this.renderConnections();
+        }
+
+        await this.delay(400);
+        this.isRunning = false;
+        btn.classList.remove('running');
+        btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run Workflow`;
+
+        if (allOk) {
+          statusEl.textContent = 'SUCCESS';
+          statusEl.className = 'status-success';
+          addLog('ok', '✅ Workflow completed successfully');
+          Toast.show('s', 'Done', 'Workflow completed!');
+        } else {
+          statusEl.textContent = 'ERROR';
+          statusEl.className = 'status-error';
+          addLog('err', '❌ Workflow finished with errors');
+          Toast.show('e', 'Error', 'Some nodes failed.');
+        }
+      },
+
+      setNodeStatus(nodeId, status) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+        node.status = status;
+        const el = document.getElementById(`node-${nodeId}`);
+        if (!el) return;
+        el.classList.remove('running', 'success', 'error');
+        if (status !== 'idle') el.classList.add(status);
+        const statusBar = document.getElementById(`nstatus-${nodeId}`);
+        const statusTxt = document.getElementById(`nstatus-txt-${nodeId}`);
+        if (!statusBar) return;
+        statusBar.className = 'node-status';
+        if (status === 'running') { statusBar.classList.add('visible', 's-running'); if (statusTxt) statusTxt.textContent = 'Running…'; }
+        else if (status === 'success') { statusBar.classList.add('visible', 's-success'); if (statusTxt) statusTxt.innerHTML = '✓ Done'; }
+        else if (status === 'error') { statusBar.classList.add('visible', 's-error'); if (statusTxt) statusTxt.textContent = '✗ Error'; }
+        else { statusBar.classList.remove('visible'); }
+      },
+
+      getExecutionOrder() {
+        // Simple: find triggers first, then BFS
+        const visited = new Set();
+        const order = [];
+        const queue = [];
+
+        this.nodes.forEach(n => {
+          if (n.type.startsWith('trigger')) queue.push(n.id);
+        });
+        if (!queue.length) this.nodes.forEach(n => queue.push(n.id));
+
+        while (queue.length) {
+          const id = queue.shift();
+          if (visited.has(id)) continue;
+          visited.add(id);
+          order.push(id);
+          const outgoing = this.connections.filter(c => c.from === id);
+          outgoing.forEach(c => { if (!visited.has(c.to)) queue.push(c.to); });
+        }
+        return order;
+      },
+
+      // ── SCHEDULE MODAL ────────────────────────────
+      openScheduleModal() {
+        const existing = document.querySelector('.modal-overlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h3>⏰  Schedule Workflow</h3>
+          <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="cf-section">
+            <label class="cf-label">Schedule Type</label>
+            <select class="cf-select" id="modal-sched-type">
+              <option value="interval">Fixed Interval</option>
+              <option value="cron">Cron Expression</option>
+              <option value="once">Run Once at Time</option>
+            </select>
+          </div>
+          <div class="cf-section">
+            <label class="cf-label">Interval / Expression</label>
+            <select class="cf-select" id="modal-interval">
+              <option value="900000">Every 15 minutes</option>
+              <option value="1800000">Every 30 minutes</option>
+              <option value="3600000">Every 1 hour</option>
+              <option value="7200000" selected>Every 2 hours</option>
+              <option value="21600000">Every 6 hours</option>
+              <option value="43200000">Every 12 hours</option>
+              <option value="86400000">Every 24 hours</option>
+            </select>
+          </div>
+          <div class="cf-section">
+            <label class="cf-label">Next Run</label>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--c-trigger);padding:8px 10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;">
+              ${this.scheduleActive ? '⏸  Schedule is Active' : '▸  Not scheduled yet'}
+            </div>
+          </div>
+          <div class="cf-section" style="margin:0;">
+            <label class="cf-label">Workflow</label>
+            <div style="font-size:12px;color:var(--text);font-weight:600;">${document.getElementById('wf-name-input').value}</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="tb-btn" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+          ${this.scheduleActive
+            ? `<button class="tb-btn sched-btn" onclick="WF.disableSchedule(); this.closest('.modal-overlay').remove();">⏸  Pause Schedule</button>`
+            : `<button class="tb-btn run-btn" style="height:32px;" onclick="WF.enableSchedule(document.getElementById('modal-interval').value); this.closest('.modal-overlay').remove();">▶  Enable Schedule</button>`
+          }
+        </div>
+      </div>`;
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      },
+
+      enableSchedule(intervalMs) {
+        this.disableSchedule();
+        this.scheduleActive = true;
+        this.scheduleTimer = setInterval(() => {
+          if (!this.isRunning) {
+            this.runWorkflow();
+            addRunLog('info', `🔁 Scheduled run triggered`);
+          }
+        }, parseInt(intervalMs));
+        document.getElementById('btn-schedule').classList.add('active-sched');
+        Toast.show('s', 'Scheduled', 'Workflow schedule is active.');
+      },
+      disableSchedule() {
+        clearInterval(this.scheduleTimer);
+        this.scheduleActive = false;
+        document.getElementById('btn-schedule').classList.remove('active-sched');
+        Toast.show('i', 'Paused', 'Schedule paused.');
+      },
+
+      // ── SAVE / CLEAR ──────────────────────────────
+      saveWorkflow() {
+        const name = document.getElementById('wf-name-input').value;
+        const data = {
+          name, nodes: [...this.nodes.values()],
+          connections: this.connections,
+          viewport: this.vp,
+        };
+        localStorage.setItem('wf_saved', JSON.stringify(data));
+        Toast.show('s', 'Saved', `"${name}" saved to local storage.`);
+      },
+
+      clearCanvas() {
+        if (!confirm('Clear all nodes? This cannot be undone.')) return;
+        this.nodes.clear();
+        this.connections = [];
+        this.selectedNode = null;
+        this.selectedConn = null;
+        this.closeConfig();
+        this.renderAll();
+        document.getElementById('wf-status').textContent = 'IDLE';
+        document.getElementById('wf-status').className = '';
+        document.getElementById('run-log').classList.remove('visible');
+        Toast.show('i', 'Cleared', 'Canvas cleared.');
+      },
+
+      // ── DEMO WORKFLOW ─────────────────────────────
+      loadDemoWorkflow() {
+        // Pre-build an example workflow
+        const n1 = this.addNode('trigger-schedule', 60, 120);
+        const n2 = this.addNode('emu-target', 340, 80);
+        const n3 = this.addNode('flow-loop', 580, 80);
+        const n4 = this.addNode('script-run', 820, 40);
+        const n5 = this.addNode('flow-delay', 820, 200);
+        const n6 = this.addNode('scan-full', 1060, 80);
+        const n7 = this.addNode('flow-condition', 1300, 80);
+        const n8 = this.addNode('emu-stop', 1560, 40);
+        const n9 = this.addNode('emu-restart', 1560, 200);
+
+        // Configure nodes
+        n2.config = { mode: 'tab', tab: 'Farming', count: 4 };
+        n3.config = { times: 3 };
+        n4.config = { file: 'FARM +4', loop: 1 };
+        n4.label = 'Run FARM +4';
+        n5.config = { seconds: 30 };
+        n7.config = { field: 'power', op: '>', value: '2000000' };
+
+        // Connect
+        this.addConnection(n1.id, 'out', n2.id, 'in');
+        this.addConnection(n2.id, 'out', n3.id, 'in');
+        this.addConnection(n3.id, 'out', n4.id, 'in');
+        this.addConnection(n4.id, 'out', n5.id, 'in');
+        this.addConnection(n5.id, 'out', n6.id, 'in');
+        this.addConnection(n6.id, 'out', n7.id, 'in');
+        this.addConnection(n7.id, 'out-true', n8.id, 'in');
+        this.addConnection(n7.id, 'out-false', n9.id, 'in');
+
+        // re-render all nodes with updated config
+        this.nodes.forEach(n => this.renderNode(n));
+        this.renderConnections();
+        this.selectNode(null);
+
+        // Center view
+        setTimeout(() => this.resetView(), 100);
+      },
+
+      // ── UTILS ─────────────────────────────────────
+      delay(ms) { return new Promise(r => setTimeout(r, ms)); },
+    };
+
+    // ── TOAST ──────────────────────────────────────────
+    const Toast = {
+      show(type, title, msg) {
+        const el = document.createElement('div');
+        el.className = `toast ${type}`;
+        el.innerHTML = `<div class="t-dot"></div><span><strong>${title}</strong> — ${msg}</span>`;
+        document.getElementById('toast-zone').appendChild(el);
+        setTimeout(() => { el.classList.add('toast-out'); setTimeout(() => el.remove(), 280); }, 2800);
+      }
+    };
+
+    // ── BOOT ───────────────────────────────────────────
+    WF.init();
+  </script>
+</body>
+
+</html>
