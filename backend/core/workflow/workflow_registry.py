@@ -343,6 +343,74 @@ FUNCTION_REGISTRY = [
             },
         ],
     },
+    # ── Merged Workflow Functions ──
+    {
+        "id": "nav_to_alliance_help",
+        "label": "Alliance Help",
+        "category": "Core Actions",
+        "icon": "🤝",
+        "color": "#6366f1",
+        "description": "Navigate to Alliance Menu and tap Help button",
+        "params": [],
+    },
+    {
+        "id": "nav_to_tavern_chest",
+        "label": "Tavern Chest Draw",
+        "category": "Core Actions",
+        "icon": "🎰",
+        "color": "#6366f1",
+        "description": "Claim daily free Hero & Artifact chest draws at the Tavern",
+        "params": [
+            {
+                "key": "draw_x10_silver",
+                "label": "x10 Silver Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+            {
+                "key": "draw_x10_gold",
+                "label": "x10 Gold Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+            {
+                "key": "draw_x10_artifact",
+                "label": "x10 Artifact Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+        ],
+    },
+    {
+        "id": "nav_to_heal_troops",
+        "label": "Heal Troops",
+        "category": "Core Actions",
+        "icon": "💊",
+        "color": "#6366f1",
+        "description": "Heal wounded troops via Elixir Healing building",
+        "params": [],
+    },
+    {
+        "id": "nav_to_darkling_legions",
+        "label": "Attack Darkling Legions",
+        "category": "Core Actions",
+        "icon": "⚔️",
+        "color": "#6366f1",
+        "description": "Search and dispatch troops to attack Darkling Legions",
+        "params": [],
+    },
+    {
+        "id": "nav_to_chat_hero",
+        "label": "Chat With Hero",
+        "category": "Core Actions",
+        "icon": "💬",
+        "color": "#6366f1",
+        "description": "Chat with heroes on the IN_CITY map (clockwise viewport scan)",
+        "params": [],
+    },
 ]
 
 
@@ -568,7 +636,90 @@ ACTIVITY_REGISTRY = [
         ],
         "config_fields": [],
         "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
-    }
+    },
+    # ── Merged Workflow Activities ──
+    {
+        "id": "alliance_help",
+        "name": "Alliance Help",
+        "icon": "🤝",
+        "description": "Navigate to Alliance Menu, detect & tap Help button",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_alliance_help", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 15},
+    },
+    {
+        "id": "tavern_chest_draw",
+        "name": "Tavern Chest Draw",
+        "icon": "🎰",
+        "description": "Claim daily free Hero & Artifact chest draws at the Tavern",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_tavern_chest", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "draw_x10_silver",
+                "label": "x10 Silver Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+            {
+                "key": "draw_x10_gold",
+                "label": "x10 Gold Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+            {
+                "key": "draw_x10_artifact",
+                "label": "x10 Artifact Draw",
+                "type": "select",
+                "options": ["false", "true"],
+                "default": "false",
+            },
+        ],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720},
+    },
+    {
+        "id": "heal_troops_task",
+        "name": "Heal Troops",
+        "icon": "💊",
+        "description": "Heal wounded troops via Elixir Healing building",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_heal_troops", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+    },
+    {
+        "id": "attack_darkling_legions",
+        "name": "Attack Darkling Legions",
+        "icon": "⚔️",
+        "description": "Search and dispatch troops to attack Darkling Legions",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_darkling_legions", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+    },
+    {
+        "id": "chat_with_hero_task",
+        "name": "Chat With Hero",
+        "icon": "💬",
+        "description": "Chat with heroes on the IN_CITY map (clockwise viewport scan)",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_chat_hero", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 180},
+    },
 ]
 
 

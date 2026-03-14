@@ -274,6 +274,21 @@ async def execute_recipe(
 
                         await _aio.sleep(2)
 
+                    # Force-clear stale scan state after polling exits.
+                    # This prevents the next account on the same emulator
+                    # from hitting "Scan already running" due to leftover
+                    # in-memory state (e.g. when poll exited via DB fallback
+                    # while the background thread hadn't updated its status).
+                    scan_key = f"scan-{emulator_index}"
+                    with full_scan_module._lock:
+                        leftover = full_scan_module._running_scans.get(scan_key)
+                        if leftover and leftover.get("status") == "running":
+                            print(
+                                f"[{emulator_name}] Clearing stale scan state for "
+                                f"#{emulator_index} (was still 'running' after poll exit)"
+                            )
+                            del full_scan_module._running_scans[scan_key]
+
             # ── ADB Tap (registry id: adb_tap) ──
             elif fn_id == "adb_tap":
                 x = int((config or {}).get("x", 0))
@@ -434,9 +449,13 @@ async def execute_recipe(
                 )
 
             elif fn_id == "claim_city_resources":
-                ok = await asyncio.to_thread(
+                claimed = await asyncio.to_thread(
                     core_actions.claim_city_resources, serial, detector
                 )
+                # claim_city_resources returns int (count), not bool.
+                # 0 claimed is still a success (nothing to collect).
+                ok = claimed is not None
+                await log(f"  Claimed {claimed} city resources", "info")
 
             elif fn_id == "train_troops":
                 training_list = []
@@ -455,21 +474,47 @@ async def execute_recipe(
                     core_actions.claim_alliance_resource, serial, detector
                 )
 
-            elif fn_id == "flow_delay":
-                delay_sec = (config or {}).get("seconds", 10)
-                await log(f"  Waiting {delay_sec}s...", "info")
-                import asyncio as _aio
-
-                await _aio.sleep(delay_sec)
-                ok = True
-
-            elif fn_id == "sys_close_app":
-                package = (config or {}).get("package", "com.farlightgames.samo.gp.vn")
-                await log(f"  Closing app: {package}", "info")
-                await asyncio.to_thread(
-                    adb_helper.shell, serial, f"am force-stop {package}"
+            # ── Merged Workflow Mappings ──
+            elif fn_id == "nav_to_alliance_help":
+                ok = await asyncio.to_thread(
+                    core_actions.alliance_help, serial, detector
                 )
-                ok = True
+
+            elif fn_id == "nav_to_tavern_chest":
+                draw_x10_silver = str((config or {}).get("draw_x10_silver", "false")).lower() == "true"
+                draw_x10_gold = str((config or {}).get("draw_x10_gold", "false")).lower() == "true"
+                draw_x10_artifact = str((config or {}).get("draw_x10_artifact", "false")).lower() == "true"
+                ok = await asyncio.to_thread(
+                    core_actions.claim_daily_chests, serial, detector,
+                    draw_x10_silver=draw_x10_silver,
+                    draw_x10_gold=draw_x10_gold,
+                    draw_x10_artifact=draw_x10_artifact
+                )
+
+            elif fn_id == "nav_to_heal_troops":
+                ok = await asyncio.to_thread(
+                    core_actions.heal_troops, serial, detector
+                )
+
+            elif fn_id == "nav_to_darkling_legions":
+                ok = await asyncio.to_thread(
+                    core_actions.attack_darkling_legions_v1_basic, serial, detector
+                )
+
+            elif fn_id == "nav_to_chat_hero":
+                # chat_with_hero is standalone — runs its own cv2 template matching
+                import os as _os
+                chat_module_path = _os.path.join(
+                    _os.path.dirname(_os.path.abspath(__file__)), "chat_with_hero.py"
+                )
+                if _os.path.exists(chat_module_path):
+                    from backend.core.workflow import chat_with_hero
+                    ok = await asyncio.to_thread(
+                        chat_with_hero.run_chat_with_hero, serial, detector
+                    )
+                else:
+                    await log(f"  chat_with_hero.py not found at {chat_module_path}", "warn")
+                    ok = True  # Skip gracefully
 
             else:
                 await log(

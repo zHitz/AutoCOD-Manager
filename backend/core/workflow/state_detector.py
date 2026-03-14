@@ -42,13 +42,13 @@ class GameStateDetector:
         self.state_configs = {
             "fixing_network.png": "LOADING SCREEN (NETWORK ISSUE)",
             "lobby_loading.png": "LOADING SCREEN",
+            "lobby_loading_2.png": "LOADING SCREEN",
             "lobby_profile_detail.png": "IN-GAME LOBBY (PROFILE MENU DETAIL)",
             "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
             "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
             "lobby_bazzar.png": "IN-GAME LOBBY (BAZAAR)",
-            "lobby_hall_new.png": "IN-GAME LOBBY (HALL_NEW)",
             "lobby_hammer.png": "IN-GAME LOBBY (IN_CITY)",
-            "lobby_in_city.png": "IN-GAME LOBBY (IN_CITY)",
+            "lobby_in_city_icon.png": "IN-GAME LOBBY (IN_CITY)",
             "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
             "lobby_mini_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
             "lobby_out_city_icon.png": "IN-GAME LOBBY (OUT_CITY)",
@@ -84,6 +84,8 @@ class GameStateDetector:
             "special/note.png": "NOTE",
             "special/rss_statistics.png": "RESOURCE_STATISTICS",
             "special/market.png": "MARKET_MENU",
+            "auto-peacekeeping.png": "AUTO_PEACEKEEPING",
+            "icon_markers/skip.png": "SKIP",
         }
         
         # Activity templates — returns name + center coordinates when matched
@@ -101,6 +103,8 @@ class GameStateDetector:
             "activities/train_icon.png": "TRAINING_ICON",
             "activities/btn_train.png": "BTN_TRAIN",
             "activities/build.png": "RSS_BUILD",
+            "tavern/free_draw_btn.png": "TAVERN_FREE_DRAW",
+            "tavern/draw_x10_btn.png": "TAVERN_DRAW_X10",
         }
 
         # Alliance templates
@@ -108,6 +112,7 @@ class GameStateDetector:
             "alliance/war.png": "ALLIANCE_WAR",
             "alliance/no_rally.png": "NO_RALLY",
             "alliance/already_join_rally.png": "ALREADY_JOIN_RALLY",
+            "alliance/alliance_help_btn.png": "ALLIANCE_HELP",
         }
         
         # Icon templates — dedicated detector for locating items/markers with coordinates
@@ -116,6 +121,7 @@ class GameStateDetector:
             "icon_markers/city_rss_wood_full.png": "CITY_RSS_WOOD",
             "icon_markers/city_rss_ore_full.png": "CITY_RSS_ORE",
             "icon_markers/city_rss_mana_full.png": "CITY_RSS_MANA",
+            "icon_markers/heal_icon.png": "HEALING_ICON",
         }
         
         # Account templates — for swap_account flow

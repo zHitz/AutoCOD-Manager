@@ -1149,6 +1149,194 @@ async def get_bot_status(group_id: int = None):
         return {"status": "ok", "groups": all_statuses}
 
 
+# ──────────────────────────────────────────────
+# Monitor / KPI Endpoints
+# ──────────────────────────────────────────────
+
+
+@app.get("/api/monitor/kpi-summary")
+async def get_kpi_summary(group_id: int):
+    """Get real-time KPI summary metrics for a target group."""
+    from backend.core.workflow.kpi_calculator import compute_kpi_summary
+    from backend.core.workflow.bot_orchestrator import get_orchestrator_status
+
+    orch_status = get_orchestrator_status(group_id)
+    kpi = await compute_kpi_summary(group_id, orch_status)
+    return {"status": "ok", "data": kpi}
+
+
+@app.get("/api/monitor/account-activities")
+async def get_monitor_account_activities(account_id: int, group_id: int = None):
+    """Get today's activity breakdown for a specific account (Monitor tab detail)."""
+    import aiosqlite
+    from backend.config import config as app_config
+    from datetime import datetime as dt
+
+    today = dt.now().strftime("%Y-%m-%d")
+    try:
+        async with aiosqlite.connect(app_config.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT activity_id, activity_name, status,
+                          started_at, finished_at, duration_ms,
+                          error_message
+                   FROM account_activity_logs
+                   WHERE account_id = ? AND started_at LIKE ?
+                   ORDER BY started_at DESC""",
+                (account_id, f"{today}%"),
+            )
+            rows = [dict(r) for r in await cursor.fetchall()]
+
+        # Group by activity_id for summary
+        summary = {}
+        for r in rows:
+            aid = r["activity_id"]
+            if aid not in summary:
+                summary[aid] = {
+                    "activity_id": aid,
+                    "activity_name": r["activity_name"],
+                    "runs": 0,
+                    "successes": 0,
+                    "failures": 0,
+                    "total_duration_ms": 0,
+                    "last_status": r["status"],
+                    "last_run_at": r["started_at"],
+                    "last_error": "",
+                }
+            s = summary[aid]
+            s["runs"] += 1
+            if r["status"] == "SUCCESS":
+                s["successes"] += 1
+            elif r["status"] == "FAILED":
+                s["failures"] += 1
+                if r.get("error_message"):
+                    s["last_error"] = r["error_message"]
+            s["total_duration_ms"] += r.get("duration_ms") or 0
+
+        # ── Merge with group's activity config to show ALL configured activities ──
+        if group_id:
+            config_file = _ACTIVITY_CONFIG_DIR / f"{group_id}.json"
+            if config_file.exists():
+                import json as json_mod
+
+                cfg = json_mod.loads(config_file.read_text(encoding="utf-8"))
+                activity_order = cfg.get("activity_order", [])
+
+                for act_id, act_node in cfg.get("activities", {}).items():
+                    if act_node.get("enabled") and act_id not in summary:
+                        # Activity is enabled but has no logs today → show as pending
+                        registry_name = act_id.replace("_", " ").title()
+                        try:
+                            for reg_act in workflow_registry.get_activity_registry():
+                                if reg_act["id"] == act_id:
+                                    registry_name = reg_act["name"]
+                                    break
+                        except Exception:
+                            pass
+
+                        summary[act_id] = {
+                            "activity_id": act_id,
+                            "activity_name": registry_name,
+                            "runs": 0,
+                            "successes": 0,
+                            "failures": 0,
+                            "total_duration_ms": 0,
+                            "last_status": "PENDING",
+                            "last_run_at": None,
+                            "last_error": "",
+                        }
+
+                # Enrich ALL activities with cooldown info from config
+                import time as time_mod
+                from backend.core.workflow import execution_log as exec_log_mod
+
+                for act_id, act_node in cfg.get("activities", {}).items():
+                    if act_id in summary:
+                        cd_enabled = act_node.get("cooldown_enabled", False)
+                        cd_minutes = act_node.get("cooldown_minutes", 0)
+                        summary[act_id]["cooldown_enabled"] = cd_enabled
+                        summary[act_id]["cooldown_minutes"] = cd_minutes
+
+                        # Compute remaining cooldown seconds (per-account from DB)
+                        cd_remaining = 0
+                        if cd_enabled and cd_minutes > 0:
+                            try:
+                                # Primary: per-account last run from DB
+                                last_run_epoch = await exec_log_mod.get_last_activity_run(
+                                    int(account_id), act_id
+                                )
+                                # Fallback: config-level last_run (global)
+                                if last_run_epoch <= 0:
+                                    last_run_str = act_node.get("last_run")
+                                    if last_run_str:
+                                        from datetime import datetime as dt_mod
+                                        last_run_epoch = dt_mod.fromisoformat(
+                                            str(last_run_str)
+                                        ).timestamp()
+
+                                if last_run_epoch > 0:
+                                    elapsed = time_mod.time() - last_run_epoch
+                                    cd_remaining = max(
+                                        0, int(cd_minutes * 60 - elapsed)
+                                    )
+                            except (ValueError, TypeError, Exception):
+                                pass
+
+                        summary[act_id]["cooldown_remaining_sec"] = cd_remaining
+
+                        # Override status to COOLDOWN if still cooling
+                        if (
+                            cd_remaining > 0
+                            and summary[act_id]["last_status"]
+                            not in ("RUNNING", "SKIPPED")
+                        ):
+                            summary[act_id]["last_status"] = "COOLDOWN"
+
+                # Enrich with live orchestrator data (if bot is running)
+                try:
+                    from backend.core.workflow.bot_orchestrator import (
+                        _active_orchestrators,
+                    )
+
+                    orch = _active_orchestrators.get(group_id)
+                    if orch and orch.is_running:
+                        for act_id, live_status in orch.activity_statuses.items():
+                            if act_id in summary:
+                                if live_status == "running":
+                                    summary[act_id]["last_status"] = "RUNNING"
+                                elif live_status == "skipped":
+                                    summary[act_id]["last_status"] = "SKIPPED"
+                except Exception:
+                    pass
+
+                # Sort by configured activity order
+                if activity_order:
+                    ordered = []
+                    for aid in activity_order:
+                        if aid in summary:
+                            ordered.append(summary.pop(aid))
+                    ordered.extend(summary.values())
+                    activities_list = ordered
+                else:
+                    activities_list = list(summary.values())
+            else:
+                activities_list = list(summary.values())
+        else:
+            activities_list = list(summary.values())
+
+        return {
+            "status": "ok",
+            "data": {
+                "account_id": account_id,
+                "date": today,
+                "activities": activities_list,
+                "raw_logs": rows[:50],  # Last 50 logs
+            },
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 @app.delete("/api/workflow/recipes/{recipe_id}")
 async def delete_workflow_recipe(recipe_id: str):
     """Delete a saved recipe."""

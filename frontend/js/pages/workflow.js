@@ -13,6 +13,7 @@ const WorkflowPage = {
         <button class="wf-main-tab active" data-view="activity" onclick="WF3.switchMainTab('activity')">Activity (Bot)</button>
         <button class="wf-main-tab" data-view="builder" onclick="WF3.switchMainTab('builder')">Recipe Builder</button>
         <button class="wf-main-tab" data-view="group" onclick="WF3.switchMainTab('group')">Account Groups</button>
+        <button class="wf-main-tab" data-view="monitor" onclick="WF3.switchMainTab('monitor')">Monitor</button>
       </div>
 
       <!-- ============================================== 
@@ -166,6 +167,45 @@ const WorkflowPage = {
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               Start Bot
             </button>
+          </div>
+        </div>
+
+        <!-- KPI SUMMARY BAR -->
+        <div id="kpi-summary-bar" class="kpi-bar" style="display:none">
+          <div class="kpi-card" id="kpi-fairness">
+            <div class="kpi-icon">⚖️</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Fairness</div>
+              <div class="kpi-value" id="kpi-val-fairness">—</div>
+            </div>
+          </div>
+          <div class="kpi-card" id="kpi-success">
+            <div class="kpi-icon">✅</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Success Rate</div>
+              <div class="kpi-value" id="kpi-val-success">—</div>
+            </div>
+          </div>
+          <div class="kpi-card" id="kpi-pingpong">
+            <div class="kpi-icon">🔄</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Ping-pong</div>
+              <div class="kpi-value" id="kpi-val-pingpong">—</div>
+            </div>
+          </div>
+          <div class="kpi-card" id="kpi-exectime">
+            <div class="kpi-icon">⏱️</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Execute Time</div>
+              <div class="kpi-value" id="kpi-val-exectime">—</div>
+            </div>
+          </div>
+          <div class="kpi-card" id="kpi-coverage">
+            <div class="kpi-icon">📊</div>
+            <div class="kpi-body">
+              <div class="kpi-label">Coverage</div>
+              <div class="kpi-value" id="kpi-val-coverage">—</div>
+            </div>
           </div>
         </div>
 
@@ -409,6 +449,73 @@ const WorkflowPage = {
         </div>
       </div>
 
+      <!-- ==============================================================
+           SECTION D: MONITOR TAB (Standalone — Real-time Bot Overview)
+           ============================================================== -->
+      <div id="wf-section-monitor" class="wf-section-container" style="display:none">
+        <!-- MONITOR HEADER -->
+        <div class="mon-header">
+          <div class="mon-header-left">
+            <h2 style="margin:0;font-size:16px;">Workflow Monitor</h2>
+            <span id="mon-status-badge" class="mon-badge mon-badge-idle">IDLE</span>
+            <span id="mon-progress" class="mon-progress" style="display:none"></span>
+            <span id="mon-smart-wait" class="mon-smart-wait-badge" style="display:none"></span>
+          </div>
+          <div class="mon-header-right">
+            <select id="mon-group-filter" class="mon-select" onchange="WF3._onMonitorGroupChange(this.value)">
+              <option value="">Select Group...</option>
+            </select>
+            <button class="btn btn-outline btn-sm" onclick="WF3._refreshMonitor()" style="display:flex;align-items:center;gap:5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- MONITOR KPI BAR -->
+        <div id="mon-kpi-bar" class="kpi-bar" style="display:none">
+          <div class="kpi-card"><div class="kpi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="m8 8 4-5 4 5"/><path d="M4 14h4"/><path d="M16 14h4"/><path d="m9 18 3 3 3-3"/></svg></div><div class="kpi-body"><div class="kpi-label">Fairness</div><div class="kpi-value" id="mon-kpi-fairness">—</div></div></div>
+          <div class="kpi-card"><div class="kpi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--emerald-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="kpi-body"><div class="kpi-label">Success Rate</div><div class="kpi-value" id="mon-kpi-success">—</div></div></div>
+          <div class="kpi-card"><div class="kpi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--orange-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></div><div class="kpi-body"><div class="kpi-label">Ping-pong</div><div class="kpi-value" id="mon-kpi-pingpong">—</div></div></div>
+          <div class="kpi-card"><div class="kpi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="kpi-body"><div class="kpi-label">Exec Time</div><div class="kpi-value" id="mon-kpi-exectime">—</div></div></div>
+          <div class="kpi-card"><div class="kpi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--indigo-500)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><div class="kpi-body"><div class="kpi-label">Coverage</div><div class="kpi-value" id="mon-kpi-coverage">—</div></div></div>
+        </div>
+
+        <!-- MONITOR 2-PANEL LAYOUT -->
+        <div class="mon-layout">
+          <!-- LEFT: Account Queue -->
+          <div class="mon-queue-panel">
+            <div class="mon-panel-title">Account Queue</div>
+            <div id="mon-queue-list" class="mon-queue-list">
+              <div class="mon-empty">Select a group to view accounts</div>
+            </div>
+          </div>
+          <!-- RIGHT: Activity Detail (Tabbed) -->
+          <div class="mon-detail-panel">
+            <div class="mon-detail-tabs">
+              <button class="mon-dtab active" data-tab="activities" onclick="WF3._switchDetailTab('activities')">Activities</button>
+              <button class="mon-dtab" data-tab="logs" onclick="WF3._switchDetailTab('logs')">Recent Logs</button>
+            </div>
+            <div id="mon-detail-activities" class="mon-detail-content">
+              <div class="mon-empty">Click an account to view activities</div>
+            </div>
+            <div id="mon-detail-logs" class="mon-detail-content" style="display:none">
+              <div class="mon-empty">Click an account to view logs</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MONITOR BOTTOM TIMELINE (Collapsible) -->
+        <div class="mon-timeline-wrapper">
+          <button class="mon-timeline-toggle" onclick="WF3._toggleTimeline()">
+            <span id="mon-tl-toggle-text">Show Timeline ▼</span>
+          </button>
+          <div id="mon-timeline" class="mon-timeline" style="display:none">
+            <div id="mon-timeline-list" class="mon-timeline-list"></div>
+          </div>
+        </div>
+      </div>
+
       <div id="wf-toast-zone" class="wf-toast-zone"></div>
     </div>`;
     },
@@ -584,10 +691,88 @@ const WF3 = {
             clearInterval(this._sessionTimerInterval);
             this._sessionTimerInterval = null;
         }
-        // Optional: remove ws client listeners if navigation handles it strictly
-        // wsClient.off('workflow_log');
-        // wsClient.off('workflow_progress');
-        // wsClient.off('workflow_status');
+    },
+
+    // ── KPI SUMMARY ──
+    _kpiThrottleTimer: null,
+
+    async _fetchKpi(groupId) {
+        if (!groupId) {
+            const bar = document.getElementById('kpi-summary-bar');
+            if (bar) bar.style.display = 'none';
+            return;
+        }
+        try {
+            const res = await fetch(`/api/monitor/kpi-summary?group_id=${groupId}`);
+            if (!res.ok) return;
+            const json = await res.json();
+            if (json.status === 'ok' && json.data) {
+                this._renderKpi(json.data);
+            }
+        } catch (e) {
+            console.warn('[KPI] Fetch failed:', e);
+        }
+    },
+
+    _renderKpi(d) {
+        const bar = document.getElementById('kpi-summary-bar');
+        if (!bar) return;
+        bar.style.display = '';
+
+        const set = (id, val, colorClass) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = val;
+            el.className = 'kpi-value' + (colorClass ? ' ' + colorClass : '');
+        };
+
+        // Fairness Index
+        if (d.fairness_index != null) {
+            const f = d.fairness_index;
+            const cls = f >= 0.85 ? 'kpi-good' : f >= 0.7 ? 'kpi-warn' : 'kpi-bad';
+            set('kpi-val-fairness', f.toFixed(2), cls);
+        } else {
+            set('kpi-val-fairness', '—');
+        }
+
+        // Success Rate
+        if (d.success_rate != null) {
+            const cls = d.success_rate >= 95 ? 'kpi-good' : d.success_rate >= 85 ? 'kpi-warn' : 'kpi-bad';
+            set('kpi-val-success', d.success_rate.toFixed(1) + '%', cls);
+        } else {
+            set('kpi-val-success', '—');
+        }
+
+        // Ping-pong
+        const ppCls = d.ping_pong_count === 0 ? 'kpi-good' : 'kpi-bad';
+        set('kpi-val-pingpong', String(d.ping_pong_count), ppCls);
+
+        // Execute Time %
+        if (d.execute_time_pct != null) {
+            const cls = d.execute_time_pct >= 65 ? 'kpi-good' : d.execute_time_pct >= 50 ? 'kpi-warn' : 'kpi-bad';
+            set('kpi-val-exectime', d.execute_time_pct.toFixed(1) + '%', cls);
+        } else {
+            set('kpi-val-exectime', '—');
+        }
+
+        // Coverage
+        if (d.cycle != null && d.coverage_pct != null) {
+            set('kpi-val-coverage', `C${d.cycle} · ${d.coverage_pct.toFixed(0)}%`, 'kpi-good');
+        } else if (d.total_runs_today > 0) {
+            set('kpi-val-coverage', `${d.total_runs_today} runs`, '');
+        } else {
+            set('kpi-val-coverage', 'Idle');
+        }
+    },
+
+    _scheduleKpiRefresh() {
+        if (this._kpiThrottleTimer) return;
+        this._kpiThrottleTimer = setTimeout(() => {
+            this._kpiThrottleTimer = null;
+            if (this.activitySelectedGroupId) {
+                this._fetchKpi(this.activitySelectedGroupId);
+            }
+        }, 5000);
     },
 
     async refreshList() {
@@ -606,10 +791,15 @@ const WF3 = {
         const builderSec = document.getElementById('wf-section-builder');
         const activitySec = document.getElementById('wf-section-activity');
         const groupSec = document.getElementById('wf-section-group');
+        const monitorSec = document.getElementById('wf-section-monitor');
 
         if (builderSec) builderSec.style.display = 'none';
         if (activitySec) activitySec.style.display = 'none';
         if (groupSec) groupSec.style.display = 'none';
+        if (monitorSec) monitorSec.style.display = 'none';
+
+        // Stop monitor timer if leaving
+        if (tab !== 'monitor') this._stopMonitorTimer();
 
         if (tab === 'builder') {
             if (builderSec) builderSec.style.display = 'block';
@@ -620,6 +810,9 @@ const WF3 = {
         } else if (tab === 'group') {
             if (groupSec) groupSec.style.display = 'block';
             this.loadGroupsData();
+        } else if (tab === 'monitor') {
+            if (monitorSec) { monitorSec.style.display = 'flex'; monitorSec.style.flexDirection = 'column'; }
+            this._initMonitorTab();
         }
     },
 
@@ -857,6 +1050,9 @@ const WF3 = {
                 }
             } catch (e) { }
         }
+
+        // Fetch KPI for selected group
+        this._fetchKpi(this.activitySelectedGroupId);
     },
 
     // ── Unified Config Handling (v2 Schema) ──
@@ -2705,6 +2901,30 @@ const WF3 = {
 
             // Use loose equality to handle int/string mismatch
             // eslint-disable-next-line eqeqeq
+
+            // ── MONITOR TAB: must update BEFORE the activity-group gate ──
+            if (WF3.activeMainTab === 'monitor' && WF3._monitorGroupId == groupId) {
+                WF3._monitorLastData = data;
+                WF3._renderMonitorQueue(data);
+                WF3._updateMonitorStatusBadge(data);
+                WF3._scheduleKpiRefresh();
+                // Ensure countdown timer is always running
+                WF3._startMonitorTimer();
+                // Instant live update: patch activity tags/status from WS data
+                WF3._liveUpdateActivityDetail(data);
+                // Slow full refresh for duration/runs data (10s throttle)
+                if (WF3._monitorSelectedAccountId && !WF3._monDetailRefreshPending) {
+                    WF3._monDetailRefreshPending = true;
+                    setTimeout(() => {
+                        WF3._monDetailRefreshPending = false;
+                        if (WF3._monitorSelectedAccountId) {
+                            WF3._onMonitorAccountClick(WF3._monitorSelectedAccountId);
+                        }
+                    }, 10000);
+                }
+            }
+
+            // Gate: Activity tab updates only for the selected activity group
             if (groupId != WF3.activitySelectedGroupId) return;
 
             // Update activity badges DIRECTLY (works even if queue panel isn't visible)
@@ -2714,6 +2934,59 @@ const WF3 = {
             if (typeof WF3.renderAccountQueue === 'function') {
                 WF3.renderAccountQueue(data);
             }
+
+            // Refresh KPI bar (throttled to avoid spam)
+            WF3._scheduleKpiRefresh();
+        });
+
+        // ── Monitor Timeline events (always buffer, regardless of active tab) ──
+        wsClient.on('timeline_event', (data) => {
+            if (!WF3) return;
+            if (WF3._monitorGroupId && data.group_id != WF3._monitorGroupId) return;
+            WF3._pushTimelineEvent(data);
+        });
+
+        wsClient.on('workflow_log', (data) => {
+            if (!WF3) return;
+            WF3._pushTimelineEvent({
+                ts: Date.now() / 1000,
+                icon: data.log_type === 'ok' ? '\u2705' : data.log_type === 'err' ? '\u274c' : '\u2139\ufe0f',
+                message: `Emu ${data.emulator_index}: ${data.message}`,
+                emu_index: data.emulator_index,
+            });
+        });
+
+        wsClient.on('activity_started', (data) => {
+            if (!WF3) return;
+            if (WF3._monitorGroupId && data.group_id != WF3._monitorGroupId) return;
+            WF3._pushTimelineEvent({
+                ts: Date.now() / 1000,
+                icon: '\u25b6\ufe0f',
+                message: `${data.account_id || ''}: Started ${data.activity_name || data.activity_id || ''}`,
+                emu_index: data.emu_index,
+            });
+        });
+
+        wsClient.on('activity_completed', (data) => {
+            if (!WF3) return;
+            if (WF3._monitorGroupId && data.group_id != WF3._monitorGroupId) return;
+            WF3._pushTimelineEvent({
+                ts: Date.now() / 1000,
+                icon: '\u2705',
+                message: `${data.account_id || ''}: ${data.activity_name || data.activity_id || ''} completed`,
+                emu_index: data.emu_index,
+            });
+        });
+
+        wsClient.on('activity_failed', (data) => {
+            if (!WF3) return;
+            if (WF3._monitorGroupId && data.group_id != WF3._monitorGroupId) return;
+            WF3._pushTimelineEvent({
+                ts: Date.now() / 1000,
+                icon: '\u274c',
+                message: `${data.account_id || ''}: ${data.activity_name || data.activity_id || ''} failed`,
+                emu_index: data.emu_index,
+            });
         });
     },
 
@@ -2769,6 +3042,732 @@ const WF3 = {
     },
 
     delay(ms) { return new Promise(r => setTimeout(r, ms)); },
+
+    // ═══════════════════════════════════════════════
+    // MONITOR TAB — Standalone Real-time Overview
+    // ═══════════════════════════════════════════════
+    _monitorGroupId: null,
+    _monitorLastData: null,
+    _monitorSelectedAccountId: null,
+    _monitorTimerInterval: null,
+    _monitorKpiThrottle: null,
+    _monTimelineEvents: [],
+
+    async _initMonitorTab() {
+        // Populate group dropdown using loadGroupsData
+        try {
+            if (!this.di) await this._initDI();
+            const res = await this.di.groupRepo.getAll();
+            const sel = document.getElementById('mon-group-filter');
+            if (sel && res.ok) {
+                const current = sel.value;
+                sel.innerHTML = '<option value="">Select Group...</option>' +
+                    (res.data || []).map(g => `<option value="${g.id}">${g.name} (${JSON.parse(g.account_ids || '[]').length})</option>`).join('');
+                // Restore selection
+                if (current) sel.value = current;
+                else if (this._monitorGroupId) sel.value = this._monitorGroupId;
+            }
+        } catch (e) {
+            console.warn('[Monitor] Failed to load groups:', e);
+        }
+
+        // If we already have a group selected, refresh
+        if (this._monitorGroupId) {
+            this._refreshMonitor();
+        }
+
+        // Restore timeline open state from localStorage
+        try {
+            if (localStorage.getItem('mon_timeline_open') === '1') {
+                const panel = document.getElementById('mon-timeline');
+                const text = document.getElementById('mon-tl-toggle-text');
+                if (panel) { panel.style.display = ''; this._renderTimeline(); }
+                if (text) text.textContent = 'Hide Timeline \u25b2';
+            }
+        } catch (e) {}
+    },
+
+    async _onMonitorGroupChange(groupId) {
+        this._monitorGroupId = groupId ? parseInt(groupId) : null;
+        this._monitorSelectedAccountId = null;
+        this._monitorLastData = null;
+
+        // Reset detail panel
+        const detail = document.getElementById('mon-detail-content');
+        if (detail) detail.innerHTML = '<div class="mon-empty">Click an account to view activities</div>';
+
+        if (!groupId) {
+            document.getElementById('mon-kpi-bar').style.display = 'none';
+            document.getElementById('mon-queue-list').innerHTML = '<div class="mon-empty">Select a group to view accounts</div>';
+            document.getElementById('mon-status-badge').className = 'mon-badge mon-badge-idle';
+            document.getElementById('mon-status-badge').textContent = 'IDLE';
+            this._stopMonitorTimer();
+            return;
+        }
+
+        await this._refreshMonitor();
+    },
+
+    async _refreshMonitor() {
+        if (!this._monitorGroupId) return;
+
+        try {
+            // Fetch bot status for this group
+            const res = await fetch(`/api/bot/status?group_id=${this._monitorGroupId}`);
+            const json = await res.json();
+
+            if (json.status === 'ok' && json.data) {
+                this._monitorLastData = json.data;
+                this._renderMonitorQueue(json.data);
+                this._updateMonitorStatusBadge(json.data);
+                this._startMonitorTimer();
+            } else {
+                // Bot not running — show accounts from group data
+                this._monitorLastData = null;
+                this._renderMonitorQueueFromGroup();
+                this._updateMonitorStatusBadge(null);
+                // Keep timer alive — cooldowns persist even when bot is idle
+                this._startMonitorTimer();
+            }
+
+            // Fetch KPI
+            this._renderMonitorKpi(this._monitorGroupId);
+        } catch (e) {
+            console.warn('[Monitor] Refresh failed:', e);
+        }
+    },
+
+    _updateMonitorStatusBadge(data) {
+        const badge = document.getElementById('mon-status-badge');
+        const progress = document.getElementById('mon-progress');
+        const smartWait = document.getElementById('mon-smart-wait');
+        if (!badge) return;
+
+        if (!data) {
+            badge.className = 'mon-badge mon-badge-idle';
+            badge.textContent = 'IDLE';
+            if (progress) progress.style.display = 'none';
+            if (smartWait) smartWait.style.display = 'none';
+        } else if (data.stop_requested) {
+            badge.className = 'mon-badge mon-badge-stopping';
+            badge.textContent = 'STOPPING';
+            if (progress) progress.style.display = 'none';
+            if (smartWait) smartWait.style.display = 'none';
+        } else if (data.is_running) {
+            badge.className = 'mon-badge mon-badge-running';
+            badge.textContent = `RUNNING · Cycle ${data.cycle || 1}`;
+
+            // Account progress
+            if (progress) {
+                progress.style.display = '';
+                progress.textContent = `Account: ${(data.current_idx || 0) + 1}/${data.total_accounts || 0}`;
+            }
+
+            // Smart Wait indicator
+            const sw = data.smart_wait_active;
+            if (smartWait && sw && sw.account_id && sw.remaining_sec > 0) {
+                smartWait.style.display = '';
+                smartWait.textContent = '';
+                const clockSvg = document.createElement('span');
+                clockSvg.innerHTML = this._monIcon('clock');
+                clockSvg.style.marginRight = '4px';
+                smartWait.appendChild(clockSvg);
+                smartWait.appendChild(document.createTextNode(`Smart Wait: ${this._formatCD(sw.remaining_sec)}`));
+            } else if (smartWait) {
+                smartWait.style.display = 'none';
+            }
+        } else {
+            badge.className = 'mon-badge mon-badge-idle';
+            badge.textContent = 'STOPPED';
+            if (progress) progress.style.display = 'none';
+            if (smartWait) smartWait.style.display = 'none';
+        }
+    },
+
+    async _renderMonitorKpi(groupId) {
+        if (!groupId) return;
+        // Throttle to avoid spam
+        if (this._monitorKpiThrottle) return;
+        this._monitorKpiThrottle = setTimeout(() => { this._monitorKpiThrottle = null; }, 5000);
+
+        try {
+            const res = await fetch(`/api/monitor/kpi-summary?group_id=${groupId}`);
+            if (!res.ok) return;
+            const json = await res.json();
+            if (json.status !== 'ok' || !json.data) return;
+
+            const bar = document.getElementById('mon-kpi-bar');
+            if (bar) bar.style.display = '';
+
+            const d = json.data;
+            const set = (id, val, cls) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.textContent = val;
+                el.className = 'kpi-value' + (cls ? ' ' + cls : '');
+            };
+
+            if (d.fairness_index != null) {
+                const cls = d.fairness_index >= 0.85 ? 'kpi-good' : d.fairness_index >= 0.7 ? 'kpi-warn' : 'kpi-bad';
+                set('mon-kpi-fairness', d.fairness_index.toFixed(2), cls);
+            } else set('mon-kpi-fairness', '—');
+
+            if (d.success_rate != null) {
+                const cls = d.success_rate >= 95 ? 'kpi-good' : d.success_rate >= 85 ? 'kpi-warn' : 'kpi-bad';
+                set('mon-kpi-success', d.success_rate.toFixed(1) + '%', cls);
+            } else set('mon-kpi-success', '—');
+
+            const ppCls = (d.ping_pong_count || 0) === 0 ? 'kpi-good' : 'kpi-bad';
+            set('mon-kpi-pingpong', String(d.ping_pong_count || 0), ppCls);
+
+            if (d.execute_time_pct != null) {
+                const cls = d.execute_time_pct >= 65 ? 'kpi-good' : d.execute_time_pct >= 50 ? 'kpi-warn' : 'kpi-bad';
+                set('mon-kpi-exectime', d.execute_time_pct.toFixed(1) + '%', cls);
+            } else set('mon-kpi-exectime', '—');
+
+            if (d.cycle != null && d.coverage_pct != null) {
+                set('mon-kpi-coverage', `C${d.cycle} · ${d.coverage_pct.toFixed(0)}%`, 'kpi-good');
+            } else if (d.total_runs_today > 0) {
+                set('mon-kpi-coverage', `${d.total_runs_today} runs`, '');
+            } else set('mon-kpi-coverage', 'Idle');
+        } catch (e) {
+            console.warn('[Monitor] KPI fetch failed:', e);
+        }
+    },
+    // ── SVG Icon Helper (Lucide set, 14x14) ──
+    _monIcon(name, cls = '') {
+        const s = 14;
+        const a = `width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
+        const icons = {
+            monitor:      `<svg ${a} class="${cls}"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
+            'play-circle':`<svg ${a} class="${cls}"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>`,
+            'check-circle':`<svg ${a} class="${cls}"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+            'x-circle':   `<svg ${a} class="${cls}"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+            clock:        `<svg ${a} class="${cls}"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+            circle:       `<svg ${a} class="${cls}"><circle cx="12" cy="12" r="10"/></svg>`,
+            'skip-forward':`<svg ${a} class="${cls}"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>`,
+            'refresh-cw': `<svg ${a} class="${cls}"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+            repeat:       `<svg ${a} class="${cls}"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`,
+            moon:         `<svg ${a} class="${cls}"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
+            'arrow-right':`<svg ${a} class="${cls}"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`,
+            user:         `<svg ${a} class="${cls}"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+        };
+        return icons[name] || '';
+    },
+
+    _renderMonitorQueue(data) {
+        const list = document.getElementById('mon-queue-list');
+        if (!list) return;
+
+        const accounts = data.accounts || [];
+        if (!accounts.length) {
+            list.innerHTML = '<div class="mon-empty">No accounts in queue</div>';
+            return;
+        }
+
+        const nextIdx = data.is_running ? (data.current_idx + 1) % accounts.length : -1;
+
+        // Group by emu_index
+        const byEmu = {};
+        accounts.forEach((acc, idx) => {
+            const key = acc.emu_index ?? 'unassigned';
+            if (!byEmu[key]) byEmu[key] = [];
+            byEmu[key].push({ ...acc, _queueIdx: idx });
+        });
+
+        let html = '';
+        for (const [emuIdx, accs] of Object.entries(byEmu)) {
+            const emuLabel = emuIdx === 'unassigned' ? 'Unassigned' : `Emulator ${emuIdx}`;
+            html += `<div class="mon-emu-group">
+                <div class="mon-emu-header">${this._monIcon('monitor', 'mon-emu-svg')} ${emuLabel} <span class="mon-emu-count">${accs.length}</span></div>`;
+
+            for (const acc of accs) {
+                const isCurrent = acc._queueIdx === data.current_idx && data.is_running;
+                const isNext = acc._queueIdx === nextIdx && data.is_running && !isCurrent;
+                const statusCls = acc.status === 'running' ? 'mon-st-running'
+                    : acc.status === 'done' || acc.status === 'completed' || acc.status === 'success' ? 'mon-st-done'
+                    : acc.status === 'error' ? 'mon-st-error'
+                    : acc.status === 'skipped' ? 'mon-st-skipped'
+                    : 'mon-st-pending';
+
+                const cdSec = acc.cooldown_remaining_sec || 0;
+                const selected = this._monitorSelectedAccountId == acc.id ? ' mon-acc-selected' : '';
+                const nextCls = isNext ? ' mon-acc-next' : '';
+
+                // Status tag with SVG icon
+                let statusHtml = '';
+                if (isCurrent) {
+                    const actName = data.current_activity?.name || 'Activity';
+                    statusHtml = `<span class="mon-status-tag tag-running">${this._monIcon('play-circle')} ${actName}</span>`;
+                } else if (acc.status === 'done' || acc.status === 'completed' || acc.status === 'success') {
+                    statusHtml = `<span class="mon-status-tag tag-done">${this._monIcon('check-circle')} Done</span>`;
+                } else if (acc.status === 'error') {
+                    statusHtml = `<span class="mon-status-tag tag-error">${this._monIcon('x-circle')} Error</span>`;
+                } else if (acc.status === 'skipped') {
+                    statusHtml = `<span class="mon-status-tag tag-skipped">${this._monIcon('skip-forward')} Skipped</span>`;
+                } else if (cdSec > 0) {
+                    statusHtml = `<span class="mon-status-tag tag-cooldown">${this._monIcon('clock')} <span class="mon-cd" data-cd="${cdSec}">${this._formatCD(cdSec)}</span></span>`;
+                } else if (isNext) {
+                    statusHtml = `<span class="mon-status-tag tag-next">${this._monIcon('arrow-right')} Next</span>`;
+                } else {
+                    statusHtml = `<span class="mon-status-tag tag-pending">${this._monIcon('circle')} Pending</span>`;
+                }
+
+                // Sub-info line
+                const subParts = [
+                    acc.emu_index != null ? `Emu ${acc.emu_index}` : '',
+                    acc.game_id || '',
+                    acc.last_run_time ? this._timeAgo(acc.last_run_time) : 'Never',
+                ].filter(Boolean).join(' · ');
+
+                html += `<div class="mon-account-row ${statusCls}${isCurrent ? ' mon-acc-current' : ''}${nextCls}${selected}" 
+                    data-acc-id="${acc.id}" onclick="WF3._onMonitorAccountClick(${acc.id})">
+                    <span class="mon-acc-order">${acc._queueIdx + 1}</span>
+                    <div class="mon-acc-info">
+                        <span class="mon-acc-name">${acc.lord_name || acc.game_id || 'Unknown'}</span>
+                        <span class="mon-acc-sub">${subParts}</span>
+                    </div>
+                    ${statusHtml}
+                </div>`;
+            }
+            html += '</div>';
+        }
+
+        list.innerHTML = html;
+
+        // Auto-scroll to running account
+        const running = list.querySelector('.mon-acc-current');
+        if (running) running.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    },
+
+    async _renderMonitorQueueFromGroup() {
+        // When bot is not running, show accounts from group config
+        const list = document.getElementById('mon-queue-list');
+        if (!list) return;
+
+        try {
+            if (!this.di) await this._initDI();
+            const res = await this.di.groupRepo.getAll();
+            if (!res.ok) return;
+            const group = (res.data || []).find(g => g.id == this._monitorGroupId);
+            if (!group) {
+                list.innerHTML = '<div class="mon-empty">Group not found</div>';
+                return;
+            }
+
+            const accIds = JSON.parse(group.account_ids || '[]');
+            if (!accIds.length) {
+                list.innerHTML = '<div class="mon-empty">No accounts in this group</div>';
+                return;
+            }
+
+            // Fetch real account data for names
+            let accMap = {};
+            try {
+                const accRes = await fetch('/api/accounts');
+                const accJson = await accRes.json();
+                const accList = accJson.status === 'ok' ? (accJson.data || []) : (Array.isArray(accJson) ? accJson : []);
+                for (const a of accList) {
+                    accMap[a.id || a.game_id] = a;
+                }
+            } catch (_) { /* fallback to ID */ }
+
+            list.innerHTML = accIds.map((id, i) => {
+                const acc = accMap[id] || {};
+                const name = acc.lord_name || acc.game_id || `Account #${id}`;
+                return `<div class="mon-account-row mon-st-pending" data-acc-id="${id}" onclick="WF3._onMonitorAccountClick(${id})">
+                    <span class="mon-acc-order">${i + 1}</span>
+                    <div class="mon-acc-info">
+                        <span class="mon-acc-name">${name}</span>
+                        <span class="mon-acc-sub">Idle</span>
+                    </div>
+                    <span class="mon-status-tag tag-pending">${this._monIcon('circle')} Idle</span>
+                </div>`;
+            }).join('');
+        } catch (e) {
+            list.innerHTML = '<div class="mon-empty">Failed to load accounts</div>';
+        }
+    },
+
+    async _onMonitorAccountClick(accountId) {
+        this._monitorSelectedAccountId = accountId;
+
+        // Highlight selected row
+        document.querySelectorAll('.mon-account-row').forEach(el => {
+            el.classList.toggle('mon-acc-selected', el.dataset.accId == accountId);
+        });
+
+        const actPane = document.getElementById('mon-detail-activities');
+        const logPane = document.getElementById('mon-detail-logs');
+        // Show skeleton in whichever tab is active
+        const skel = '<div class="mon-skeleton"><div class="mon-skel-bar skel-w80"></div><div class="mon-skel-bar skel-w60"></div><div class="mon-skel-bar skel-w90"></div><div class="mon-skel-bar skel-w50"></div></div>';
+        if (actPane) actPane.innerHTML = skel;
+        if (logPane) logPane.innerHTML = skel;
+
+        try {
+            const res = await fetch(`/api/monitor/account-activities?account_id=${accountId}&group_id=${this._monitorGroupId || ''}`);
+            const json = await res.json();
+            if (json.status === 'ok' && json.data) {
+                this._renderMonitorDetail(json.data, accountId);
+            } else {
+                if (actPane) actPane.innerHTML = '<div class="mon-empty">No activity data for today</div>';
+                if (logPane) logPane.innerHTML = '<div class="mon-empty">No logs available</div>';
+            }
+        } catch (e) {
+            if (actPane) actPane.innerHTML = '<div class="mon-empty">Failed to fetch activity data</div>';
+            if (logPane) logPane.innerHTML = '<div class="mon-empty">Failed to fetch logs</div>';
+        }
+    },
+
+    /**
+     * Instantly patch activity row DOM elements from WebSocket data.
+     * Updates tags (Running/Next/Done/Error) and row highlight classes
+     * without re-fetching from the API.
+     */
+    _liveUpdateActivityDetail(wsData) {
+        if (!this._monitorSelectedAccountId) return;
+
+        const actStatuses = wsData.activity_statuses || {};
+        const currentActivity = wsData.current_activity || '';
+        const currentAccId = String((wsData.accounts || [])[wsData.current_idx]?.id || '');
+        const selectedAccId = String(this._monitorSelectedAccountId);
+        const isSelectedRunning = (currentAccId === selectedAccId);
+
+        const rows = document.querySelectorAll('#mon-detail-activities .mon-activity-row');
+        if (!rows.length) return;
+
+        // Build ordered list of activity names from DOM
+        const actNames = [];
+        rows.forEach(r => {
+            const nameEl = r.querySelector('.mon-act-name');
+            if (nameEl) actNames.push(nameEl.textContent.trim());
+        });
+
+        // Determine running and next indices for selected account
+        let runningIdx = -1;
+        let nextIdx = -1;
+        if (isSelectedRunning) {
+            runningIdx = actNames.indexOf(currentActivity);
+            if (runningIdx >= 0) {
+                // Next = first pending after running
+                for (let i = runningIdx + 1; i < actNames.length; i++) {
+                    const st = actStatuses[actNames[i]];
+                    if (!st || st === 'pending') { nextIdx = i; break; }
+                }
+            }
+        }
+
+        rows.forEach((row, i) => {
+            const name = actNames[i];
+            const status = actStatuses[name] || '';
+            const tagContainer = row.querySelector('.mon-act-w-tag');
+
+            // Update row class
+            row.classList.remove('mon-act-current', 'mon-act-next');
+            if (i === runningIdx) {
+                row.classList.add('mon-act-current');
+            } else if (i === nextIdx) {
+                row.classList.add('mon-act-next');
+            }
+
+            // Update tag
+            if (tagContainer) {
+                let tagHtml = '';
+                if (i === runningIdx) {
+                    tagHtml = `<span class="mon-act-tag mon-tag-running">${this._monIcon('play-circle')} Running</span>`;
+                } else if (i === nextIdx) {
+                    tagHtml = `<span class="mon-act-tag mon-tag-next">${this._monIcon('arrow-right')} Next</span>`;
+                } else if (status === 'done') {
+                    tagHtml = `<span class="mon-act-tag mon-tag-done">${this._monIcon('check-circle')} Done</span>`;
+                } else if (status === 'error') {
+                    tagHtml = `<span class="mon-act-tag mon-tag-error">${this._monIcon('x-circle')} Error</span>`;
+                }
+                tagContainer.innerHTML = tagHtml;
+            }
+        });
+    },
+
+    _renderMonitorDetail(data, accountId) {
+        const actPane = document.getElementById('mon-detail-activities');
+        const logPane = document.getElementById('mon-detail-logs');
+        if (!actPane) return;
+
+        // Find full account info from last data or DOM
+        let accName = `Account #${accountId}`;
+        let accInfo = null;
+        if (this._monitorLastData) {
+            accInfo = (this._monitorLastData.accounts || []).find(a => a.id == accountId);
+            if (accInfo) accName = accInfo.lord_name || accInfo.game_id || accName;
+        }
+        // Fallback: read name from the account queue card
+        if (accName.startsWith('Account #')) {
+            const accCard = document.querySelector(`.mon-account-row[data-acc-id="${accountId}"] .mon-acc-name`);
+            if (accCard && accCard.textContent) accName = accCard.textContent.trim();
+        }
+
+        // Build enriched header sub-line
+        let headerSub = '';
+        if (accInfo) {
+            const parts = [];
+            if (accInfo.emu_index != null) parts.push(`Emu ${accInfo.emu_index}`);
+            if (accInfo.game_id) parts.push(`ID ${accInfo.game_id}`);
+            const cdSec = accInfo.cooldown_remaining_sec || 0;
+            if (cdSec > 0) {
+                parts.push(`CD ${this._formatCD(cdSec)}`);
+            } else if (accInfo.status) {
+                const stLabel = accInfo.status.charAt(0).toUpperCase() + accInfo.status.slice(1);
+                parts.push(`Status: ${stLabel}`);
+            }
+            headerSub = parts.join(' · ');
+        }
+
+        const headerHtml = `<div class="mon-detail-header">
+            <div><div class="mon-detail-name">${this._monIcon('user')} ${accName}</div>${headerSub ? `<div class="mon-acc-sub">${headerSub}</div>` : ''}</div>
+            <span class="mon-detail-date">${data.date}</span>
+        </div>`;
+
+        // ── Activities Tab ──
+        const activities = data.activities || [];
+        if (!activities.length) {
+            actPane.innerHTML = headerHtml + '<div class="mon-empty">No activities recorded today</div>';
+        } else {
+            // Determine running and next activity indices
+            let runningIdx = -1;
+            let nextIdx = -1;
+            for (let i = 0; i < activities.length; i++) {
+                if (activities[i].last_status === 'RUNNING') { runningIdx = i; break; }
+            }
+            if (runningIdx >= 0) {
+                for (let i = runningIdx + 1; i < activities.length; i++) {
+                    const st = activities[i].last_status;
+                    if (!st || st === 'PENDING') { nextIdx = i; break; }
+                }
+            }
+
+            // Column header
+            let actHtml = headerHtml + `<div class="mon-act-header">
+                <span class="mon-act-h-name">Activity</span>
+                <span class="mon-act-h-col mon-act-w-tag"></span>
+                <span class="mon-act-h-col mon-act-w-status">Status</span>
+                <span class="mon-act-h-col mon-act-w-dur">Time</span>
+                <span class="mon-act-h-col mon-act-w-runs">Runs</span>
+            </div>`;
+
+            actHtml += '<div class="mon-activity-list">';
+            for (let i = 0; i < activities.length; i++) {
+                const act = activities[i];
+                const isCurrent = (i === runningIdx);
+                const isNext = (i === nextIdx);
+
+                // Row highlight class
+                const rowCls = isCurrent ? 'mon-act-current' : isNext ? 'mon-act-next' : '';
+
+                // Left-side tag (clear visual labels)
+                let tagHtml = '';
+                if (isCurrent) {
+                    tagHtml = `<span class="mon-act-tag mon-tag-running">${this._monIcon('play-circle')} Running</span>`;
+                } else if (isNext) {
+                    tagHtml = `<span class="mon-act-tag mon-tag-next">${this._monIcon('arrow-right')} Next</span>`;
+                } else if (act.last_status === 'SUCCESS') {
+                    tagHtml = `<span class="mon-act-tag mon-tag-done">${this._monIcon('check-circle')} Done</span>`;
+                } else if (act.last_status === 'FAILED') {
+                    tagHtml = `<span class="mon-act-tag mon-tag-error">${this._monIcon('x-circle')} Error</span>`;
+                }
+
+                // Error icon (inline tooltip)
+                const errIcon = act.last_error
+                    ? `<span class="mon-act-err-icon" title="${act.last_error.replace(/"/g, '&quot;')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>`
+                    : '';
+
+                // Status column: Ready or Cooldown MM:SS
+                let statusHtml = '';
+                const cdSec = act.cooldown_remaining_sec || 0;
+                if (cdSec > 0) {
+                    const mm = String(Math.floor(cdSec / 60)).padStart(2, '0');
+                    const ss = String(cdSec % 60).padStart(2, '0');
+                    statusHtml = `<span class="mon-act-cd mon-act-w-status" data-cd="${cdSec}">${mm}:${ss}</span>`;
+                } else {
+                    statusHtml = '<span class="mon-act-status-ready mon-act-w-status">Ready</span>';
+                }
+
+                // Last exec time
+                const durHtml = act.total_duration_ms > 0
+                    ? `<span class="mon-act-dur mon-act-w-dur">${(act.total_duration_ms / 1000).toFixed(0)}s</span>`
+                    : '<span class="mon-act-dur mon-act-w-dur">—</span>';
+
+                // Runs count
+                const runsHtml = `<span class="mon-act-runs mon-act-w-runs">${act.successes || 0}/${act.runs || 0}</span>`;
+
+                actHtml += `<div class="mon-activity-row ${rowCls}">
+                    <div class="mon-act-left">
+                        <span class="mon-act-name">${act.activity_name}</span>
+                        ${errIcon}
+                    </div>
+                    <div class="mon-act-right">
+                        <span class="mon-act-w-tag">${tagHtml}</span>
+                        ${statusHtml}
+                        ${durHtml}
+                        ${runsHtml}
+                    </div>
+                </div>`;
+            }
+            actHtml += '</div>';
+            actPane.innerHTML = actHtml;
+        }
+
+        // ── Logs Tab ──
+        const logs = data.raw_logs || [];
+        if (!logPane) return;
+        if (!logs.length) {
+            logPane.innerHTML = headerHtml + '<div class="mon-empty">No logs recorded today</div>';
+            return;
+        }
+        let logHtml = headerHtml;
+        for (const log of logs.slice(0, 50)) {
+            const time = log.started_at ? log.started_at.split('T')[1]?.substring(0, 8) || '' : '';
+            const stCls = log.status === 'SUCCESS' ? 'mon-log-ok' : log.status === 'FAILED' ? 'mon-log-err' : '';
+            logHtml += `<div class="mon-log-row ${stCls}">
+                <span class="mon-log-time">${time}</span>
+                <span class="mon-log-name">${log.activity_name}</span>
+                <span class="mon-log-st">${log.status}</span>
+            </div>`;
+        }
+        logPane.innerHTML = logHtml;
+    },
+
+    _switchDetailTab(tab) {
+        const actPane = document.getElementById('mon-detail-activities');
+        const logPane = document.getElementById('mon-detail-logs');
+        document.querySelectorAll('.mon-dtab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        if (actPane) actPane.style.display = tab === 'activities' ? '' : 'none';
+        if (logPane) logPane.style.display = tab === 'logs' ? '' : 'none';
+    },
+
+    // ── Cooldown Timer ──
+    _startMonitorTimer() {
+        if (this._monitorTimerInterval) return;
+        this._monitorTimerInterval = setInterval(() => {
+            document.querySelectorAll('.mon-cd').forEach(el => {
+                let cd = parseFloat(el.dataset.cd) - 1;
+                if (cd <= 0) {
+                    el.remove();
+                } else {
+                    el.dataset.cd = cd;
+                    el.textContent = this._formatCD(cd);
+                }
+            });
+            // Tick activity detail cooldown countdowns
+            document.querySelectorAll('.mon-act-cd').forEach(el => {
+                let cd = parseInt(el.dataset.cd, 10) - 1;
+                if (cd <= 0) {
+                    el.textContent = '00:00';
+                    el.dataset.cd = '0';
+                } else {
+                    el.dataset.cd = cd;
+                    const mm = String(Math.floor(cd / 60)).padStart(2, '0');
+                    const ss = String(cd % 60).padStart(2, '0');
+                    el.textContent = `${mm}:${ss}`;
+                }
+            });
+        }, 1000);
+    },
+
+    _stopMonitorTimer() {
+        if (this._monitorTimerInterval) {
+            clearInterval(this._monitorTimerInterval);
+            this._monitorTimerInterval = null;
+        }
+    },
+
+    _formatCD(sec) {
+        sec = Math.max(0, Math.floor(sec));
+        if (sec >= 3600) {
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            return m > 0 ? `${h}h ${m}m` : `${h}h`;
+        }
+        if (sec >= 60) {
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            return s > 0 ? `${m}m ${s}s` : `${m}m`;
+        }
+        return `${sec}s`;
+    },
+
+    _timeAgo(epochSec) {
+        const diff = Math.floor(Date.now() / 1000 - epochSec);
+        if (diff < 60) return 'Just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+    },
+
+    // ── Timeline Panel ──
+    _toggleTimeline() {
+        const panel = document.getElementById('mon-timeline');
+        const text = document.getElementById('mon-tl-toggle-text');
+        if (!panel) return;
+        const isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : '';
+        if (text) text.textContent = isOpen ? 'Show Timeline \u25bc' : 'Hide Timeline \u25b2';
+        try { localStorage.setItem('mon_timeline_open', isOpen ? '0' : '1'); } catch (e) {}
+        if (!isOpen) this._renderTimeline();
+    },
+
+    _pushTimelineEvent(evt) {
+        this._monTimelineEvents.push(evt);
+        if (this._monTimelineEvents.length > 200) {
+            this._monTimelineEvents = this._monTimelineEvents.slice(-200);
+        }
+        // Only render if panel is visible
+        const panel = document.getElementById('mon-timeline');
+        if (panel && panel.style.display !== 'none') {
+            this._renderTimeline();
+        }
+    },
+
+    _renderTimeline() {
+        const list = document.getElementById('mon-timeline-list');
+        if (!list) return;
+        if (!this._monTimelineEvents.length) {
+            list.innerHTML = '<div class="mon-empty">No events yet</div>';
+            return;
+        }
+        // Map backend emoji icons → SVG icon names
+        const iconMap = {
+            '\u{1F504}': 'refresh-cw',  // 🔄
+            '\u2705': 'check-circle',    // ✅
+            '\u274C': 'x-circle',        // ❌
+            '\u25B6\uFE0F': 'play-circle', // ▶️
+            '\u23F3': 'clock',           // ⏳
+            '\u{1F501}': 'repeat',       // 🔁
+            '\u{1F4A4}': 'moon',         // 💤
+            '\u2139\uFE0F': 'circle',    // ℹ️
+        };
+        // Render newest first
+        let html = '';
+        for (let i = this._monTimelineEvents.length - 1; i >= 0; i--) {
+            const e = this._monTimelineEvents[i];
+            const t = e.ts ? new Date(e.ts * 1000).toLocaleTimeString('en-GB', {hour12: false}) : '';
+            const svgName = iconMap[e.icon] || 'circle';
+            const svgHtml = this._monIcon(svgName, 'mon-tl-svg');
+            html += `<div class="mon-tl-row">
+                <span class="mon-tl-time">${t}</span>
+                <span class="mon-tl-icon">${svgHtml}</span>
+                <span class="mon-tl-msg">${e.message || ''}</span>
+            </div>`;
+        }
+        list.innerHTML = html;
+        list.scrollTop = 0;
+    },
+
+    _clearTimeline() {
+        this._monTimelineEvents = [];
+        const list = document.getElementById('mon-timeline-list');
+        if (list) list.innerHTML = '<div class="mon-empty">No events yet</div>';
+    },
 };
 
 

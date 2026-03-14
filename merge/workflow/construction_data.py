@@ -20,12 +20,12 @@ CONSTRUCTION_TAPS = {
         (693, 351),
     ],
     "RESEARCH_CENTER": [
-        # TODO: User cần cung cấp tọa độ navigate từ IN_CITY
+        # TODO: USER cần cung cấp tọa độ navigate từ IN_CITY
         (0, 0),
         (0, 0),
     ],
     "TAVERN": [
-        # TODO: User cần cung cấp tọa độ navigate từ IN_CITY
+        # TODO: USER cần cung cấp tọa độ navigate từ IN_CITY
         (0, 0),
         (0, 0),
     ],

@@ -34,6 +34,7 @@ The Workflow page has **three main sections** reachable via the top tab bar:
 | **Activity (Bot)** | Configure and run automated bot activities per Account Group |
 | **Recipe Builder** | Compose custom step-by-step automation recipes |
 | **Account Groups** | Create and manage groups of accounts to assign to bots |
+| **Monitor** | Real-time workflow overview — queue, activities, KPIs, timeline ([docs](./MONITOR_TAB.md)) |
 
 **Key Design Decisions:**
 - Activity definitions live **exclusively** in `workflow_registry.py` → the frontend fetches them at init time
@@ -58,6 +59,7 @@ workflow.js
     ├── Group Tab      ← renderGroupList(), saveCurrentGroup()
     ├── Builder Tab    ← renderListView(), renderEditorView(), step logic
     ├── Bot Control    ← runBotActivities(), stopBotActivities()
+    ├── Monitor Tab    ← _initMonitorTab(), queue/detail/timeline/KPI (see MONITOR_TAB.md)
     ├── WebSocket      ← setupWebSocket(), _processQueueUpdate()
     └── Status         ← _updateActivityStatuses(), _updateGroupStatusBadge()
 ```

@@ -2450,11 +2450,916 @@
  . a c v - q - n a m e   {   f l e x :   1 ;   w h i t e - s p a c e :   n o w r a p ;   o v e r f l o w :   h i d d e n ;   t e x t - o v e r f l o w :   e l l i p s i s ;   } 
   
  
-/* Drag and Drop visually */
 .acv-activity-row.dragging {
     opacity: 0.5;
     background: var(--muted);
     box-shadow: var(--shadow-sm);
     z-index: 10;
 }
+
+/* ═══════════════════════════════════════════════
+   KPI SUMMARY BAR
+   ═══════════════════════════════════════════════ */
+
+.kpi-bar {
+    display: flex;
+    gap: 10px;
+    padding: 0 0 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.kpi-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.kpi-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 140px;
+    padding: 10px 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(8px);
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.kpi-card:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.kpi-icon {
+    font-size: 18px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.kpi-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.kpi-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+}
+
+.kpi-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--foreground);
+    white-space: nowrap;
+    transition: color var(--duration-fast);
+}
+
+.kpi-value.kpi-good {
+    color: var(--emerald-500);
+}
+
+.kpi-value.kpi-warn {
+    color: var(--amber-500);
+}
+
+.kpi-value.kpi-bad {
+    color: var(--red-500);
+}
+
+/* ═══════════════════════════════════════════════
+   MONITOR TAB — Standalone Real-time Overview
+   ═══════════════════════════════════════════════ */
+
+/* ── Header ── */
+.mon-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, var(--surface), var(--card));
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.mon-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mon-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mon-select {
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--card);
+    color: var(--foreground);
+    outline: none;
+    min-width: 180px;
+    cursor: pointer;
+}
+
+.mon-select:focus {
+    border-color: var(--indigo-500);
+}
+
+/* ── Status Badge ── */
+.mon-badge {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.mon-badge-idle {
+    background: var(--muted);
+    color: var(--muted-foreground);
+    border: 1px solid var(--border);
+}
+
+.mon-badge-running {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--blue-500);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    animation: monPulse 2s ease-in-out infinite;
+}
+
+.mon-badge-stopping {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--amber-500);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+@keyframes monPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* ── 2-Panel Layout ── */
+.mon-layout {
+    flex: 1;
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.mon-queue-panel {
+    width: 320px;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+    overflow: hidden;
+}
+
+.mon-detail-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+    overflow: hidden;
+}
+
+.mon-panel-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted-foreground);
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+/* ── Detail Tab Bar ── */
+.mon-detail-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 0;
+}
+
+.mon-dtab {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--muted-foreground);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    text-align: center;
+}
+
+.mon-dtab:hover {
+    color: var(--foreground);
+    background: var(--accent);
+}
+
+.mon-dtab.active {
+    color: var(--foreground);
+    border-bottom-color: var(--blue-500);
+    font-weight: 700;
+}
+
+/* ── Queue List ── */
+.mon-queue-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+}
+
+.mon-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 13px;
+}
+
+.mon-loading {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    animation: monPulse 1.5s ease-in-out infinite;
+}
+
+/* ── Skeleton Loading ── */
+.mon-skeleton {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.mon-skel-bar {
+    height: 14px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(90deg, var(--muted) 25%, rgba(148,163,184,0.15) 50%, var(--muted) 75%);
+    background-size: 200% 100%;
+    animation: skelShimmer 1.5s ease-in-out infinite;
+}
+
+.skel-w80 { width: 80%; }
+.skel-w60 { width: 60%; }
+.skel-w90 { width: 90%; }
+.skel-w50 { width: 50%; }
+
+@keyframes skelShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ── Emulator Group ── */
+.mon-emu-group {
+    margin-bottom: 8px;
+}
+
+.mon-emu-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted-foreground);
+    padding: 6px 8px 4px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+
+.mon-emu-svg {
+    color: var(--muted-foreground);
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.mon-emu-count {
+    font-size: 10px;
+    background: var(--muted);
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    font-family: var(--font-mono);
+}
+
+/* ── Account Row ── */
+.mon-account-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    border: 1px solid transparent;
+}
+
+.mon-account-row:hover {
+    background: var(--accent);
+}
+
+.mon-account-row.mon-acc-selected {
+    background: rgba(99, 102, 241, 0.06);
+    border-color: rgba(99, 102, 241, 0.2);
+}
+
+.mon-account-row.mon-acc-current {
+    background: rgba(16, 185, 129, 0.06);
+    border-color: rgba(16, 185, 129, 0.3);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12);
+}
+
+.mon-acc-order {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+}
+
+.mon-acc-name {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Status Dots ── */
+.mon-acc-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.mon-st-pending .mon-acc-status-dot { background: var(--muted-foreground); opacity: 0.4; }
+.mon-st-running .mon-acc-status-dot { background: var(--blue-500); animation: monPulse 1.5s ease-in-out infinite; }
+.mon-st-done .mon-acc-status-dot { background: var(--emerald-500); }
+.mon-st-error .mon-acc-status-dot { background: var(--red-500); }
+.mon-st-skipped .mon-acc-status-dot { background: var(--amber-500); }
+
+/* ── Cooldown Badge ── */
+.mon-cd {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--amber-500);
+    background: rgba(245, 158, 11, 0.1);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+    min-width: 44px;
+    text-align: center;
+}
+
+/* ── Detail Panel ── */
+.mon-detail-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.mon-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--foreground);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+}
+
+.mon-detail-date {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--muted-foreground);
+}
+
+/* ── Activity List ── */
+.mon-activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mon-activity-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    transition: background var(--duration-fast);
+}
+
+.mon-activity-row:hover {
+    background: var(--accent);
+}
+
+.mon-act-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+
+/* ── Column Header ── */
+.mon-act-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+
+.mon-act-h-name {
+    flex: 1;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+}
+
+.mon-act-h-col {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+    text-align: center;
+}
+
+/* ── Fixed Column Widths ── */
+.mon-act-w-tag    { width: 64px; text-align: center; flex-shrink: 0; }
+.mon-act-w-status { width: 56px; text-align: center; flex-shrink: 0; }
+.mon-act-w-dur    { width: 40px; text-align: right;  flex-shrink: 0; }
+.mon-act-w-runs   { width: 36px; text-align: right;  flex-shrink: 0; }
+
+/* ── Activity Queue Indicators ── */
+.mon-act-current {
+    border-left: 3px solid var(--emerald-500);
+    background: rgba(16, 185, 129, 0.04);
+}
+
+.mon-act-next {
+    border-left: 3px dashed var(--blue-500);
+    background: rgba(59, 130, 246, 0.04);
+}
+
+/* ── Status Tags (clear labels) ── */
+.mon-act-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.mon-act-tag svg { width: 10px; height: 10px; }
+
+.mon-tag-running {
+    color: var(--emerald-500);
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.mon-tag-next {
+    color: var(--blue-500);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.mon-tag-done {
+    color: var(--muted-foreground);
+    background: var(--accent);
+}
+
+.mon-tag-error {
+    color: var(--red-500);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* ── Error Tooltip Icon ── */
+.mon-act-err-icon {
+    color: var(--amber-500);
+    cursor: help;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+    opacity: 0.7;
+    transition: opacity var(--duration-fast);
+}
+
+.mon-act-err-icon:hover {
+    opacity: 1;
+}
+
+/* ── Ready Status Label ── */
+.mon-act-status-ready {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--emerald-500);
+}
+
+.mon-act-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mon-act-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.mon-act-cd {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--amber-500);
+    background: rgba(245, 158, 11, 0.1);
+    padding: 2px 6px;
+    border-radius: var(--radius-full);
+    font-variant-numeric: tabular-nums;
+}
+
+.mon-act-runs {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--foreground);
+}
+
+.mon-act-dur {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--muted-foreground);
+    min-width: 36px;
+    text-align: right;
+}
+
+.mon-act-error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 24px;
+    font-size: 11px;
+    color: var(--red-500);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mon-act-error svg {
+    flex-shrink: 0;
+}
+
+/* ── Log Section ── */
+.mon-log-section {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+}
+
+.mon-log-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted-foreground);
+    padding: 4px 10px 8px;
+}
+
+.mon-log-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: var(--radius-sm);
+}
+
+.mon-log-row:hover {
+    background: var(--accent);
+}
+
+.mon-log-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+    width: 60px;
+}
+
+.mon-log-name {
+    flex: 1;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mon-log-st {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+}
+
+.mon-log-ok .mon-log-st { color: var(--emerald-500); }
+.mon-log-err .mon-log-st { color: var(--red-500); }
+
+/* ── Round 2: Sub-info, Next, Progress, Smart Wait ── */
+
+.mon-acc-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.mon-acc-sub {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mon-acc-current {
+    border-left: 3px solid var(--emerald-500);
+}
+
+.mon-acc-current .mon-acc-order {
+    background: var(--emerald-500);
+    color: #fff;
+}
+
+.mon-acc-next {
+    border-left: 3px dashed var(--blue-500);
+}
+
+.mon-acc-next .mon-acc-order {
+    background: var(--blue-500);
+    color: #fff;
+}
+
+/* De-emphasize done accounts */
+.mon-st-done .mon-acc-name {
+    opacity: 0.6;
+}
+
+.mon-st-done .mon-acc-sub {
+    opacity: 0.5;
+}
+
+.mon-next-label {
+    font-size: 9px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    color: var(--blue-500);
+    letter-spacing: .04em;
+    flex-shrink: 0;
+}
+
+.mon-progress {
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--foreground);
+    background: var(--muted);
+    padding: 3px 8px;
+    border-radius: var(--radius-full);
+}
+
+.mon-smart-wait-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--amber-500);
+    background: rgba(245, 158, 11, 0.1);
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    animation: monPulse 2s ease-in-out infinite;
+}
+
+/* ── Status Tags (Account Queue) ── */
+
+.mon-status-tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    white-space: nowrap;
+    flex-shrink: 0;
+    letter-spacing: .02em;
+}
+
+.tag-running {
+    color: #fff;
+    background: var(--emerald-500, #10b981);
+    animation: monPulse 2s ease-in-out infinite;
+}
+
+.tag-done {
+    color: var(--emerald-500, #10b981);
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.tag-error {
+    color: var(--red-500, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.tag-cooldown {
+    color: var(--amber-500, #f59e0b);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    font-variant-numeric: tabular-nums;
+}
+
+.tag-next {
+    color: var(--blue-500, #3b82f6);
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.tag-pending {
+    color: var(--muted-foreground);
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--border);
+}
+
+.tag-skipped {
+    color: var(--muted-foreground);
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px dashed var(--border);
+}
+
+/* ── Timeline Panel (Collapsible Bottom) ── */
+
+.mon-timeline-wrapper {
+    flex-shrink: 0;
+    margin-top: 8px;
+}
+
+.mon-timeline-toggle {
+    width: 100%;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--duration-fast);
+    text-align: center;
+    letter-spacing: .02em;
+}
+
+.mon-timeline-toggle:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+
+.mon-timeline {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    background: var(--card);
+}
+
+.mon-timeline-list {
+    padding: 4px;
+}
+
+.mon-tl-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: var(--radius-sm);
+    line-height: 1.4;
+}
+
+.mon-tl-row:hover {
+    background: var(--accent);
+}
+
+.mon-tl-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+    width: 64px;
+}
+
+.mon-tl-icon {
+    flex-shrink: 0;
+    width: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.mon-tl-svg {
+    color: var(--muted-foreground);
+}
+
+/* ── SVG in Status Tags ── */
+.mon-status-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mon-status-tag svg {
+    flex-shrink: 0;
+}
+
+/* ── Detail Panel Name ── */
+.mon-detail-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.mon-detail-name svg {
+    color: var(--muted-foreground);
+    flex-shrink: 0;
+}
+
+.mon-tl-msg {
+    flex: 1;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 

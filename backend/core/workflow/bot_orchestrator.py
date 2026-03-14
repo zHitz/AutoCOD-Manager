@@ -21,6 +21,7 @@ from backend.core.workflow.swap_logger import (
     log_early_probe,
     log_main_loop_swap_decision,
 )
+from backend.core.workflow.smart_wait_logger import log_smart_wait_eval
 from backend.core.ldplayer_manager import (
     list_all_instances,
     quit_instance,
@@ -81,6 +82,7 @@ class BotOrchestrator:
         self.stop_requested = False
         self.account_statuses = {str(acc["id"]): "pending" for acc in self.accounts}
         self.last_run_times = {}  # tracking cooldowns per acc_id
+        self._smart_wait_info = {"account_id": None, "remaining_sec": None}
 
         # Track activity progress
         self.current_activity = None
@@ -107,6 +109,29 @@ class BotOrchestrator:
         if not self.ws_callback:
             return
 
+        import time as _time
+
+        cooldown_min = self.misc_config.get("cooldown_min", 0)
+        cooldown_sec = cooldown_min * 60
+        now_ts = _time.time()
+
+        accounts_payload = []
+        for acc in self.queue:
+            aid = str(acc["id"])
+            last_run = self.last_run_times.get(aid, 0)
+            cd_remaining = 0
+            if not self.skip_cooldown and cooldown_sec > 0 and last_run > 0:
+                cd_remaining = max(0, cooldown_sec - (now_ts - last_run))
+            accounts_payload.append({
+                "id": acc["id"],
+                "lord_name": acc.get("lord_name") or acc.get("game_id", "Unknown"),
+                "emu_index": acc.get("emu_index"),
+                "game_id": acc.get("game_id", ""),
+                "status": self.account_statuses.get(aid, "pending"),
+                "last_run_time": last_run if last_run > 0 else None,
+                "cooldown_remaining_sec": round(cd_remaining, 1),
+            })
+
         data = {
             "group_id": self.group_id,
             "is_running": self.is_running,
@@ -116,16 +141,14 @@ class BotOrchestrator:
             "total_accounts": len(self.queue),
             "current_activity": self.current_activity,
             "activity_statuses": self.activity_statuses,
-            "accounts": [
-                {
-                    "id": acc["id"],
-                    "lord_name": acc.get("lord_name") or acc.get("game_id", "Unknown"),
-                    "emu_index": acc.get("emu_index"),
-                    "status": self.account_statuses.get(str(acc["id"]), "pending"),
-                }
-                for acc in self.queue
-            ],
+            "accounts": accounts_payload,
             "activity_metrics": await self._get_activity_metrics(),
+            "cooldown_config": {
+                "cooldown_min": cooldown_min,
+                "swap_wait_threshold_min": self.misc_config.get("swap_wait_threshold_min", 0),
+                "skip_cooldown": self.skip_cooldown,
+            },
+            "smart_wait_active": self._smart_wait_info,
         }
 
         import inspect
@@ -183,6 +206,24 @@ class BotOrchestrator:
             await self.ws_callback(event_type, data)
         else:
             self.ws_callback(event_type, data)
+
+    async def _emit_timeline(self, icon: str, message: str, emu_index: int = None, account_id: str = None):
+        """Emit a timeline_event for the Monitor tab's bottom timeline panel."""
+        if not self.ws_callback:
+            return
+        import time as _t, inspect
+        data = {
+            "ts": _t.time(),
+            "icon": icon,
+            "message": message,
+            "emu_index": emu_index,
+            "account_id": account_id,
+            "group_id": self.group_id,
+        }
+        if inspect.iscoroutinefunction(self.ws_callback):
+            await self.ws_callback("timeline_event", data)
+        else:
+            self.ws_callback("timeline_event", data)
 
     async def _get_activity_metrics(self) -> Dict[str, Any]:
         """Queries the database for live metrics (last_run, runs_today) for all activities in this group."""
@@ -381,6 +422,8 @@ class BotOrchestrator:
         expected_game_id: str,
         target_lord: Optional[str],
         known_current_account_id: Optional[str] = None,
+        emu_idx: int = 0,
+        acc_id: str = "",
     ) -> Tuple[bool, Optional[str]]:
         """Guarantee the live account matches the target account before activities run."""
         log_ensure_correct_account(
@@ -430,6 +473,7 @@ class BotOrchestrator:
             )
             swap_ok = False
             try:
+                await self._emit_timeline("\ud83d\udd04", f"Emu {emu_idx}: Swapping to {target_lord or expected_game_id} ({expected_game_id}) \u2014 attempt {attempt}/3", emu_idx, acc_id)
                 swap_ok = await asyncio.to_thread(
                     core_actions.swap_account,
                     serial,
@@ -480,6 +524,7 @@ class BotOrchestrator:
                     final_id=current_account_id,
                     detail=f"Matched on attempt {attempt}/3",
                 )
+                await self._emit_timeline("\u2705", f"Emu {serial.split('-')[-1]}: {target_lord or expected_game_id} verified \u2014 match on attempt {attempt}", account_id=acc_id)
                 return True, current_account_id
 
             self._log_account_verification_failure(
@@ -493,6 +538,7 @@ class BotOrchestrator:
             final_id=current_account_id,
             detail="All 3 swap attempts exhausted",
         )
+        await self._emit_timeline("\u274c", f"Swap failed for {target_lord or expected_game_id} ({expected_game_id}) after 3 attempts", account_id=acc_id)
         return False, current_account_id
 
     async def start(self):
@@ -511,6 +557,12 @@ class BotOrchestrator:
         for key in self.account_statuses:
             self.account_statuses[key] = "pending"
 
+        # Pre-populate last_run_times from database (always, so UI shows "last run")
+        for acc in self.accounts:
+            db_last_run = await execution_log.get_last_account_run(int(acc["id"]))
+            if db_last_run > 0:
+                self.last_run_times[str(acc["id"])] = db_last_run
+
         await self.broadcast_state()
 
         # Pre-fetch emulator names for logging
@@ -519,13 +571,6 @@ class BotOrchestrator:
         last_emu_index = None
         last_account_id = None
         consecutive_skips = 0  # Track how many accounts skipped in a row
-        
-        # Pre-populate last_run_times from database
-        if not self.skip_cooldown:
-            for acc in self.accounts:
-                db_last_run = await execution_log.get_last_account_run(int(acc["id"]))
-                if db_last_run > 0:
-                    self.last_run_times[str(acc["id"])] = db_last_run
 
         try:
             while not self.stop_requested:
@@ -603,11 +648,15 @@ class BotOrchestrator:
                             f"[BotOrchestrator] Smart Wait: account {acc_id} is active and cooldown ends in "
                             f"{remaining_cd/60:.1f}m (threshold: {swap_wait_threshold/60:.0f}m). Waiting..."
                         )
+                        self._smart_wait_info = {"account_id": acc_id, "remaining_sec": round(remaining_cd, 1)}
+                        await self._emit_timeline("\u23f3", f"Emu {emu_idx}: Smart Wait for {acc.get('lord_name') or acc_id} ({remaining_cd/60:.1f}m remaining)", emu_idx, acc_id)
                         await self.broadcast_state()
                         while remaining_cd > 0 and not self.stop_requested:
                             chunk = min(remaining_cd, 10)
                             await asyncio.sleep(chunk)
                             remaining_cd -= chunk
+                            self._smart_wait_info["remaining_sec"] = round(max(0, remaining_cd), 1)
+                        self._smart_wait_info = {"account_id": None, "remaining_sec": None}
                         # Fall through to normal processing — no skip, no swap needed
                     else:
                         # Normal cooldown skip
@@ -630,6 +679,7 @@ class BotOrchestrator:
                             print(
                                 f"[BotOrchestrator] All accounts on cooldown. Sleeping {sleep_min}m until next account is ready."
                             )
+                            await self._emit_timeline("\ud83d\udca4", f"All accounts on cooldown. Sleeping {sleep_min}m")
                             await self.broadcast_state()
 
                             while sleep_sec > 0 and not self.stop_requested:
@@ -652,6 +702,7 @@ class BotOrchestrator:
                 print(
                     f"[BotOrchestrator] --- CYCLE {self.cycle} | ACCOUNT {self.current_idx + 1}/{len(self.queue)} | EMU {emu_idx} ---"
                 )
+                await self._emit_timeline("\ud83d\udd01", f"Cycle {self.cycle} \u2014 Account {self.current_idx + 1}/{len(self.queue)}: {acc.get('lord_name') or acc_id} on Emu {emu_idx}", emu_idx, acc_id)
                 if last_emu_index is not None:
                     if last_emu_index != emu_idx:
                         # DIFFERENT EMULATOR -> Cross-emu swap
@@ -810,6 +861,8 @@ class BotOrchestrator:
                         expected_game_id,
                         target_lord,
                         known_current_account_id=last_account_id,
+                        emu_idx=emu_idx,
+                        acc_id=acc_id,
                     )
                 if not account_ready:
                     print(
@@ -832,6 +885,8 @@ class BotOrchestrator:
                         account_detector,
                         expected_game_id,
                         target_lord,
+                        emu_idx=emu_idx,
+                        acc_id=acc_id,
                     )
                     if not account_ready:
                         print(
@@ -919,6 +974,7 @@ class BotOrchestrator:
                         act_id_or_name,
                         act.get("name", act_id_or_name),
                     )
+                    await self._emit_timeline("\u25b6\ufe0f", f"{acc.get('lord_name') or acc_id}: Starting {act.get('name', act_id_or_name)}", emu_idx, acc_id)
 
                     try:
                         if limit_min > 0:
@@ -993,6 +1049,9 @@ class BotOrchestrator:
                         step_error,
                         latency,
                     )
+                    tl_icon = "\u2705" if step_status == "SUCCESS" else "\u274c"
+                    tl_dur = f" ({latency/1000:.1f}s)" if latency > 0 else ""
+                    await self._emit_timeline(tl_icon, f"{acc.get('lord_name') or acc_id}: {act.get('name', act_id_or_name)} {step_status.lower()}{tl_dur}", emu_idx, acc_id)
 
                     await execution_log.append_step_log(
                         run_id=self.run_id,
