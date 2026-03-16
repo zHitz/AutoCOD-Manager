@@ -1258,11 +1258,11 @@ async def get_monitor_account_activities(account_id: int, group_id: int = None):
                         summary[act_id]["cooldown_minutes"] = cd_minutes
 
                         # Compute remaining cooldown seconds (per-account from DB)
+                        # Dynamic cooldown override: if result_json has dynamic_cooldown_sec, use it
                         cd_remaining = 0
                         if cd_enabled and cd_minutes > 0:
                             try:
-                                # Primary: per-account last run from DB
-                                last_run_epoch = await exec_log_mod.get_last_activity_run(
+                                last_run_epoch, dynamic_cd = await exec_log_mod.get_effective_cooldown_sec(
                                     int(account_id), act_id
                                 )
                                 # Fallback: config-level last_run (global)
@@ -1275,9 +1275,10 @@ async def get_monitor_account_activities(account_id: int, group_id: int = None):
                                         ).timestamp()
 
                                 if last_run_epoch > 0:
+                                    effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
                                     elapsed = time_mod.time() - last_run_epoch
                                     cd_remaining = max(
-                                        0, int(cd_minutes * 60 - elapsed)
+                                        0, int(effective_cd - elapsed)
                                     )
                             except (ValueError, TypeError, Exception):
                                 pass

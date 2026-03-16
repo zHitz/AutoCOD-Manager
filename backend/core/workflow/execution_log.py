@@ -174,3 +174,37 @@ async def get_last_activity_run(account_id: int, activity_id: str) -> float:
                 except ValueError:
                     return 0
             return 0
+
+
+async def get_effective_cooldown_sec(account_id: int, activity_id: str) -> tuple:
+    """Return (last_run_epoch, dynamic_cooldown_sec) from the latest SUCCESS log.
+
+    If the activity's result_json contains 'dynamic_cooldown_sec', that value
+    is returned. Otherwise dynamic_cooldown_sec = 0, meaning the caller should
+    fall back to the static cooldown_minutes config.
+    """
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            """SELECT started_at, result_json FROM account_activity_logs
+               WHERE account_id = ? AND activity_id = ? AND status = 'SUCCESS'
+               ORDER BY started_at DESC LIMIT 1""",
+            (account_id, activity_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row or not row[0]:
+                return (0, 0)
+
+            try:
+                last_run = datetime.fromisoformat(row[0]).timestamp()
+            except ValueError:
+                return (0, 0)
+
+            dynamic_cd = 0
+            if row[1]:
+                try:
+                    result = json.loads(row[1])
+                    dynamic_cd = int(result.get("dynamic_cooldown_sec", 0))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+
+            return (last_run, dynamic_cd)

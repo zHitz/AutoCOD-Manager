@@ -78,6 +78,7 @@ async def execute_recipe(
     await log(f"▶ Workflow execution started on {emulator_name}", "info")
 
     all_ok = True
+    _activity_meta = {}  # Collects metadata from dict-returning core_actions
 
     try:
         # Step Execution Loop
@@ -524,6 +525,12 @@ async def execute_recipe(
                 # Don't abort — just skip unrecognized steps
                 ok = True
 
+            # Normalize dict returns from core_actions
+            # e.g. {"ok": True, "dynamic_cooldown_sec": 11700}
+            if isinstance(ok, dict):
+                _activity_meta.update(ok)
+                ok = ok.get("ok", False)
+
             if ok:
                 await log(f"  ✓ {fn_id} complete", "ok")
             else:
@@ -540,7 +547,11 @@ async def execute_recipe(
             await log("❌ Workflow aborted due to failure", "err")
             await status("ERROR")
 
-        return {"success": all_ok}
+        result = {"success": all_ok}
+        # Propagate dynamic cooldown if any core_action provided it
+        if _activity_meta.get("dynamic_cooldown_sec"):
+            result["dynamic_cooldown_sec"] = _activity_meta["dynamic_cooldown_sec"]
+        return result
 
     except Exception as e:
         await log(f"Exception during execution: {str(e)}", "err")

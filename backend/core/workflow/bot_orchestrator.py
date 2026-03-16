@@ -266,6 +266,71 @@ class BotOrchestrator:
             
         return metrics
 
+    async def _all_activities_on_cooldown(self, acc_id: str) -> bool:
+        """Check if ALL activities are on cooldown for this account.
+        Returns True if every activity with cooldown_enabled is still cooling down,
+        meaning a swap to this account would be pointless.
+        """
+        if self.skip_cooldown:
+            return False
+
+        now = time.time()
+        has_any_runnable = False
+
+        for i, act in enumerate(self.activities):
+            act_id_or_name = act.get("id", act.get("name", f"act_{i}"))
+            act_cfg = act.get("config", {})
+
+            if not act_cfg.get("cooldown_enabled"):
+                # Activity has no cooldown → always runnable
+                has_any_runnable = True
+                break
+
+            cd_minutes = act_cfg.get("cooldown_minutes", 0)
+            if cd_minutes <= 0:
+                has_any_runnable = True
+                break
+
+            last_act_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(
+                int(acc_id), act_id_or_name
+            )
+            effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+            if last_act_run <= 0 or (now - last_act_run) >= effective_cd:
+                # Never run before OR cooldown expired → runnable
+                has_any_runnable = True
+                break
+
+        return not has_any_runnable
+
+    async def _earliest_activity_ready_sec(self) -> float:
+        """Scan all accounts × activities to find the shortest remaining cooldown.
+        Returns seconds until the earliest activity becomes runnable.
+        Falls back to 60s if nothing can be computed.
+        """
+        now = time.time()
+        min_remaining = float("inf")
+
+        for acc in self.queue:
+            aid = str(acc["id"])
+            for i, act in enumerate(self.activities):
+                act_cfg = act.get("config", {})
+                if not act_cfg.get("cooldown_enabled"):
+                    return 0  # At least one activity has no cooldown → ready now
+                cd_minutes = act_cfg.get("cooldown_minutes", 0)
+                if cd_minutes <= 0:
+                    return 0
+                act_id = act.get("id", act.get("name", f"act_{i}"))
+                last_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(aid), act_id)
+                if last_run <= 0:
+                    return 0  # Never run → ready now
+                effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+                remaining = effective_cd - (now - last_run)
+                if remaining <= 0:
+                    return 0  # Already expired
+                min_remaining = min(min_remaining, remaining)
+
+        return min_remaining if min_remaining < float("inf") else 60
+
     async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int) -> bool:
         """Closes old emulator / game and boots new one. Returns True on success."""
         import logging
@@ -693,6 +758,38 @@ class BotOrchestrator:
                             self._advance_queue()
                         continue
 
+                # ── PRE-CHECK: Skip swap if ALL activities are on cooldown ──
+                if await self._all_activities_on_cooldown(acc_id):
+                    print(
+                        f"[BotOrchestrator] All activities on cooldown for Account {acc_id}. "
+                        f"Skipping swap."
+                    )
+                    await self._emit_timeline(
+                        "⏭️",
+                        f"Skipped {acc.get('lord_name') or acc_id}: all activities on cooldown",
+                        emu_idx, acc_id,
+                    )
+                    self.account_statuses[acc_id] = "pending"
+                    consecutive_skips += 1
+                    if consecutive_skips >= len(self.queue):
+                        # All accounts fully on cooldown → compute sleep from activity cooldowns
+                        sleep_sec = await self._earliest_activity_ready_sec()
+                        sleep_min = round(sleep_sec / 60, 1)
+                        print(
+                            f"[BotOrchestrator] All accounts on cooldown (activity-level). "
+                            f"Sleeping {sleep_min}m until next activity is ready."
+                        )
+                        await self._emit_timeline("💤", f"All accounts on cooldown. Sleeping {sleep_min}m")
+                        await self.broadcast_state()
+                        while sleep_sec > 0 and not self.stop_requested:
+                            chunk = min(sleep_sec, 10)
+                            await asyncio.sleep(chunk)
+                            sleep_sec -= chunk
+                        consecutive_skips = 0
+                    else:
+                        self._advance_queue()
+                    continue
+
                 # Account is ready — reset skip counter
                 consecutive_skips = 0
 
@@ -918,13 +1015,16 @@ class BotOrchestrator:
                     act_id_or_name = act_keys[i]
                     act_cfg = act.get("config", {})
 
-                    # ── ACTIVITY-LEVEL COOLDOWN ──
+                    # ── ACTIVITY-LEVEL COOLDOWN (dynamic override > static config) ──
                     if not self.skip_cooldown and act_cfg.get("cooldown_enabled"):
                         cd_minutes = act_cfg.get("cooldown_minutes", 0)
                         if cd_minutes > 0:
-                            last_act_run = await execution_log.get_last_activity_run(int(acc_id), act_id_or_name)
-                            if last_act_run > 0 and (time.time() - last_act_run) < (cd_minutes * 60):
-                                print(f"[BotOrchestrator] Activity '{act_id_or_name}' is on cooldown for Account {acc_id}. Skipping.")
+                            last_act_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(acc_id), act_id_or_name)
+                            effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+                            if last_act_run > 0 and (time.time() - last_act_run) < effective_cd:
+                                cd_src = "dynamic" if dynamic_cd > 0 else "static"
+                                remain_m = round((effective_cd - (time.time() - last_act_run)) / 60, 1)
+                                print(f"[BotOrchestrator] Activity '{act_id_or_name}' on cooldown ({cd_src}: {effective_cd/60:.0f}m, {remain_m}m left) for Account {acc_id}. Skipping.")
                                 self.activity_statuses[act_id_or_name] = "skipped"
                                 await self.broadcast_state()
                                 continue

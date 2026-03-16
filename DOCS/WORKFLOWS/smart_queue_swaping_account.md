@@ -205,6 +205,35 @@ else:
 
 ---
 
+### Thay đổi 5 — Activity-Level Pre-Check (Skip Swap khi tất cả Activity Cooldown)
+
+**Scenario:** Account vượt qua account-level cooldown nhưng **tất cả activities** đều có `cooldown_enabled` và đều đang cooldown → Bot swap tốn ~30s nhưng không làm gì cả.
+
+**Logic:** Trước khi swap, gọi `_all_activities_on_cooldown(acc_id)` để check nhanh từng activity:
+
+```python
+async def _all_activities_on_cooldown(self, acc_id: str) -> bool:
+    """Returns True if every activity is on cooldown → skip swap."""
+    for act in self.activities:
+        act_cfg = act.get("config", {})
+        if not act_cfg.get("cooldown_enabled"):
+            return False  # No cooldown = always runnable
+        cd_minutes = act_cfg.get("cooldown_minutes", 0)
+        if cd_minutes <= 0:
+            return False
+        last_act_run = await execution_log.get_last_activity_run(int(acc_id), act_id)
+        if last_act_run <= 0 or (now - last_act_run) >= (cd_minutes * 60):
+            return False  # Cooldown expired = runnable
+    return True  # All activities still cooling
+```
+
+**Vị trí:** Ngay sau account-level cooldown check (line ~696), **trước** `_ensure_correct_account()`. Nếu True → skip account, tăng `consecutive_skips`, không swap.
+
+> [!NOTE]
+> Pre-check tốn thêm vài DB queries nhưng tiết kiệm ~30s swap time per skipped account. Trade-off rất tốt.
+
+---
+
 ## Visualization
 
 ### Before (hiện tại)
