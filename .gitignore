@@ -42,3 +42,4 @@ backend/core/workflow/templates/_unknown_captures/
 # Agent
 .agent/
 .agent_cache/
+.codex/
