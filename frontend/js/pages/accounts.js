@@ -22,6 +22,23 @@ const AccountsPage = {
         return dt.toLocaleString();
     },
 
+    _relativeTime(value) {
+        if (!value) return 'Never';
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return 'Never';
+        const now = Date.now();
+        const diffSec = Math.floor((now - dt.getTime()) / 1000);
+        if (diffSec < 0) return 'Just now';
+        if (diffSec < 60) return `${diffSec}s ago`;
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h ago`;
+        const diffDay = Math.floor(diffHr / 24);
+        if (diffDay < 7) return `${diffDay}d ago`;
+        return dt.toLocaleDateString();
+    },
+
     _normalizeLoginMethod(method) {
         const m = (method || '').toLowerCase();
         if (m === 'google') return 'Google';
@@ -196,52 +213,105 @@ const AccountsPage = {
                 .th-sortable:hover { background: var(--accent); }
 
                 /* ── GRID / CARD LIST ── */
-                .account-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; align-items: start; }
+                .account-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; align-items: start; }
 
                 .account-card {
-                    background: var(--card); border: 1px solid var(--border);
-                    border-radius: 10px; padding: 16px 20px;
-                    display: flex; align-items: center; gap: 16px;
-                    cursor: pointer; transition: all 0.18s ease;
+                    background: var(--card); border: 1px solid transparent;
+                    border-radius: 14px; padding: 20px 24px;
+                    display: flex; flex-direction: column; gap: 14px;
+                    cursor: pointer; transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
                     position: relative; overflow: hidden;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
                 }
                 .account-card::before {
-                    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-                    border-radius: 3px 0 0 3px;
+                    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                    border-radius: 4px 0 0 4px;
                 }
-                .account-card.status-online::before  { background: var(--emerald-500); }
-                .account-card.status-offline::before { background: var(--red-500); }
-                .account-card.status-idle::before    { background: var(--yellow-500); }
-                .account-card:hover { border-color: var(--border); background: var(--accent); transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
-                .account-card.status-offline { opacity: 0.75; }
-                .account-card.status-offline:hover   { opacity: 1; }
+                .account-card.status-online  { background: linear-gradient(135deg, rgba(16,185,129,0.04), var(--card)); border-color: rgba(16,185,129,0.15); }
+                .account-card.status-online::before  { background: var(--emerald-500); box-shadow: 0 0 10px rgba(16,185,129,0.4); }
+                .account-card.status-offline { background: var(--card); border-color: var(--border); filter: saturate(0.7); opacity: 0.85; }
+                .account-card.status-offline::before { background: var(--red-500); box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+                .account-card.status-idle    { background: linear-gradient(135deg, rgba(234,179,8,0.04), var(--card)); border-color: rgba(234,179,8,0.15); }
+                .account-card.status-idle::before    { background: var(--yellow-500); box-shadow: 0 0 10px rgba(234,179,8,0.4); }
 
-                .card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 1px; }
+                .account-card:hover {
+                    transform: translateY(-3px);
+                    box-shadow: 0 8px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
+                }
+                .account-card.status-online:hover  { box-shadow: 0 8px 28px rgba(16,185,129,0.12), 0 2px 8px rgba(0,0,0,0.04); border-color: rgba(16,185,129,0.3); }
+                .account-card.status-offline:hover { filter: saturate(1); opacity: 1; box-shadow: 0 8px 24px rgba(239,68,68,0.08), 0 2px 8px rgba(0,0,0,0.04); }
+                .account-card.status-idle:hover    { box-shadow: 0 8px 28px rgba(234,179,8,0.12), 0 2px 8px rgba(0,0,0,0.04); border-color: rgba(234,179,8,0.3); }
+                .account-card:active { transform: scale(0.98) translateY(0); transition-duration: 0.08s; }
+
+                /* Card top row */
+                .card-top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+                .card-top-left { display: flex; align-items: flex-start; gap: 12px; flex: 1; min-width: 0; }
+
+                .card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 6px; }
                 .status-online  .card-dot { background: var(--emerald-500); box-shadow: 0 0 7px var(--emerald-500); }
                 .status-offline .card-dot { background: var(--red-500);     box-shadow: 0 0 7px var(--red-500); }
                 .status-idle    .card-dot { background: var(--yellow-500);  box-shadow: 0 0 7px var(--yellow-500); }
 
-                .account-info { min-width: 180px; }
-                .account-name { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
-                .alliance-badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: var(--muted); color: var(--muted-foreground); letter-spacing: 0.4px; }
-                .account-emulator { font-size: 11px; color: var(--muted-foreground); font-family: monospace; }
+                .account-info { flex: 1; min-width: 0; }
+                .account-name { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; letter-spacing: -0.01em; }
+                .alliance-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: rgba(var(--primary-rgb, 99,102,241), 0.08); color: var(--primary); letter-spacing: 0.5px; }
+                .account-emulator { font-size: 11px; color: var(--muted-foreground); font-family: var(--font-mono); display: flex; align-items: center; gap: 6px; }
+                .emu-unlinked { color: var(--muted-foreground); opacity: 0.7; font-style: italic; }
+                .id-pending { color: var(--yellow-500); display: inline-flex; align-items: center; gap: 3px; }
 
-                .account-power { flex: 1; min-width: 220px; }
+                .card-status-label {
+                    font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 6px;
+                    letter-spacing: 0.03em; flex-shrink: 0; white-space: nowrap;
+                }
+                .status-online  .card-status-label { background: rgba(16,185,129,0.1); color: var(--emerald-500); }
+                .status-offline .card-status-label { background: var(--muted); color: var(--muted-foreground); }
+                .status-idle    .card-status-label { background: rgba(234,179,8,0.1); color: var(--yellow-500); }
+
+                /* Card bottom row */
+                .card-bottom-row { display: flex; flex-direction: column; gap: 10px; }
+
+                .account-power { width: 100%; }
                 .power-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-                .power-value { font-size: 13px; font-weight: 600; color: var(--foreground); }
-                .power-hall  { font-size: 11px; color: var(--muted-foreground); font-family: monospace; }
-                .power-bar   { height: 4px; background: var(--muted); border-radius: 99px; overflow: hidden; }
+                .power-value { font-size: 14px; font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+                .power-hall  { font-size: 11px; color: var(--muted-foreground); font-family: var(--font-mono); font-weight: 500; }
+                .power-bar-wrap { display: flex; align-items: center; gap: 8px; }
+                .power-bar   { flex: 1; height: 5px; background: var(--muted); border-radius: 99px; overflow: hidden; }
                 .power-fill  { height: 100%; border-radius: 99px; transition: width 0.8s cubic-bezier(0.4,0,0.2,1); }
+                .power-pct   { font-size: 10px; font-weight: 600; color: var(--muted-foreground); font-variant-numeric: tabular-nums; min-width: 28px; text-align: right; }
                 .status-online  .power-fill { background: linear-gradient(90deg, var(--emerald-400, #34d399), var(--emerald-300, #6ee7b7)); }
                 .status-offline .power-fill { background: linear-gradient(90deg, var(--red-400, #f87171), var(--red-300, #fca5a5)); }
                 .status-idle    .power-fill { background: linear-gradient(90deg, var(--yellow-400, #fbbf24), var(--yellow-300, #fde68a)); }
-                .sync-time { font-size: 11px; color: var(--muted-foreground); margin-top: 5px; text-align: right; }
 
-                .card-actions { display: flex; gap: 7px; align-items: center; flex-shrink: 0; }
-                .card-btn-view { padding: 7px 14px; font-size: 12px; font-weight: 600; background: var(--accent); color: var(--primary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: all 0.15s; font-family: inherit; display: flex; align-items: center; gap: 4px; }
-                .card-btn-view:hover { background: var(--primary); color: #fff; }
-                .card-btn-icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--muted-foreground); transition: all 0.15s; }
-                .card-btn-icon:hover { color: var(--foreground); border-color: var(--border); }
+                /* Resource strip */
+                .card-resource-strip {
+                    display: flex; align-items: center; gap: 2px;
+                    padding: 8px 12px; background: var(--muted); border-radius: 8px;
+                    font-variant-numeric: tabular-nums;
+                }
+                .res-chip {
+                    display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+                    flex: 1; justify-content: center;
+                }
+                .res-chip .res-chip-icon { font-size: 12px; }
+                .res-chip.gold  .res-chip-val { color: var(--yellow-600, #d97706); }
+                .res-chip.wood  .res-chip-val { color: var(--emerald-600, #059669); }
+                .res-chip.ore   .res-chip-val { color: var(--indigo-500, #6366f1); }
+                .res-chip-sep { width: 1px; height: 14px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+
+                /* Card footer */
+                .card-footer { display: flex; align-items: center; justify-content: space-between; }
+                .sync-time { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 4px; }
+                .sync-time svg { opacity: 0.5; }
+
+                .card-btn-view {
+                    padding: 0; font-size: 12px; font-weight: 600; background: none;
+                    color: var(--primary); border: none; cursor: pointer;
+                    transition: all 0.15s; font-family: inherit;
+                    display: flex; align-items: center; gap: 4px;
+                    opacity: 0; transform: translateX(-4px);
+                }
+                .account-card:hover .card-btn-view { opacity: 1; transform: translateX(0); }
+                .card-btn-view:hover { gap: 6px; }
 
                 /* ── SLIDE PANEL ── */
                 .slide-panel-overlay {
@@ -254,7 +324,7 @@ const AccountsPage = {
 
                 .slide-panel {
                     position: fixed; top: 0; right: 0; width: 960px; max-width: 95vw; height: 100vh;
-                    background: var(--card); z-index: 1001;
+                    background: var(--background); z-index: 1001;
                     box-shadow: -8px 0 40px rgba(0,0,0,0.12);
                     transform: translateX(100%); transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
                     overflow-y: auto; overflow-x: hidden;
@@ -270,7 +340,7 @@ const AccountsPage = {
                 .modal-title { font-size: 18px; font-weight: 800; color: var(--foreground); margin: 0 0 8px; }
 
                 /* ── Form Modal Styles (Add/Edit) ── */
-                .form-section { margin-bottom: 28px; }
+                .form-section { margin-bottom: 22px; }
                 .section-label {
                     font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
                     color: var(--primary); text-transform: uppercase;
@@ -312,8 +382,11 @@ const AccountsPage = {
                     padding-right: 36px; cursor: pointer;
                 }
                 .field select option { background: var(--card); color: var(--foreground); }
-                .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
+                .field textarea { resize: vertical; min-height: 90px; line-height: 1.6; border-style: dashed; }
                 .field .hint { font-size: 11px; color: var(--muted-foreground); margin-top: -2px; }
+                .field input:disabled, .field input[readonly], .field select:disabled {
+                    opacity: 0.5; cursor: not-allowed; background: var(--muted);
+                }
                 .modal-footer {
                     display: flex; align-items: center; justify-content: flex-end; gap: 10px;
                     padding: 18px 28px 24px; border-top: 1px solid var(--border); margin-top: 10px;
@@ -343,9 +416,14 @@ const AccountsPage = {
                     color: #fff; display: flex; align-items: center; justify-content: center;
                     font-size: 26px; font-weight: 700; flex-shrink: 0;
                     box-shadow: 0 0 24px rgba(var(--primary-rgb, 99, 102, 241), 0.35);
+                    transition: box-shadow 0.3s;
                 }
-                .title-block h2 { font-size: 22px; font-weight: 700; letter-spacing: 0.03em; color: var(--foreground); margin: 0; }
-                .title-block .meta { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+                .panel-avatar.avatar-online  { box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--emerald-500), 0 0 24px rgba(16,185,129,0.35); }
+                .panel-avatar.avatar-offline { box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--red-500, #ef4444), 0 0 24px rgba(239,68,68,0.2); }
+                .title-block h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--foreground); margin: 0; }
+                .title-block .meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); margin-top: 4px; }
+                .meta span { display: flex; align-items: center; gap: 4px; }
+                .meta-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
                 .meta span { display: flex; align-items: center; gap: 4px; }
                 
                 .header-actions { display: flex; gap: 10px; }
@@ -365,12 +443,14 @@ const AccountsPage = {
                 .stat-card:hover { border-color: rgba(var(--primary-rgb, 99,102,241), 0.25); transform: translateY(-2px); }
                 .stat-card::before {
                     content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-                    background: linear-gradient(90deg, transparent, var(--primary), transparent);
-                    opacity: 0; transition: opacity 0.3s;
+                    opacity: 1;
                 }
                 .stat-card:hover::before { opacity: 1; }
+                .stat-card--power::before  { background: linear-gradient(90deg, transparent, var(--primary), transparent); }
+                .stat-card--hall::before   { background: linear-gradient(90deg, transparent, var(--yellow-500), transparent); }
+                .stat-card--sync::before   { background: linear-gradient(90deg, transparent, var(--emerald-500), transparent); }
                 .stat-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted-foreground); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
-                .stat-value { font-size: 32px; font-weight: 700; color: var(--foreground); line-height: 1; }
+                .stat-value { font-size: 28px; font-weight: 700; color: var(--foreground); line-height: 1; font-variant-numeric: tabular-nums; }
                 .stat-value.accent { color: var(--primary); }
                 .stat-sub { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
                 
@@ -379,8 +459,8 @@ const AccountsPage = {
                 .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), var(--yellow-400)); transition: width 0.45s ease; transform-origin: left; }
                 .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emerald-500); animation: pulse 2s infinite; display: inline-block; }
                 .stat-value-sync { display: flex; flex-direction: column; gap: 2px; line-height: 1.05; }
-                .stat-value-sync .sync-date-line { font-size: 29px; font-weight: 700; letter-spacing: -0.01em; }
-                .stat-value-sync .sync-time-line { font-size: 23px; font-weight: 600; color: var(--foreground); opacity: 0.95; }
+                .stat-value-sync .sync-primary { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+                .stat-value-sync .sync-secondary { font-size: 14px; font-weight: 500; color: var(--muted-foreground); margin-top: 4px; }
                 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); } 50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } }
 
                 /* ── Tabs ── */
@@ -389,11 +469,11 @@ const AccountsPage = {
                     margin-bottom: 20px; animation: fadeDown 0.4s 0.15s ease both;
                 }
                 .panel-tab {
-                    padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); cursor: pointer;
-                    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; user-select: none;
+                    padding: 8px 18px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); cursor: pointer;
+                    border-radius: 8px; transition: all 0.2s; user-select: none;
                 }
-                .panel-tab:hover:not(.active) { color: var(--foreground); }
-                .panel-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+                .panel-tab:hover:not(.active) { color: var(--foreground); background: var(--muted); }
+                .panel-tab.active { color: var(--primary); background: rgba(var(--primary-rgb, 99,102,241), 0.08); }
 
                 /* ── Info Sections ── */
                 .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; animation: fadeDown 0.4s 0.2s ease both; }
@@ -404,7 +484,8 @@ const AccountsPage = {
                 .info-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
                 .info-row:last-child { border-bottom: none; padding-bottom: 0; }
                 .info-row:first-of-type { padding-top: 0; }
-                .info-key { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
+                .info-key { font-size: 12px; color: var(--muted-foreground); font-weight: 400; display: flex; align-items: center; gap: 6px; }
+                .info-key svg { opacity: 0.5; flex-shrink: 0; }
                 .info-val { font-size: 13px; font-weight: 600; color: var(--foreground); display: flex; align-items: center; gap: 6px; }
 
                 .provider-tag { background: rgba(59,130,246,0.1); color: var(--blue-500); border: 1px solid rgba(59,130,246,0.2); padding: 2px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
@@ -477,8 +558,14 @@ const AccountsPage = {
 
                 .ai-insight {
                     background: transparent; border: 1px solid var(--border);
-                    border-radius: 10px; padding: 16px;
+                    border-radius: 10px; padding: 16px 16px 16px 20px;
                     display: flex; gap: 12px; align-items: flex-start;
+                    position: relative; overflow: hidden;
+                }
+                .ai-insight::before {
+                    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+                    background: linear-gradient(180deg, var(--primary), var(--yellow-400));
+                    border-radius: 3px 0 0 3px;
                 }
                 .ai-icon { color: var(--primary); margin-top: 2px; flex-shrink: 0; }
                 .ai-title { font-size: 12px; font-weight: 700; color: var(--primary); margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
@@ -741,59 +828,109 @@ const AccountsPage = {
         if (this._pageState === 'loading') {
             return Array(4).fill(0).map((_, i) => `
                 <div class="account-card" style="animation: pulse-bg 1.5s ease-in-out infinite;">
-                    <div class="card-dot" style="background:var(--border)"></div>
-                    <div class="account-info">
-                        <div class="skel-box skel-text" style="width:120px;height:18px;"></div>
-                        <div class="skel-box skel-text" style="width:140px;height:12px;"></div>
-                    </div>
-                    <div class="account-power" style="margin-left:auto;">
-                        <div class="power-label">
-                            <div class="skel-box skel-text" style="width:60px;"></div>
+                    <div class="card-top-row">
+                        <div class="card-top-left">
+                            <div class="card-dot" style="background:var(--border)"></div>
+                            <div class="account-info">
+                                <div class="skel-box skel-text" style="width:140px;height:18px;"></div>
+                                <div class="skel-box skel-text" style="width:100px;height:12px;margin-top:6px;"></div>
+                            </div>
                         </div>
-                        <div class="power-bar"><div class="skel-box" style="width:100%;height:100%;"></div></div>
+                        <div class="skel-box skel-badge" style="width:56px;height:22px;border-radius:6px;"></div>
+                    </div>
+                    <div class="card-bottom-row">
+                        <div class="account-power">
+                            <div class="power-label">
+                                <div class="skel-box skel-text" style="width:80px;"></div>
+                                <div class="skel-box skel-text" style="width:44px;"></div>
+                            </div>
+                            <div class="power-bar-wrap"><div class="power-bar"><div class="skel-box" style="width:100%;height:100%;"></div></div></div>
+                        </div>
+                        <div class="skel-box" style="width:100%;height:34px;border-radius:8px;"></div>
                     </div>
                 </div>
             `).join('');
         }
         if (this._pageState === 'error') {
-            return `<div style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--red-500); background:rgba(239,68,68,0.05); border-radius:8px;">${this._errorMessage}</div>`;
+            return `<div style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--red-500); background:rgba(239,68,68,0.05); border-radius:12px; border: 1px dashed rgba(239,68,68,0.2);">
+                <svg style="width:28px;height:28px;margin:0 auto 10px;display:block;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div style="font-weight:600;margin-bottom:4px;">Could not load accounts</div>
+                <div style="font-size:13px;opacity:0.8;">${this._errorMessage}</div>
+            </div>`;
         }
         if (this._pageState === 'empty') {
-            return `<div style="grid-column: 1/-1; text-align:center; padding:40px; color:var(--muted-foreground);">No accounts found. Use 'Add Account' to get started.</div>`;
+            return `<div style="grid-column: 1/-1; text-align:center; padding:48px 32px; color:var(--muted-foreground); border: 1px dashed var(--border); border-radius:14px;">
+                <svg style="width:36px;height:36px;margin:0 auto 12px;display:block;opacity:0.4;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                <div style="font-weight:600;font-size:15px;color:var(--foreground);margin-bottom:6px;">No accounts yet</div>
+                <div style="font-size:13px;line-height:1.5;max-width:300px;margin:0 auto 16px;">Add your first game account to start tracking resources and managing automation.</div>
+                <button class="btn btn-primary btn-sm" onclick="AccountsPage.openAddForm()">+ Add account</button>
+            </div>`;
         }
-        return this._accountsData.map((row, index) => {
+        return this._sortedAccounts().map((row, index) => {
             const statusStr = (row.emu_status || 'offline').toLowerCase();
             const statusClass = statusStr === 'online' ? 'status-online' : statusStr === 'idle' ? 'status-idle' : 'status-offline';
+            const statusLabel = statusStr === 'online' ? 'Online' : statusStr === 'idle' ? 'Ready' : 'Offline';
             const powFormatted = AccountsPage.formatPower(row.power);
             const powerPct = Math.min((parseFloat((row.power / 1000000).toFixed(1)) / 30) * 100, 100);
+            const powerPctDisplay = Math.round(powerPct);
             const ingameName = row.lord_name || '—';
-            const displayAlliance = row.alliance || '—';
+            const displayAlliance = row.alliance;
+            const goldFormatted = AccountsPage.formatResource(row.gold);
+            const woodFormatted = AccountsPage.formatResource(row.wood);
+            const oreFormatted = AccountsPage.formatResource(row.ore);
+
+            const emuDisplay = row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : null);
+            const emuHtml = emuDisplay
+                ? `<span>${emuDisplay}</span>`
+                : `<span class="emu-unlinked">Unlinked</span>`;
+            const idHtml = row.game_id
+                ? `<span>ID: ${row.game_id}</span>`
+                : `<span class="id-pending"><svg style="width:10px;height:10px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Pending</span>`;
+
+            const syncTimeRel = this._relativeTime(row.last_scan_at);
 
             return `
-            <div class="account-card ${statusClass}" onclick="AccountsPage.openDetail(${row.account_id})" style="animation: fadeIn 0.28s ease ${index * 0.05}s both;">
-                <div class="card-dot"></div>
-                <div class="account-info">
-                    <div class="account-name">
-                        ${ingameName}
-                        <span class="alliance-badge">${displayAlliance !== '—' ? displayAlliance : '—'}</span>
+            <div class="account-card ${statusClass}" onclick="AccountsPage.openDetail(${row.account_id})" style="animation: fadeIn 0.28s ease ${index * 0.04}s both;">
+                <div class="card-top-row">
+                    <div class="card-top-left">
+                        <div class="card-dot"></div>
+                        <div class="account-info">
+                            <div class="account-name">
+                                ${ingameName}
+                                ${displayAlliance ? `<span class="alliance-badge">${displayAlliance}</span>` : ''}
+                            </div>
+                            <div class="account-emulator">${emuHtml} · ${idHtml}</div>
+                        </div>
                     </div>
-                    <div class="account-emulator">${row.emu_name || (row.emu_index != null ? 'LDP-' + row.emu_index : 'No Emulator')} · ${row.game_id ? 'ID: ' + row.game_id : 'No ID'}</div>
+                    <span class="card-status-label">${statusLabel}</span>
                 </div>
-                <div class="account-power">
-                    <div class="power-label">
-                        <span class="power-value">${powFormatted} power</span>
-                        <span class="power-hall">Hall ${row.hall_level || 0}</span>
+                <div class="card-bottom-row">
+                    <div class="account-power">
+                        <div class="power-label">
+                            <span class="power-value">${powFormatted} power</span>
+                            <span class="power-hall">Hall ${row.hall_level || 0}</span>
+                        </div>
+                        <div class="power-bar-wrap">
+                            <div class="power-bar"><div class="power-fill" style="width:${powerPct}%"></div></div>
+                            <span class="power-pct">${powerPctDisplay}%</span>
+                        </div>
                     </div>
-                    <div class="power-bar"><div class="power-fill" style="width:${powerPct}%"></div></div>
-                    <div class="sync-time">Synced: ${this.formatDateTime(row.last_scan_at)}</div>
+                    <div class="card-resource-strip">
+                        <div class="res-chip gold"><span class="res-chip-icon">🪙</span> <span class="res-chip-val">${goldFormatted}</span></div>
+                        <div class="res-chip-sep"></div>
+                        <div class="res-chip wood"><span class="res-chip-icon">🪵</span> <span class="res-chip-val">${woodFormatted}</span></div>
+                        <div class="res-chip-sep"></div>
+                        <div class="res-chip ore"><span class="res-chip-icon">💎</span> <span class="res-chip-val">${oreFormatted}</span></div>
+                    </div>
                 </div>
-                <div class="card-actions">
+                <div class="card-footer">
+                    <div class="sync-time">
+                        <svg style="width:11px;height:11px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        ${syncTimeRel}
+                    </div>
                     <button class="card-btn-view" onclick="event.stopPropagation(); AccountsPage.openDetail(${row.account_id})">
                         View <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                     </button>
-                    <div class="card-btn-icon" onclick="event.stopPropagation()" title="Sync">
-                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                    </div>
                 </div>
             </div>
             `;
@@ -1162,11 +1299,12 @@ const AccountsPage = {
         const statusLabel = isOnline ? 'Online' : 'Offline';
         const emuDisplay = acc.emu_name || (acc.emu_index != null ? 'LDP-' + acc.emu_index : 'No Emulator');
         const powFormatted = AccountsPage.formatPower(acc.power);
+        const powerPct = Math.min(Math.round(((acc.power || 0) / 30000000) * 100), 100);
         const accMatching = acc.lord_name ? 'Yes' : 'No';
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
-        const syncDateLine = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleDateString() : 'Never';
-        const syncTimeLine = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleTimeString() : '—';
+        const syncRelative = this._relativeTime(acc.last_scan_at);
+        const syncFull = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleString() : 'Never';
         const gameIdDisplay = acc.game_id || 'Unknown';
         const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
 
@@ -1185,7 +1323,7 @@ const AccountsPage = {
                 <!-- Panel Header -->
                 <div class="panel-header">
                     <div class="header-left">
-                        <div class="panel-avatar">
+                        <div class="panel-avatar ${isOnline ? 'avatar-online' : 'avatar-offline'}">
                             ${avatarInitial}
                         </div>
                         <div class="title-block">
@@ -1197,18 +1335,21 @@ const AccountsPage = {
                                         ${statusLabel}
                                     </span>
                                 </span>
+                                <span class="meta-sep"></span>
                                 <span>
                                     ${accMatching === 'Yes'
                 ? '<span class="slide-badge slide-badge--matched">✓ Matched</span>'
                 : '<span class="slide-badge slide-badge--unsynced">✗ Unsynced</span>'}
                                 </span>
-                                <span><span style="font-family:monospace;${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span></span>
+                                <span class="meta-sep"></span>
+                                <span><span style="font-family:var(--font-mono);${isLegacyId ? 'color:var(--yellow-500);' : ''}">${isLegacyId ? '⚠️ Legacy' : 'ID: ' + gameIdDisplay}</span></span>
+                                <span class="meta-sep"></span>
                                 <span>${emuDisplay}</span>
                             </div>
                         </div>
                     </div>
                     <div class="header-actions" style="position:relative;">
-                        <button class="btn btn-ghost" onclick="AccountsPage.promptDeleteAccount('${acc.game_id}', '${ingameName.replace(/'/g, "\\'")}')" style="padding: 9px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; color: var(--red-500);" title="Delete Account">
+                        <button class="btn btn-ghost" onclick="AccountsPage.promptDeleteAccount('${acc.game_id}', '${ingameName.replace(/'/g, "\\'")}')" style="padding: 9px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; color: var(--red-500);" title="Delete Account" onmouseover="this.style.background='rgba(239,68,68,0.1)'" onmouseout="this.style.background=''">
                             <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         </button>
                         <button class="btn btn-primary" onclick="AccountsPage.openEditForm('${acc.account_id}')" style="padding: 9px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; display: flex; align-items: center; gap: 6px; background: var(--primary); color: #fff; box-shadow: 0 4px 16px rgba(var(--primary-rgb, 99, 102, 241), 0.3); transition: all 0.2s;">
@@ -1223,16 +1364,17 @@ const AccountsPage = {
 
                 <!-- Stats Row -->
                 <div class="stats-row">
-                    <div class="stat-card">
+                    <div class="stat-card stat-card--power">
                         <div class="stat-label">
                             <svg width="12" height="12" fill="none" stroke="var(--primary)" stroke-width="2.5" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                             Power
                         </div>
                         <div class="stat-value accent">${powFormatted}</div>
-                        <div class="stat-sub">Combat strength index</div>
+                        <div class="progress-bar"><div class="progress-fill" style="width:${powerPct}%;background:linear-gradient(90deg, var(--primary), var(--indigo-400,#818cf8));"></div></div>
+                        <div class="stat-sub">${powerPct}% of 30M cap</div>
                     </div>
 
-                    <div class="stat-card">
+                    <div class="stat-card stat-card--hall">
                         <div class="stat-label">
                             <svg width="12" height="12" fill="none" stroke="var(--yellow-500)" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
                             Hall Level
@@ -1242,12 +1384,12 @@ const AccountsPage = {
                         <div class="stat-sub">${Math.round((acc.hall_level || 0) / 25 * 100)}% to max (25)</div>
                     </div>
 
-                    <div class="stat-card">
+                    <div class="stat-card stat-card--sync">
                         <div class="stat-label">
                             <span class="sync-dot"></span>
                             Last Sync
                         </div>
-                        <div class="stat-value stat-value-sync"><span class="sync-date-line">${syncDateLine}</span><span class="sync-time-line">${syncTimeLine}</span></div>
+                        <div class="stat-value stat-value-sync"><span class="sync-primary">${syncRelative}</span><span class="sync-secondary">${syncFull}</span></div>
                         <div class="stat-sub">${activeStatus.substring(2)} · ${emuDisplay}</div>
                     </div>
                 </div>
@@ -1350,27 +1492,27 @@ const AccountsPage = {
                     <div class="info-card">
                         <div class="section-title">Login &amp; Access</div>
                         <div class="info-row">
-                            <span class="info-key">Method</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Method</span>
                             <span class="info-val">
                                 <span class="${loginDotClass}"></span>
                                 ${loginMethod}
                             </span>
                         </div>
                         <div class="info-row">
-                            <span class="info-key">Email</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> Email</span>
                             <span class="info-val" style="font-size:12px; color: var(--muted-foreground)">${displayEmail}</span>
                         </div>
 
                         <div class="section-title" style="margin-top:24px">Emulator Info</div>
                         <div class="info-row">
-                            <span class="info-key">Instance</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Instance</span>
                             <span class="info-val">
                                 ${emuDisplay}
                                 <span class="${isOnline ? 'status-dot-on' : 'status-dot-off'}" style="margin-left:2px"></span>
                             </span>
                         </div>
                         <div class="info-row">
-                            <span class="info-key">Provider</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Provider</span>
                             <span class="info-val"><span class="provider-tag">${this._normalizeProvider(acc.provider)}</span></span>
                         </div>
                     </div>
@@ -1379,11 +1521,11 @@ const AccountsPage = {
                     <div class="info-card">
                         <div class="section-title">Game Status</div>
                         <div class="info-row">
-                            <span class="info-key">Alliance</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Alliance</span>
                             <span class="info-val"><span class="alliance-tag">${displayAlliance}</span></span>
                         </div>
                         <div class="info-row">
-                            <span class="info-key">Hall Level</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> Hall Level</span>
                             <span class="info-val">
                                 <div class="level-meter">
                                     <span class="level-num">${hallLvl}</span>
@@ -1393,7 +1535,7 @@ const AccountsPage = {
                             </span>
                         </div>
                         <div class="info-row">
-                            <span class="info-key">Market Level</span>
+                            <span class="info-key"><svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg> Market Level</span>
                             <span class="info-val">
                                 <div class="level-meter">
                                     <span class="level-num">${marketLvl}</span>
@@ -1461,7 +1603,7 @@ const AccountsPage = {
                         <div class="res-value">${goldFormatted}</div>
                         <div class="res-bar"><div class="res-fill gold" style="width:${goldPct}%"></div></div>
                         <div class="res-footer">
-                            <span class="res-cap">Cap max</span>
+                            <span class="res-cap">of 3B cap</span>
                             ${mkDelta('gold')}
                         </div>
                     </div>
@@ -1475,7 +1617,7 @@ const AccountsPage = {
                         <div class="res-value">${woodFormatted}</div>
                         <div class="res-bar"><div class="res-fill wood" style="width:${woodPct}%"></div></div>
                         <div class="res-footer">
-                            <span class="res-cap">Cap max</span>
+                            <span class="res-cap">of 3B cap</span>
                             ${mkDelta('wood')}
                         </div>
                     </div>
@@ -1490,7 +1632,7 @@ const AccountsPage = {
                         <div class="res-value ${oreIsCritical ? 'critical' : ''}">${oreFormatted}</div>
                         <div class="res-bar"><div class="res-fill ${oreIsCritical ? 'critical-fill' : 'ore'}" style="width:${orePct}%"></div></div>
                         <div class="res-footer">
-                            <span class="res-cap ${oreIsCritical ? 'warn' : ''}">Cap max</span>
+                            <span class="res-cap ${oreIsCritical ? 'warn' : ''}">of 3B cap</span>
                             ${mkDelta('ore')}
                         </div>
                     </div>

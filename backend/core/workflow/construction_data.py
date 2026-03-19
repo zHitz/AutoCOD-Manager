@@ -26,7 +26,7 @@ CONSTRUCTION_TAPS = {
     ],
     "TAVERN": [
         # TODO: User cần cung cấp tọa độ navigate từ IN_CITY
-        (0, 0),
-        (0, 0),
+        (610, 365),
+        (523, 327),
     ],
 }

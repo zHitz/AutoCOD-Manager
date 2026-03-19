@@ -411,6 +411,83 @@ FUNCTION_REGISTRY = [
         "description": "Chat with heroes on the IN_CITY map (clockwise viewport scan)",
         "params": [],
     },
+    {
+        "id": "nav_to_research_tech",
+        "label": "Research Technology",
+        "category": "Core Actions",
+        "icon": "🔬",
+        "color": "#6366f1",
+        "description": "Research technology in the Academy",
+        "params": [
+            {
+                "key": "research_type",
+                "label": "Research Type",
+                "type": "select",
+                "options": ["default", "economy", "military", "defense"],
+                "default": "default",
+            },
+        ],
+    },
+    {
+        "id": "nav_to_buy_merchant",
+        "label": "Buy Merchant Items",
+        "category": "Core Actions",
+        "icon": "🛒",
+        "color": "#6366f1",
+        "description": "Buy items from the Merchant shop",
+        "params": [
+            {
+                "key": "max_refreshes",
+                "label": "Max Refreshes",
+                "type": "number",
+                "default": 5,
+                "min": 0,
+                "max": 20,
+            },
+        ],
+    },
+    {
+        "id": "nav_to_claim_vip_gift",
+        "label": "Claim VIP Daily Gift",
+        "category": "Core Actions",
+        "icon": "🎁",
+        "color": "#6366f1",
+        "description": "Claim daily VIP gift reward",
+        "params": [],
+    },
+    {
+        "id": "nav_to_festival_of_fortitude",
+        "label": "Festival of Fortitude",
+        "category": "Core Actions",
+        "icon": "🎪",
+        "color": "#6366f1",
+        "description": "Process Festival of Fortitude event tasks",
+        "params": [],
+    },
+    {
+        "id": "nav_to_clean_trash",
+        "label": "Clean Trash (Pet Sanctuary)",
+        "category": "Core Actions",
+        "icon": "🧹",
+        "color": "#6366f1",
+        "description": "Detect and clean trash at Pet Sanctuary",
+        "params": [
+            {
+                "key": "duration",
+                "label": "Duration (sec)",
+                "type": "number",
+                "default": 60,
+                "min": 15,
+                "max": 180,
+            },
+            {
+                "key": "score_threshold",
+                "label": "Score Threshold",
+                "type": "number",
+                "default": 0.30,
+            },
+        ],
+    },
 ]
 
 
@@ -720,6 +797,109 @@ ACTIVITY_REGISTRY = [
         "config_fields": [],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 180},
     },
+    {
+        "id": "research_technology_task",
+        "name": "Research Technology",
+        "icon": "🔬",
+        "description": "Research technology in the Academy",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_research_tech", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "research_type",
+                "label": "Research Type",
+                "type": "select",
+                "options": ["default", "economy", "military", "defense"],
+                "default": "default",
+            },
+        ],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+    },
+    {
+        "id": "buy_merchant_items_task",
+        "name": "Buy Merchant Items",
+        "icon": "🛒",
+        "description": "Buy items from the Merchant shop",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_buy_merchant", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "max_refreshes",
+                "label": "Max Refreshes",
+                "type": "number",
+                "default": 5,
+                "min": 0,
+                "max": 20,
+            },
+        ],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720},
+    },
+    {
+        "id": "claim_daily_vip_gift_task",
+        "name": "Claim VIP Daily Gift",
+        "icon": "🎁",
+        "description": "Claim daily VIP gift reward",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_claim_vip_gift", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 1440},
+    },
+    {
+        "id": "rotating_event",
+        "name": "Event",
+        "icon": "🎯",
+        "description": "Aggregate activity that rotates through enabled sub-events",
+        "type": "event",
+        "sub_events": [
+            {
+                "id": "festival_of_fortitude",
+                "name": "Festival of Fortitude",
+                "description": "Process Festival of Fortitude event tasks",
+                "steps": [
+                    {"function_id": "startup_to_lobby", "config": {}},
+                    {"function_id": "nav_to_festival_of_fortitude", "config": {}},
+                ],
+                "config_fields": [],
+                "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360},
+            },
+        ],
+        "steps": [],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+    },
+    {
+        "id": "clean_trash_pet_sanctuary_task",
+        "name": "Clean Trash (Pet Sanctuary)",
+        "icon": "🧹",
+        "description": "Detect and clean trash at Pet Sanctuary using computer vision",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_clean_trash", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "duration",
+                "label": "Duration (sec)",
+                "type": "number",
+                "default": 60,
+                "min": 15,
+                "max": 180,
+            },
+            {
+                "key": "score_threshold",
+                "label": "Score Threshold",
+                "type": "number",
+                "default": 0.30,
+            },
+        ],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 120},
+    },
 ]
 
 
@@ -737,12 +917,18 @@ def get_activity_by_id(activity_id: str):
 
 
 def build_steps_for_activity(activity_id: str, user_config: dict = None):
-    """Build executor steps with user config merged into defaults."""
+    """Build executor steps with user config merged into defaults.
+    For event-type activities, returns steps from all enabled sub-events."""
     act = get_activity_by_id(activity_id)
     if not act:
         return None
 
     cfg = user_config or {}
+
+    # Handle event-type activities: dispatch to enabled sub-events
+    if act.get("type") == "event":
+        return _build_event_steps(act, cfg)
+
     steps = []
 
     for step_def in act.get("steps", []):
@@ -762,3 +948,43 @@ def build_steps_for_activity(activity_id: str, user_config: dict = None):
         steps.append(step)
 
     return steps
+
+
+def _build_event_steps(event_act: dict, user_config: dict) -> list:
+    """Build combined steps from all enabled sub-events inside an event activity."""
+    sub_events = event_act.get("sub_events", [])
+    sub_cfg = user_config.get("sub_events_config", {})
+    all_steps = []
+
+    for sub in sub_events:
+        sub_id = sub["id"]
+        sub_user = sub_cfg.get(sub_id, {})
+
+        # Skip disabled sub-events
+        if not sub_user.get("enabled", False):
+            continue
+
+        sub_user_config = sub_user.get("config", {})
+        for step_def in sub.get("steps", []):
+            step = {
+                "function_id": step_def["function_id"],
+                "config": step_def.get("config", {}).copy(),
+            }
+            for key, val in sub_user_config.items():
+                if key in sub.get("defaults", {}):
+                    continue
+                step["config"][key] = val
+            all_steps.append(step)
+
+    return all_steps
+
+
+def get_sub_event_by_id(event_activity_id: str, sub_event_id: str):
+    """Find a sub-event definition inside an event-type activity."""
+    act = get_activity_by_id(event_activity_id)
+    if not act or act.get("type") != "event":
+        return None
+    for sub in act.get("sub_events", []):
+        if sub["id"] == sub_event_id:
+            return sub
+    return None

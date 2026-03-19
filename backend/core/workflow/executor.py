@@ -517,6 +517,38 @@ async def execute_recipe(
                     await log(f"  chat_with_hero.py not found at {chat_module_path}", "warn")
                     ok = True  # Skip gracefully
 
+            elif fn_id == "nav_to_research_tech":
+                research_type = (config or {}).get("research_type", "default")
+                ok = await asyncio.to_thread(
+                    core_actions.research_technology, serial, detector,
+                    research_type=research_type
+                )
+
+            elif fn_id == "nav_to_buy_merchant":
+                max_refreshes = int((config or {}).get("max_refreshes", 5))
+                ok = await asyncio.to_thread(
+                    core_actions.buy_merchant_items, serial, detector,
+                    max_refreshes=max_refreshes
+                )
+
+            elif fn_id == "nav_to_claim_vip_gift":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_daily_vip_gift, serial, detector
+                )
+
+            elif fn_id == "nav_to_festival_of_fortitude":
+                ok = await asyncio.to_thread(
+                    core_actions.process_festival_of_fortitude_event, serial, detector
+                )
+
+            elif fn_id == "nav_to_clean_trash":
+                duration = float((config or {}).get("duration", 60))
+                score_threshold = float((config or {}).get("score_threshold", 0.30))
+                ok = await asyncio.to_thread(
+                    core_actions.clean_trash_pet_sanctuary, serial, detector,
+                    duration=duration, score_threshold=score_threshold
+                )
+
             else:
                 await log(
                     f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.",

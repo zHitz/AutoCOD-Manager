@@ -1069,7 +1069,9 @@ const WF3 = {
                 id: sys.id,
                 name: sys.name,
                 description: sys.description,
-                enabled: !!actConf.enabled
+                enabled: !!actConf.enabled,
+                type: sys.type || 'standard',
+                sub_events: sys.sub_events || []
             };
         });
 
@@ -1816,6 +1818,57 @@ const WF3 = {
                 if (statusVal === 'skipped') statusText = 'Skipped';
             }
 
+            // Event-type activity: distinct visual treatment
+            if (item.type === 'event') {
+                const subCount = this._getEnabledSubEventCount(item.id, groupId);
+                const totalSub = item.sub_events.length;
+                return `
+                <div class="acv-activity-row event-type ${item.enabled ? 'enabled' : ''}" id="acv-row-${item.id}" data-id="${item.id}"
+                    draggable="true" 
+                    ondragstart="WF3.onDragStart(event)" 
+                    ondragover="WF3.onDragOver(event)" 
+                    ondrop="WF3.onDrop(event)" 
+                    ondragend="WF3.onDragEnd(event)">
+                    
+                    <div class="acv-drag-handle" title="Drag to reorder">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="8" y1="6" x2="21" y2="6"></line>
+                            <line x1="8" y1="12" x2="21" y2="12"></line>
+                            <line x1="8" y1="18" x2="21" y2="18"></line>
+                            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                        </svg>
+                    </div>
+
+                    <label class="acv-check-label" style="cursor:pointer;" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="wf-act-group-cb" data-name="${item.name.replace(/'/g, "\\'")}" data-id="${item.id}" data-idx="${idx}" ${item.enabled ? 'checked' : ''}
+                            onchange="WF3.saveActivityConfig(${groupId}); this.closest('.acv-activity-row').classList.toggle('enabled', this.checked)">
+                        <span class="acv-check-box"></span>
+                    </label>
+
+                    <div class="acv-event-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                            <path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"></path>
+                        </svg>
+                    </div>
+
+                    <div class="acv-activity-info" style="flex:1; cursor:pointer; padding:2px 0;" onclick="WF3.showEventPopup('${item.id}', ${groupId})">
+                        <span class="acv-activity-name">${item.name}</span>
+                        <span class="acv-event-badge">${subCount}/${totalSub}</span>
+                    </div>
+                    <span class="acv-activity-status status-${statusVal}" id="acv-status-${item.id}" data-status="${statusVal}">${statusText}</span>
+                    <button class="acv-cfg-btn acv-event-open-btn" title="Manage Sub-events" onclick="WF3.showEventPopup('${item.id}', ${groupId})" style="opacity:1;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                    </button>
+                </div>
+                `;
+            }
+
             return `
             <div class="acv-activity-row ${item.enabled ? 'enabled' : ''}" id="acv-row-${item.id}" data-id="${item.id}"
                 draggable="true" 
@@ -1825,7 +1878,7 @@ const WF3 = {
                 ondragend="WF3.onDragEnd(event)">
                 
                 <div class="acv-drag-handle" title="Drag to reorder">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="8" y1="6" x2="21" y2="6"></line>
                         <line x1="8" y1="12" x2="21" y2="12"></line>
                         <line x1="8" y1="18" x2="21" y2="18"></line>
@@ -1840,9 +1893,8 @@ const WF3 = {
                         onchange="WF3.saveActivityConfig(${groupId}); this.closest('.acv-activity-row').classList.toggle('enabled', this.checked)">
                     <span class="acv-check-box"></span>
                 </label>
-                <div class="acv-activity-info" style="flex:1; cursor:pointer; padding:4px 0;" onclick="WF3.selectActivity('${item.id}', ${groupId}, this)">
+                <div class="acv-activity-info" style="flex:1; cursor:pointer; padding:2px 0;" onclick="WF3.selectActivity('${item.id}', ${groupId}, this)">
                     <span class="acv-activity-name">${item.name}</span>
-                    <span class="acv-activity-desc" style="display:block; font-size:11px; color:var(--muted-foreground); margin-top:2px;">${item.description || ''}</span>
                 </div>
                 <span class="acv-activity-status status-${statusVal}" id="acv-status-${item.id}" data-status="${statusVal}">${statusText}</span>
                 <button class="acv-cfg-btn" title="Configure" onclick="WF3.showActivityConfig('${item.id}', ${groupId})">
@@ -1971,79 +2023,79 @@ const WF3 = {
         const misc = this.getMiscConfig(groupId);
 
         container.innerHTML = `
-                <div class="acv-misc-item" style = "border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;" >
-                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
                     <span>⏳</span> Account Cooldown
                 </div>
-                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
-                    Wait before re-running an account that recently finished (prevents rapid re-logins).
+                <div style="font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px; line-height: 1.3;">
+                    Wait before re-running an account that recently finished.
                 </div>
-                <div>
+                <div style="font-size: 12px;">
                     <input type="number" class="acv-input-num" id="misc-cooldown-min" value="${misc.cooldown_min}" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
                 </div>
             </div>
             
-            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
-                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
                     <span>⏱</span> Time Limit
                 </div>
-                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
-                    Force swap to next account after this much time total, whether activities are finished or not.
+                <div style="font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px; line-height: 1.3;">
+                    Force swap to next account after this much time total.
                 </div>
-                <div>
+                <div style="font-size: 12px;">
                     <input type="number" class="acv-input-num" id="misc-limit-min" value="${misc.limit_min}" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
                 </div>
             </div>
             
-            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
-                <div style="font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
                     <span>🔄</span> Smart Wait Threshold
                 </div>
-                <div style="font-size: 13px; color: var(--muted-foreground); margin-bottom: 12px; line-height: 1.4;">
-                    If the active account's cooldown ends within this window, wait instead of swapping to a different account (avoids swap-back). Set to 0 to disable.
+                <div style="font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px; line-height: 1.3;">
+                    Wait instead of swapping if cooldown ends within this window. Set to 0 to disable.
                 </div>
-                <div>
+                <div style="font-size: 12px;">
                     <input type="number" class="acv-input-num" id="misc-swap-wait-threshold" value="${misc.swap_wait_threshold_min || 0}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
                 </div>
             </div>
             
-            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
-                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
-                    <input type="checkbox" id="misc-choose-start-account" onchange="WF3.saveMiscConfig(${groupId})" ${misc.choose_start_account ? 'checked' : ''} style="margin-top: 3px;">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-choose-start-account" onchange="WF3.saveMiscConfig(${groupId})" ${misc.choose_start_account ? 'checked' : ''} style="margin-top: 2px;">
                     <div>
-                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
                             <span>🎯</span> Choose Account to Run First
                         </div>
-                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
-                            When starting the bot, prompt to select which account should be executed first.
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            Prompt to select which account should be executed first.
                         </div>
                     </div>
                 </label>
             </div>
             
-            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 16px;">
-                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
-                    <input type="checkbox" id="misc-skip-cooldown" onchange="WF3.saveMiscConfig(${groupId})" ${misc.skip_cooldown ? 'checked' : ''} style="margin-top: 3px;">
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-skip-cooldown" onchange="WF3.saveMiscConfig(${groupId})" ${misc.skip_cooldown ? 'checked' : ''} style="margin-top: 2px;">
                     <div>
-                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; color: #fb923c;">
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #fb923c;">
                             <span>⚡</span> Skip Cooldown (Force Run)
                         </div>
-                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
-                            Ignore all account and activity cooldowns. Bot will re-run everything immediately.
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            Ignore all cooldowns. Bot will re-run everything immediately.
                         </div>
                     </div>
                 </label>
             </div>
             
             <div class="acv-misc-item">
-                <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
-                    <input type="checkbox" id="misc-continue-on-error" onchange="WF3.saveMiscConfig(${groupId})" ${misc.continue_on_error ? 'checked' : ''} style="margin-top: 3px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-continue-on-error" onchange="WF3.saveMiscConfig(${groupId})" ${misc.continue_on_error ? 'checked' : ''} style="margin-top: 2px;">
                     <div>
-                        <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; color: #ef4444;">
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #ef4444;">
                             <span>🛡️</span> Continue on Error
                         </div>
-                        <div style="font-size: 13px; color: var(--muted-foreground); line-height: 1.4;">
-                            If an activity fails, log the error but continue executing the next activities instead of swapping the account immediately.
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            Log error but continue next activities instead of swapping immediately.
                         </div>
                     </div>
                 </label>
@@ -2218,6 +2270,199 @@ const WF3 = {
         ${cooldownHtml}
     </div>
 `;
+    },
+
+    // ── Event Activity — Sub-events Helpers ──
+
+    _getEnabledSubEventCount(activityId, groupId) {
+        const conf = this._groupConfigs[groupId];
+        if (!conf || !conf.activities || !conf.activities[activityId]) return 0;
+        const subCfg = conf.activities[activityId].sub_events_config || {};
+        return Object.values(subCfg).filter(s => s.enabled).length;
+    },
+
+    showEventPopup(activityId, groupId) {
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        if (!sys || sys.type !== 'event') return;
+
+        const subEvents = sys.sub_events || [];
+        const conf = this._groupConfigs[groupId] || { activities: {} };
+        const actConf = conf.activities[activityId] || {};
+        const subCfg = actConf.sub_events_config || {};
+
+        // Build sub-events list HTML
+        const subEventsHtml = subEvents.map(sub => {
+            const subConf = subCfg[sub.id] || {};
+            const isEnabled = !!subConf.enabled;
+            const configFields = sub.config_fields || [];
+            const savedSubConf = subConf.config || {};
+            const cdEnabled = subConf.cooldown_enabled ?? (sub.defaults && sub.defaults.cooldown_enabled) ?? false;
+            const cdMinutes = subConf.cooldown_minutes ?? (sub.defaults && sub.defaults.cooldown_minutes) ?? 60;
+
+            // Build config fields for this sub-event
+            const fieldsHtml = configFields.map(d => {
+                const val = savedSubConf[d.key] !== undefined ? savedSubConf[d.key] : d.default;
+                if (d.type === 'select') {
+                    const opts = d.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('');
+                    return `
+                    <div class="acv-cfg-field">
+                        <label class="acv-cfg-label">${d.label}</label>
+                        <select class="acv-cfg-select" data-subcfgkey="${d.key}" data-subid="${sub.id}" onchange="WF3._saveSubEventConfig('${activityId}', ${groupId})">${opts}</select>
+                    </div>`;
+                }
+                if (d.type === 'checkbox') {
+                    return `
+                    <div class="acv-cfg-field">
+                        <label class="acv-check-label" style="gap:10px;">
+                            <input type="checkbox" data-subcfgkey="${d.key}" data-subid="${sub.id}" ${val ? 'checked' : ''} onchange="WF3._saveSubEventConfig('${activityId}', ${groupId})">
+                            <span class="acv-check-box"></span>
+                            <span>${d.label}</span>
+                        </label>
+                    </div>`;
+                }
+                return `
+                <div class="acv-cfg-field">
+                    <label class="acv-cfg-label">${d.label}</label>
+                    <input type="number" class="acv-cfg-input" data-subcfgkey="${d.key}" data-subid="${sub.id}" value="${val}" ${d.min !== undefined ? 'min="'+d.min+'"' : ''} ${d.max !== undefined ? 'max="'+d.max+'"' : ''} onchange="WF3._saveSubEventConfig('${activityId}', ${groupId})">
+                </div>`;
+            }).join('');
+
+            const hasConfig = configFields.length > 0;
+
+            return `
+            <div class="acv-sub-event-row ${isEnabled ? 'enabled' : ''}" data-subid="${sub.id}">
+                <div class="acv-sub-event-header">
+                    <label class="acv-check-label" style="cursor:pointer;" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="acv-sub-event-cb" data-subid="${sub.id}" ${isEnabled ? 'checked' : ''}
+                            onchange="WF3._saveSubEventConfig('${activityId}', ${groupId}); this.closest('.acv-sub-event-row').classList.toggle('enabled', this.checked)">
+                        <span class="acv-check-box"></span>
+                    </label>
+                    <div class="acv-sub-event-info" style="flex:1;">
+                        <div class="acv-sub-event-name">${sub.name}</div>
+                        <div class="acv-sub-event-desc">${sub.description || ''}</div>
+                    </div>
+                    ${hasConfig ? `<button class="acv-cfg-btn" style="opacity:1;" title="Configure" onclick="WF3._toggleSubEventConfig('${sub.id}')">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M3.51 9a10 10 0 0 0 0 6M20.49 9a10 10 0 0 0 0 6M4.93 19.07a10 10 0 0 0 14.14 0"/></svg>
+                    </button>` : ''}
+                </div>
+                <div class="acv-sub-event-config" id="acv-sub-cfg-${sub.id}" style="display:none;">
+                    ${fieldsHtml}
+                    <div class="acv-cfg-divider"></div>
+                    <div class="acv-cfg-section-title">Cooldown</div>
+                    <div class="acv-cfg-field">
+                        <label class="acv-check-label" style="gap:10px;">
+                            <input type="checkbox" data-subcfgkey="cooldown_enabled" data-subid="${sub.id}" ${cdEnabled ? 'checked' : ''} onchange="WF3._saveSubEventConfig('${activityId}', ${groupId})">
+                            <span class="acv-check-box"></span>
+                            <span>Enable cooldown</span>
+                        </label>
+                    </div>
+                    <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:10px;">
+                        <label class="acv-cfg-label" style="margin:0; white-space:nowrap;">Cooldown</label>
+                        <input type="number" class="acv-cfg-input" data-subcfgkey="cooldown_minutes" data-subid="${sub.id}" value="${cdMinutes}" min="1" max="9999" style="width:80px;" onchange="WF3._saveSubEventConfig('${activityId}', ${groupId})">
+                        <span style="font-size:12px; color:var(--muted-foreground);">Minutes</span>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Create or reuse modal
+        let modal = document.getElementById('wf-event-popup-overlay');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'wf-event-popup-overlay';
+            modal.className = 'wf-fn-overlay';
+            document.body.appendChild(modal);
+        }
+
+        modal.innerHTML = `
+            <div class="acv-event-popup" onclick="event.stopPropagation()">
+                <div class="acv-event-popup-header">
+                    <div>
+                        <div class="acv-event-popup-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            ${sys.name}
+                        </div>
+                        <div class="acv-event-popup-sub">Manage sub-events that rotate during execution</div>
+                    </div>
+                    <button class="acv-event-popup-close" onclick="document.getElementById('wf-event-popup-overlay').classList.remove('visible')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="acv-event-popup-body">
+                    ${subEventsHtml || '<div class="acv-empty-hint">No sub-events configured.</div>'}
+                </div>
+            </div>
+        `;
+
+        modal.onclick = (e) => {
+            if (e.target === modal) modal.classList.remove('visible');
+        };
+        modal.classList.add('visible');
+    },
+
+    _toggleSubEventConfig(subId) {
+        const el = document.getElementById(`acv-sub-cfg-${subId}`);
+        if (!el) return;
+        const isOpen = el.style.display !== 'none';
+        el.style.display = isOpen ? 'none' : 'block';
+    },
+
+    _saveSubEventConfig(activityId, groupId) {
+        if (!this._groupConfigs[groupId]) {
+            this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
+        }
+        if (!this._groupConfigs[groupId].activities[activityId]) {
+            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+        }
+
+        const actConf = this._groupConfigs[groupId].activities[activityId];
+        if (!actConf.sub_events_config) actConf.sub_events_config = {};
+
+        // Read all sub-event checkboxes for enable state
+        const popup = document.getElementById('wf-event-popup-overlay');
+        if (!popup) return;
+
+        popup.querySelectorAll('.acv-sub-event-cb').forEach(cb => {
+            const subId = cb.dataset.subid;
+            if (!actConf.sub_events_config[subId]) {
+                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+            }
+            actConf.sub_events_config[subId].enabled = cb.checked;
+        });
+
+        // Read all config fields
+        popup.querySelectorAll('[data-subcfgkey]').forEach(el => {
+            const subId = el.dataset.subid;
+            const key = el.dataset.subcfgkey;
+            if (!subId || !key) return;
+
+            if (!actConf.sub_events_config[subId]) {
+                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+            }
+
+            const val = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
+
+            if (key === 'cooldown_enabled' || key === 'cooldown_minutes') {
+                actConf.sub_events_config[subId][key] = val;
+            } else {
+                if (!actConf.sub_events_config[subId].config) actConf.sub_events_config[subId].config = {};
+                actConf.sub_events_config[subId].config[key] = val;
+            }
+        });
+
+        this._saveConfigToBackend(groupId);
+
+        // Update the badge count in the activity list row
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        if (sys) {
+            const badge = document.querySelector(`#acv-row-${activityId} .acv-event-badge`);
+            if (badge) {
+                const count = this._getEnabledSubEventCount(activityId, groupId);
+                badge.textContent = `${count}/${sys.sub_events.length}`;
+            }
+        }
+
+        WfToast.show('s', 'Saved', 'Sub-event configuration saved.');
     },
 
     renderGroupList() {

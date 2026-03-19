@@ -105,6 +105,7 @@ class GameStateDetector:
             "activities/build.png": "RSS_BUILD",
             "tavern/free_draw_btn.png": "TAVERN_FREE_DRAW",
             "tavern/draw_x10_btn.png": "TAVERN_DRAW_X10",
+            "activities/farm_search_btn.png": "FARM_SEARCH_BTN",
         }
 
         # Alliance templates
@@ -321,7 +322,12 @@ class GameStateDetector:
     def _match_construction_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
         """Construction matching with grayscale + ROI."""
         screen_gray = self._get_gray(screen)
-        checks = {target: self.construction_templates[target]} if target and target in self.construction_templates else self.construction_templates
+        if target:
+            if target not in self.construction_templates:
+                return None
+            checks = {target: self.construction_templates[target]}
+        else:
+            checks = self.construction_templates
         for name, entries in checks.items():
             for entry in entries:
                 max_val, _ = self._match_single(screen_gray, entry, threshold)
@@ -332,7 +338,12 @@ class GameStateDetector:
     def _match_special_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
         """Special state matching with grayscale + ROI."""
         screen_gray = self._get_gray(screen)
-        checks = {target: self.special_templates[target]} if target and target in self.special_templates else self.special_templates
+        if target:
+            if target not in self.special_templates:
+                return None
+            checks = {target: self.special_templates[target]}
+        else:
+            checks = self.special_templates
         for name, entries in checks.items():
             for entry in entries:
                 max_val, _ = self._match_single(screen_gray, entry, threshold)
@@ -407,7 +418,12 @@ class GameStateDetector:
             return None
         screen_gray = self._get_gray(screen)
 
-        checks = {target: self.activity_templates[target]} if target and target in self.activity_templates else self.activity_templates
+        if target:
+            if target not in self.activity_templates:
+                return None
+            checks = {target: self.activity_templates[target]}
+        else:
+            checks = self.activity_templates
         
         for name, entries in checks.items():
             for entry in entries:
@@ -431,7 +447,12 @@ class GameStateDetector:
             return None
         screen_gray = self._get_gray(screen)
 
-        checks = {target: self.alliance_templates[target]} if target and target in self.alliance_templates else self.alliance_templates
+        if target:
+            if target not in self.alliance_templates:
+                return None
+            checks = {target: self.alliance_templates[target]}
+        else:
+            checks = self.alliance_templates
         
         for name, entries in checks.items():
             for entry in entries:
@@ -455,7 +476,12 @@ class GameStateDetector:
             return None
         screen_gray = self._get_gray(screen)
 
-        checks = {target: self.icon_templates[target]} if target and target in self.icon_templates else self.icon_templates
+        if target:
+            if target not in self.icon_templates:
+                return None
+            checks = {target: self.icon_templates[target]}
+        else:
+            checks = self.icon_templates
         
         for name, entries in checks.items():
             for entry in entries:
@@ -479,7 +505,12 @@ class GameStateDetector:
             return None
         screen_gray = self._get_gray(screen)
 
-        checks = {target: self.account_templates[target]} if target and target in self.account_templates else self.account_templates
+        if target:
+            if target not in self.account_templates:
+                return None
+            checks = {target: self.account_templates[target]}
+        else:
+            checks = self.account_templates
         
         for name, entries in checks.items():
             for entry in entries:
