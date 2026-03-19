@@ -1071,7 +1071,8 @@ const WF3 = {
                 description: sys.description,
                 enabled: !!actConf.enabled,
                 type: sys.type || 'standard',
-                sub_events: sys.sub_events || []
+                sub_events: sys.sub_events || [],
+                weight: (actConf.config && actConf.config.weight) || sys.weight || 'light'
             };
         });
 
@@ -1895,6 +1896,7 @@ const WF3 = {
                 </label>
                 <div class="acv-activity-info" style="flex:1; cursor:pointer; padding:2px 0;" onclick="WF3.selectActivity('${item.id}', ${groupId}, this)">
                     <span class="acv-activity-name">${item.name}</span>
+                    <span class="acv-weight-badge weight-${item.weight || 'light'}" title="${item.weight === 'heavy' ? 'Heavy — triggers swap' : 'Light — skipped if heavy tasks waiting'}">${item.weight === 'heavy' ? '⚡' : '🪶'}</span>
                 </div>
                 <span class="acv-activity-status status-${statusVal}" id="acv-status-${item.id}" data-status="${statusVal}">${statusText}</span>
                 <button class="acv-cfg-btn" title="Configure" onclick="WF3.showActivityConfig('${item.id}', ${groupId})">
@@ -2253,6 +2255,23 @@ const WF3 = {
                 <span>Runs today: <strong id="acv-cfg-runs-today" style="color:var(--foreground);">${runsToday}</strong></span>
             </div>
 `;
+        const currentWeight = saved.weight || sys.weight || 'light';
+
+        const weightHtml = `
+    <div class="acv-cfg-divider"></div>
+            <div class="acv-cfg-section-title">Priority Weight</div>
+            <div class="acv-cfg-field">
+                <label class="acv-cfg-label">Weight</label>
+                <select class="acv-cfg-select" data-cfgkey="weight" onchange="WF3.savePerActivityConfig('${activityId}',${groupId}); WF3.renderActivitiesForGroup(${groupId})">
+                    <option value="light" ${currentWeight === 'light' ? 'selected' : ''}>🪶 Light</option>
+                    <option value="heavy" ${currentWeight === 'heavy' ? 'selected' : ''}>⚡ Heavy</option>
+                </select>
+                <div style="font-size:11px; color:var(--muted-foreground); margin-top:4px; line-height:1.4;">
+                    <b>Heavy</b> = high priority, worth swapping for.<br>
+                    <b>Light</b> = low priority, skipped if heavy tasks are waiting.
+                </div>
+            </div>
+`;
 
         panel.innerHTML = `
     <div class="acv-cfg-header" >
@@ -2268,6 +2287,7 @@ const WF3 = {
     <div class="acv-cfg-fields">
         ${fieldsHtml}
         ${cooldownHtml}
+        ${weightHtml}
     </div>
 `;
     },

@@ -2668,3 +2668,122 @@ def clean_trash_pet_sanctuary(
     print(f"[{serial}] === CLEAN TRASH COMPLETE -- {cycle} cycles, {total_taps} taps in {elapsed_total}s ===")
     return True
 
+
+# ═══════════════════════════════════════════════════════════════════════
+#  SEASON POLICIES
+# ═══════════════════════════════════════════════════════════════════════
+
+# Popup detection ROI — crop to popup area to avoid false positives from tree icons
+_POLICY_POPUP_ROI = (250, 150, 750, 510)
+
+
+def detect_policy_popup(serial: str, detector: GameStateDetector) -> str:
+    """Detect which popup is displayed on the policy screen.
+
+    Checks the popup ROI region for buttons/headers.
+    Returns:
+        'ENACT'            — ENACT button visible (can research this policy)
+        'REQUIREMENTS_GO'  — GO button visible (needs prerequisite)
+        'SELECT'           — Governance SELECT header visible
+        'LOCKED'           — No actionable popup detected
+    """
+    frame = detector.get_frame(serial)
+    if frame is None:
+        return "LOCKED"
+
+    roi = _POLICY_POPUP_ROI
+    popup_crop = frame[roi[1]:roi[3], roi[0]:roi[2]]
+
+    # Check ENACT button
+    enact = detector.check_activity(serial, target="POLICY_ENACT_BTN", threshold=0.85, frame=popup_crop)
+    if enact:
+        return "ENACT"
+
+    # Check GO button
+    go = detector.check_activity(serial, target="POLICY_GO_BTN", threshold=0.92, frame=popup_crop)
+    if go:
+        return "REQUIREMENTS_GO"
+
+    # Check SELECT (governance header)
+    gov = detector.check_special_state(serial, target="GOVERNANCE_HEADER", threshold=0.85, frame=popup_crop)
+    if gov:
+        return "SELECT"
+
+    return "LOCKED"
+
+
+def _tap_policy_enact(serial: str, detector: GameStateDetector) -> bool:
+    """Find and tap the ENACT button on the policy popup.
+
+    Returns True if tapped, False if button not found.
+    """
+    enact = detector.check_activity(serial, target="POLICY_ENACT_BTN", threshold=0.85)
+    if enact:
+        _, ex, ey = enact
+        print(f"[{serial}] [POLICY] Tapping ENACT at ({ex}, {ey})")
+        adb_helper.tap(serial, ex, ey)
+        time.sleep(2)
+        return True
+    print(f"[{serial}] [POLICY] ENACT button not found")
+    return False
+
+
+def _tap_policy_go(serial: str, detector: GameStateDetector) -> bool:
+    """Find and tap the GO button on the policy popup.
+
+    Returns True if tapped, False if button not found.
+    """
+    go = detector.check_activity(serial, target="POLICY_GO_BTN", threshold=0.92)
+    if go:
+        _, gx, gy = go
+        print(f"[{serial}] [POLICY] Tapping GO at ({gx}, {gy})")
+        adb_helper.tap(serial, gx, gy)
+        time.sleep(2)
+        return True
+    print(f"[{serial}] [POLICY] GO button not found")
+    return False
+
+
+def process_season_policies(serial: str, detector: GameStateDetector, account_id: str = "default") -> bool:
+    """Main entry point for Season Policies automation.
+
+    Runs the PolicyV3Engine in a loop until target is reached or all locked.
+    Returns True on meaningful progress, False on failure.
+    """
+    from backend.config import config as app_config
+
+    print(f"\n[{serial}] ═══════════════════════════════════════════")
+    print(f"[{serial}]   SEASON POLICIES — START (account={account_id})")
+    print(f"[{serial}] ═══════════════════════════════════════════\n")
+
+    from backend.core.workflow.policy.engine import PolicyV3Engine
+
+    engine = PolicyV3Engine(serial, detector, app_config.adb_path, account_id=account_id)
+
+    max_cycles = 20
+    enacted_count = 0
+
+    for cycle in range(max_cycles):
+        print(f"\n[{serial}] [POLICY] --- Cycle {cycle + 1}/{max_cycles} ---")
+        result = engine.run()
+        print(f"[{serial}] [POLICY] Result: {result}")
+
+        if result == "TARGET_REACHED":
+            print(f"[{serial}] [POLICY] All target columns completed!")
+            break
+        elif result in ("TARGET_ENACTED", "ENACT_SUCCESS", "GOVERNANCE_DONE"):
+            enacted_count += 1
+        elif result == "ALL_LOCKED":
+            print(f"[{serial}] [POLICY] All locked — stopping.")
+            break
+        else:
+            print(f"[{serial}] [POLICY] Unexpected result: {result}")
+            break
+
+    print(f"\n[{serial}] ═══════════════════════════════════════════")
+    print(f"[{serial}]   SEASON POLICIES — COMPLETE ({enacted_count} enacted)")
+    print(f"[{serial}] ═══════════════════════════════════════════\n")
+
+    return True
+
+

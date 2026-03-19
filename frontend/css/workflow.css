@@ -3568,4 +3568,15 @@
     white-space: nowrap;
 }
 
+/* ── Weight Badge (⚡ Heavy / 🪶 Light) ── */
+.acv-weight-badge {
+    font-size: 10px;
+    margin-left: 4px;
+    opacity: 0.6;
+    cursor: help;
+    transition: opacity var(--duration-fast);
+}
+.acv-activity-row:hover .acv-weight-badge { opacity: 1; }
+.acv-weight-badge.weight-heavy { opacity: 0.9; }
+
 

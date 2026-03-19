@@ -549,6 +549,13 @@ async def execute_recipe(
                     duration=duration, score_threshold=score_threshold
                 )
 
+            elif fn_id == "nav_to_season_policies":
+                policy_account_id = (config or {}).get("account_id", "default")
+                ok = await asyncio.to_thread(
+                    core_actions.process_season_policies, serial, detector,
+                    account_id=policy_account_id
+                )
+
             else:
                 await log(
                     f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.",

@@ -423,7 +423,7 @@ FUNCTION_REGISTRY = [
                 "key": "research_type",
                 "label": "Research Type",
                 "type": "select",
-                "options": ["default", "economy", "military", "defense"],
+                "options": ["default", "economy", "military", "balance"],
                 "default": "default",
             },
         ],
@@ -487,6 +487,15 @@ FUNCTION_REGISTRY = [
                 "default": 0.30,
             },
         ],
+    },
+    {
+        "id": "nav_to_season_policies",
+        "label": "Season Policies",
+        "category": "Core Actions",
+        "icon": "📜",
+        "color": "#6366f1",
+        "description": "Automate Season Policies tech tree progression",
+        "params": [],
     },
 ]
 
@@ -571,6 +580,7 @@ ACTIVITY_REGISTRY = [
         "name": "Gather Resource Center",
         "icon": "🏛️",
         "description": "Farm resources at the Resource Center",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_rss_center_farm", "config": {}},
@@ -583,6 +593,7 @@ ACTIVITY_REGISTRY = [
         "name": "Gather Resource",
         "icon": "⛏️",
         "description": "Gather resources on the world map",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_farming", "config": {"resource_type": "wood"}},
@@ -603,6 +614,7 @@ ACTIVITY_REGISTRY = [
         "name": "Full Scan",
         "icon": "🔬",
         "description": "Boot to lobby and run full data scan",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "scan_full", "config": {}},
@@ -615,6 +627,7 @@ ACTIVITY_REGISTRY = [
         "name": "Catch Pet",
         "icon": "🐾",
         "description": "Capture pet on the world map",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_capture_pet", "config": {}},
@@ -627,6 +640,7 @@ ACTIVITY_REGISTRY = [
         "name": "Claim Mail Reward",
         "icon": "✉️",
         "description": "Automatically check and claim mail rewards",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "check_mail", "config": {"mail_type": "all"}},
@@ -647,6 +661,7 @@ ACTIVITY_REGISTRY = [
         "name": "Claim Resources",
         "icon": "💰",
         "description": "Claim resources in your city",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "claim_city_resources", "config": {}},
@@ -659,6 +674,7 @@ ACTIVITY_REGISTRY = [
         "name": "Train Troops",
         "icon": "⚔️",
         "description": "Train troops in your city",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "train_troops", "config": {}},
@@ -707,6 +723,7 @@ ACTIVITY_REGISTRY = [
         "name": "Claim Alliance Resource",
         "icon": "💎",
         "description": "Claim alliance territory resources",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "claim_alliance_resource", "config": {}},
@@ -720,6 +737,7 @@ ACTIVITY_REGISTRY = [
         "name": "Alliance Help",
         "icon": "🤝",
         "description": "Navigate to Alliance Menu, detect & tap Help button",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_alliance_help", "config": {}},
@@ -732,6 +750,7 @@ ACTIVITY_REGISTRY = [
         "name": "Tavern Chest Draw",
         "icon": "🎰",
         "description": "Claim daily free Hero & Artifact chest draws at the Tavern",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_tavern_chest", "config": {}},
@@ -766,6 +785,7 @@ ACTIVITY_REGISTRY = [
         "name": "Heal Troops",
         "icon": "💊",
         "description": "Heal wounded troops via Elixir Healing building",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_heal_troops", "config": {}},
@@ -778,6 +798,7 @@ ACTIVITY_REGISTRY = [
         "name": "Attack Darkling Legions",
         "icon": "⚔️",
         "description": "Search and dispatch troops to attack Darkling Legions",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_darkling_legions", "config": {}},
@@ -790,6 +811,7 @@ ACTIVITY_REGISTRY = [
         "name": "Chat With Hero",
         "icon": "💬",
         "description": "Chat with heroes on the IN_CITY map (clockwise viewport scan)",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_chat_hero", "config": {}},
@@ -802,6 +824,7 @@ ACTIVITY_REGISTRY = [
         "name": "Research Technology",
         "icon": "🔬",
         "description": "Research technology in the Academy",
+        "weight": "heavy",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_research_tech", "config": {}},
@@ -811,7 +834,7 @@ ACTIVITY_REGISTRY = [
                 "key": "research_type",
                 "label": "Research Type",
                 "type": "select",
-                "options": ["default", "economy", "military", "defense"],
+                "options": ["default", "economy", "military", "balance"],
                 "default": "default",
             },
         ],
@@ -822,6 +845,7 @@ ACTIVITY_REGISTRY = [
         "name": "Buy Merchant Items",
         "icon": "🛒",
         "description": "Buy items from the Merchant shop",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_buy_merchant", "config": {}},
@@ -843,6 +867,7 @@ ACTIVITY_REGISTRY = [
         "name": "Claim VIP Daily Gift",
         "icon": "🎁",
         "description": "Claim daily VIP gift reward",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_claim_vip_gift", "config": {}},
@@ -855,6 +880,7 @@ ACTIVITY_REGISTRY = [
         "name": "Event",
         "icon": "🎯",
         "description": "Aggregate activity that rotates through enabled sub-events",
+        "weight": "heavy",
         "type": "event",
         "sub_events": [
             {
@@ -878,6 +904,7 @@ ACTIVITY_REGISTRY = [
         "name": "Clean Trash (Pet Sanctuary)",
         "icon": "🧹",
         "description": "Detect and clean trash at Pet Sanctuary using computer vision",
+        "weight": "light",
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_clean_trash", "config": {}},
@@ -899,6 +926,19 @@ ACTIVITY_REGISTRY = [
             },
         ],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 120},
+    },
+    {
+        "id": "season_policies_task",
+        "name": "Season Policies",
+        "icon": "📜",
+        "description": "Automate Season Policies tech tree (enact, governance, GO chains)",
+        "weight": "heavy",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_season_policies", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
     },
 ]
 

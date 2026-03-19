@@ -86,6 +86,9 @@ class GameStateDetector:
             "special/market.png": "MARKET_MENU",
             "auto-peacekeeping.png": "AUTO_PEACEKEEPING",
             "icon_markers/skip.png": "SKIP",
+            # Policy screen verification
+            "policy/policy_header.png": "POLICY_SCREEN",
+            "policy/governance_header.png": "GOVERNANCE_HEADER",
         }
         
         # Activity templates — returns name + center coordinates when matched
@@ -106,6 +109,13 @@ class GameStateDetector:
             "tavern/free_draw_btn.png": "TAVERN_FREE_DRAW",
             "tavern/draw_x10_btn.png": "TAVERN_DRAW_X10",
             "activities/farm_search_btn.png": "FARM_SEARCH_BTN",
+            # Policy button detection
+            "policy/enact_btn.png": "POLICY_ENACT_BTN",
+            "policy/go_btn.png": "POLICY_GO_BTN",
+            "policy/select_btn.png": "POLICY_SELECT_BTN",
+            "policy/target_default.png": "POLICY_TARGET_DEFAULT",
+            "policy/replenish_resources.png": "POLICY_REPLENISH",
+            "policy/alliance_help_btn.png": "POLICY_ALLIANCE_HELP",
         }
 
         # Alliance templates
@@ -353,6 +363,10 @@ class GameStateDetector:
 
     # ── Public API methods ──
 
+    def get_frame(self, serial: str) -> np.ndarray:
+        """Capture and return the current screen frame (alias for screencap_memory)."""
+        return self.screencap_memory(serial)
+
     def check_state(self, serial: str, threshold: float = 0.8) -> str:
         """Determines the current game state via OpenCV Template Matching."""
         screen = self.screencap_memory(serial)
@@ -401,19 +415,21 @@ class GameStateDetector:
             return None
         return self._match_construction_from_screen(screen, target, threshold)
 
-    def check_special_state(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
-        """Checks for special screens (e.g. Server Maintenance). Returns matched name or None."""
-        screen = self.screencap_memory(serial)
+    def check_special_state(self, serial: str, target: str = None, threshold: float = 0.8, frame=None) -> str:
+        """Checks for special screens (e.g. Server Maintenance). Returns matched name or None.
+        If frame is provided, uses it instead of capturing a new screenshot."""
+        screen = frame if frame is not None else self.screencap_memory(serial)
         if screen is None:
             return None
         return self._match_special_from_screen(screen, target, threshold)
 
-    def check_activity(self, serial: str, target: str = None, threshold: float = 0.98) -> tuple:
+    def check_activity(self, serial: str, target: str = None, threshold: float = 0.98, frame=None) -> tuple:
         """
         Activity Detector — finds a template on screen and returns its name + center coordinates.
         Returns: (name, center_x, center_y) if found, or None if not found.
+        If frame is provided, uses it instead of capturing a new screenshot.
         """
-        screen = self.screencap_memory(serial)
+        screen = frame if frame is not None else self.screencap_memory(serial)
         if screen is None:
             return None
         screen_gray = self._get_gray(screen)

@@ -302,6 +302,51 @@ class BotOrchestrator:
 
         return not has_any_runnable
 
+    async def _only_light_tasks_ready(self, acc_id: str) -> bool:
+        """Check if only light-weight tasks are ready while heavy tasks exist but are all on cooldown.
+        Returns True if the account should be skipped to preserve global cooldown for heavy tasks.
+        If there are NO heavy tasks at all → return False (run everything normally).
+        """
+        if self.skip_cooldown:
+            return False
+
+        now = time.time()
+        has_heavy = False
+        has_heavy_ready = False
+        has_any_ready = False
+
+        for i, act in enumerate(self.activities):
+            act_id = act.get("id", act.get("name", f"act_{i}"))
+            act_cfg = act.get("config", {})
+            weight = act_cfg.get("weight", "light")
+
+            # Determine if this activity is currently on cooldown
+            is_on_cd = False
+            if act_cfg.get("cooldown_enabled"):
+                cd_minutes = act_cfg.get("cooldown_minutes", 0)
+                if cd_minutes > 0:
+                    last_act_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(
+                        int(acc_id), act_id
+                    )
+                    effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+                    if last_act_run > 0 and (now - last_act_run) < effective_cd:
+                        is_on_cd = True
+
+            if weight == "heavy":
+                has_heavy = True
+                if not is_on_cd:
+                    has_heavy_ready = True
+
+            if not is_on_cd:
+                has_any_ready = True
+
+        # If no heavy tasks exist at all → normal behavior (all light = run normally)
+        if not has_heavy:
+            return False
+
+        # Heavy tasks exist but none are ready, and some light tasks are ready → skip
+        return has_any_ready and not has_heavy_ready
+
     async def _earliest_activity_ready_sec(self) -> float:
         """Scan all accounts × activities to find the shortest remaining cooldown.
         Returns seconds until the earliest activity becomes runnable.
@@ -790,6 +835,37 @@ class BotOrchestrator:
                         self._advance_queue()
                     continue
 
+                # ── PRE-CHECK: Skip swap if only light tasks are ready (heavy tasks on cooldown) ──
+                if await self._only_light_tasks_ready(acc_id):
+                    print(
+                        f"[BotOrchestrator] Only light activities ready for Account {acc_id}. "
+                        f"Skipping swap to preserve cooldown for heavy tasks."
+                    )
+                    await self._emit_timeline(
+                        "🪶",
+                        f"Skipped {acc.get('lord_name') or acc_id}: only light tasks ready, waiting for heavy",
+                        emu_idx, acc_id,
+                    )
+                    self.account_statuses[acc_id] = "pending"
+                    consecutive_skips += 1
+                    if consecutive_skips >= len(self.queue):
+                        sleep_sec = await self._earliest_activity_ready_sec()
+                        sleep_min = round(sleep_sec / 60, 1)
+                        print(
+                            f"[BotOrchestrator] All accounts waiting for heavy tasks. "
+                            f"Sleeping {sleep_min}m until next heavy activity is ready."
+                        )
+                        await self._emit_timeline("💤", f"Waiting for heavy tasks. Sleeping {sleep_min}m")
+                        await self.broadcast_state()
+                        while sleep_sec > 0 and not self.stop_requested:
+                            chunk = min(sleep_sec, 10)
+                            await asyncio.sleep(chunk)
+                            sleep_sec -= chunk
+                        consecutive_skips = 0
+                    else:
+                        self._advance_queue()
+                    continue
+
                 # Account is ready — reset skip counter
                 consecutive_skips = 0
 
@@ -1039,6 +1115,10 @@ class BotOrchestrator:
                         )
                         self.activity_statuses[act_id_or_name] = "skipped"
                         continue
+
+                    # Inject account_id into each step config for per-account tracking
+                    for step in steps:
+                        step.setdefault("config", {})["account_id"] = acc_id
 
                     self.current_activity = {
                         "id": act_id_or_name,
