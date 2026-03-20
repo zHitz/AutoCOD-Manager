@@ -114,7 +114,7 @@ const AccountsPage = {
             const av = this._sortValue(a, this._sortField);
             const bv = this._sortValue(b, this._sortField);
             if (av === bv) return Number(a.account_id || 0) - Number(b.account_id || 0);
-            if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * dir;
+            if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
             return (av > bv ? 1 : -1) * dir;
         });
     },
