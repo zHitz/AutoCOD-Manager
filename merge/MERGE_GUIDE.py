@@ -104,6 +104,65 @@ CORE_ACTIONS_REQUIRED_FUNCTIONS = {
         "extra_imports": ["import random"],  # core_actions.py cần import random
         "status": "Placeholder templates — user chưa chụp ảnh alliance_help_btn.png",
     },
+
+    # --- Workflow: research_technology ---
+    "research_technology": {
+        "called_by": "orchestrator (core_actions.py)",
+        "description": "Automates Technology Research at Research Center. Supports economy/military/balance/default tabs, max_power check, tab verification.",
+        "depends_on_functions": [
+            "go_to_construction",
+            "back_to_lobby",
+            "wait_for_state",
+        ],
+        "depends_on_templates": [
+            "RESEARCH_EMPTY_SLOT",
+            "RESEARCH_CONFIRM",
+            "RESEARCH_ECONOMY_TECH",
+            "RESEARCH_MILITARY_TECH",
+            "RESEARCH_ALLIANCE_HELP",
+            "RESEARCH_USE_BAG",
+            "RESEARCH_NO_RESOURCE",
+            "RESEARCH_NO_CONFIRM",
+        ],
+        "depends_on_construction_data": ["RESEARCH_CENTER"],
+        "status": "Đã hoạt động — E2E tested",
+    },
+
+    "_parse_research_timer": {
+        "called_by": "research_technology (future feature)",
+        "description": "Parse timer text '2d 21:43:41' thành total seconds.",
+        "depends_on_functions": [],
+        "depends_on_templates": [],
+        "depends_on_construction_data": [],
+        "status": "Có sẵn, chưa gọi (OCR timer là future feature)",
+    },
+
+    # --- Workflow: upgrade_construction ---
+    "upgrade_construction": {
+        "called_by": "orchestrator (core_actions.py)",
+        "description": "Auto-upgrade constructions via Hall. Recursive GO chain, multi-path, builder slot detection.",
+        "depends_on_functions": [
+            "check_builder_slots",
+            "_navigate_to_hall_upgrade",
+            "_try_upgrade_or_go",
+            "reset_position",
+            "dismiss_promo_popup",
+            "go_to_construction",
+            "back_to_lobby",
+        ],
+        "depends_on_templates": [
+            "CONSTRUCTION_UPGRADE_BTN",
+            "CONSTRUCTION_UPGRADE_ICON",
+            "CONSTRUCTION_GO_BTN",
+            "CONSTRUCTION_BUILD_BTN",
+            "CONSTRUCTION_UNLOCK_PERMANENTLY_BTN",
+            "CONSTRUCTION_HIRE_BTN",
+            "CONSTRUCTION_CONFIRM_BTN",
+            "HALFLING_HOUSE",
+        ],
+        "depends_on_construction_data": ["HALL", "HALFLING_HOUSE"],
+        "status": "Đã hoạt động — E2E tested",
+    },
 }
 
 # --- Workflow: chat_with_hero.py ---
@@ -286,6 +345,8 @@ MERGE_CHECKLIST = """
 |     [ ] Them `import random` o dau file                      |
 |     [ ] Them ham: alliance_help()                            |
 |     [ ] Them ham: claim_daily_chests()                       |
+|     [x] Them ham: research_technology() (w/ max_power)       |
+|     [x] Them ham: _parse_research_timer()                    |
 |     [ ] Verify ham: heal_troops() da co                      |
 |     [ ] Verify ham: attack_darkling_legions_v1_basic() da co |
 |     [ ] Verify ham: go_to_alliance() da co                   |
@@ -293,15 +354,20 @@ MERGE_CHECKLIST = """
 |                                                              |
 |  [ ] 2. state_detector.py                                    |
 |     [ ] construction_configs: them con_tavern.png -> TAVERN  |
+|     [x] construction_configs: them research/*_tech -> RC     |
 |     [ ] activity_configs: them tavern/free_draw_btn.png      |
 |     [ ] activity_configs: them tavern/draw_x10_btn.png       |
+|     [x] activity_configs: them 6 research/* entries          |
 |     [ ] alliance_configs: them alliance_help_btn.png         |
+|     [x] special_configs: them 2 research/* entries           |
 |                                                              |
 |  [ ] 3. construction_data.py                                 |
 |     [ ] Them TAVERN entry (placeholder coords)               |
+|     [x] RESEARCH_CENTER: (535,210) -> (615,230)              |
 |                                                              |
 |  [ ] 4. Template files                                       |
 |     [ ] Tao thu muc: templates/tavern/                       |
+|     [x] Tao thu muc: templates/research/ (5 files)           |
 |     [ ] Verify: templates/alliance/ co du 3 file cu          |
 |     [ ] Verify: templates/icon_markers/ co hero_chat_*.png   |
 |                                                              |
@@ -311,6 +377,9 @@ MERGE_CHECKLIST = """
 |     [ ] Copy: chat_with_hero.py                              |
 |     [ ] Copy: attack_darkling_legions_v1_basic.py            |
 |     [ ] Copy: alliance_help_workflow.py                      |
+|                                                              |
+|  [x] 6. ocr_helper.py                                        |
+|     [x] Them 'd' vao tessedit_char_whitelist                 |
 |                                                              |
 +==============================================================+
 """

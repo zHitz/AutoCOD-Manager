@@ -73,6 +73,50 @@ def print(*args, sep=" ", end="\n", file=None, flush=False):
 def _exit_with_log(serial: str, level: str, message: str):
     raise SystemExit(_format_output_message(f"[{serial}] [{level}] {message}"))
 
+
+# ── Result Helpers ──────────────────────────────────────────
+# Use these for standardized return values across all core_actions.
+# See DOCS/WORKFLOWS/error_code_architecture.md for error code reference.
+
+def _ok(**extra) -> dict:
+    """Return success result. Optionally pass dynamic_cooldown_sec."""
+    return {"ok": True, **extra}
+
+
+def _fail(error: str, **extra) -> dict:
+    """Return failure result with error code + message.
+    
+    Usage:
+        return _fail("NAV_LOBBY_UNREACHABLE: Could not reach lobby")
+        return _fail("RESOURCE_QUEUE_BUSY: Queue full", dynamic_cooldown_sec=600)
+    """
+    return {"ok": False, "error": error, **extra}
+
+
+def _is_ok(result) -> bool:
+    """Check if a core_action result (bool or dict) is successful.
+    
+    Safely handles both old-style bool and new-style dict returns:
+        if not _is_ok(back_to_lobby(serial, detector)):
+            return _fail("NAV_LOBBY_UNREACHABLE: ...")
+    """
+    if isinstance(result, dict):
+        return bool(result.get("ok", False))
+    return bool(result)
+
+
+def _bubble(result, fallback_error: str = "UNKNOWN: Child function failed") -> dict:
+    """Bubble up a child function's error. Preserves error + dynamic_cooldown_sec.
+    
+    Usage:
+        result = back_to_lobby(serial, detector)
+        if not _is_ok(result):
+            return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach lobby")
+    """
+    if isinstance(result, dict):
+        return result  # already a dict with error info → pass through
+    return {"ok": False, "error": fallback_error}
+
 def ensure_app_running(serial: str, package_name: str, adb_path: str = config.adb_path):
     """Checks if the app is active, and boots it if it's not.
     Returns True if already running, False if just launched, None if launch failed."""
@@ -577,12 +621,25 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> b
     time.sleep(3)  # Extra wait for building info to load
     
     # Verify via construction detector
+    # Edge case: recently-upgraded constructions show a "success" icon overlay.
+    # First tap only dismisses that icon; a second tap is needed to actually open.
     result = detector.check_construction(serial, target=name_upper)
     if result:
         print(f"[{serial}] -> {name_upper} detected successfully.")
         return True
     
-    print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened.")
+    # Retry: tap the final coordinate again (dismiss upgrade icon → re-open)
+    last_x, last_y = taps[-1]
+    print(f"[{serial}] [RETRY] {name_upper} not detected. Re-tapping ({last_x}, {last_y}) to dismiss upgrade icon...")
+    adb_helper.tap(serial, last_x, last_y)
+    time.sleep(3)
+    
+    result = detector.check_construction(serial, target=name_upper)
+    if result:
+        print(f"[{serial}] -> {name_upper} detected on retry.")
+        return True
+    
+    print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened after retry.")
     return False
 
 def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
@@ -706,25 +763,103 @@ def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] -> PET_SANCTUARY reached successfully.")
     return True
 
-def release_pet(serial: str, detector: GameStateDetector) -> bool:
-    """
-    Navigates from PET_SANCTUARY into PET_ENCLOSURE, then executes full pet release loop.
-    Call go_to_pet_sanctuary() first.
-    """
-    print(f"[{serial}] Starting Pet Release...")
+# Pet grid slot definitions (3 columns × N rows, 1-indexed)
+# Slot 7 = row 3 col 1, Slot 8 = row 3 col 2
+_PET_SLOT_7 = {"tap": (151, 315), "roi": (116, 275, 186, 355)}
+_PET_SLOT_8 = {"tap": (217, 320), "roi": (180, 275, 250, 355)}
+_BLANK_PET_TEMPLATE = os.path.join("pets", "blank_pet_slot_8.png")
 
-    # 1. Tap (918, 504) to open Enclosure
+
+def _is_pet_slot_blank(
+    serial: str, detector: GameStateDetector, roi: tuple, threshold: float = 0.80
+) -> bool:
+    """Check if a pet grid slot is empty using blank-slot template matching.
+
+    Args:
+        roi: (x1, y1, x2, y2) crop region for the slot.
+        threshold: Match confidence threshold.
+
+    Returns True if the slot is blank (empty).
+    """
+    frame = detector.get_frame(serial)
+    if frame is None:
+        return False
+
+    x1, y1, x2, y2 = roi
+    roi_crop = frame[y1:y2, x1:x2]
+    if roi_crop.size == 0:
+        return False
+
+    template_path = os.path.join(detector.templates_dir, _BLANK_PET_TEMPLATE)
+    if not os.path.exists(template_path):
+        print(f"[{serial}] [PET] [WARNING] Blank slot template not found: {template_path}")
+        return False
+
+    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+    if template is None:
+        return False
+
+    roi_gray = cv2.cvtColor(roi_crop, cv2.COLOR_BGR2GRAY) if len(roi_crop.shape) == 3 else roi_crop
+
+    # Resize template to match ROI if larger
+    th, tw = template.shape[:2]
+    rh, rw = roi_gray.shape[:2]
+    if th > rh or tw > rw:
+        template = cv2.resize(template, (rw, rh))
+
+    result = cv2.matchTemplate(roi_gray, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(result)
+
+    is_blank = max_val >= threshold
+    print(f"[{serial}] [PET] Slot blank check ROI={roi}: conf={max_val:.3f} → {'BLANK' if is_blank else 'HAS PET'}")
+    return is_blank
+
+
+def _release_single_pet(serial: str, tap_point: tuple):
+    """Execute the release UI sequence for one pet at the given grid position.
+
+    Sequence: Select pet → Release button → Confirm → OK
+    """
+    adb_helper.tap(serial, tap_point[0], tap_point[1])  # Select pet in grid
+    time.sleep(1.5)
+    adb_helper.tap(serial, 352, 214)   # "Release" button
+    time.sleep(1.5)
+    adb_helper.tap(serial, 577, 365)   # Confirm dialog
+    time.sleep(1.5)
+    adb_helper.tap(serial, 547, 414)   # OK / second confirm
+    time.sleep(2)
+
+
+def release_pet(serial: str, detector: GameStateDetector) -> bool:
+    """Release all unlocked pets from PET_ENCLOSURE.
+
+    Precondition: call go_to_pet_sanctuary() first.
+
+    Algorithm:
+      1. Navigate to PET_ENCLOSURE and sort tabs.
+      2. Smart loop — check slot 8 (primary) and slot 7 (fallback):
+         - Slot 8 blank + Slot 7 blank → done, no more pets.
+         - Slot 8 has pet → try release → verify. If still occupied (locked),
+           fall back to slot 7 for remaining releases.
+         - Slot 7 has pet (edge case: sort locked slot 8) → release from slot 7.
+      3. Back x2 to exit.
+
+    Returns True on completion.
+    """
+    print(f"[{serial}] === RELEASE PET ===")
+
+    # 1. Tap to open Enclosure
     print(f"[{serial}] Opening Pet Enclosure (918, 504)...")
     adb_helper.tap(serial, 918, 504)
     time.sleep(3)
-    
+
     # 2. Verify PET_ENCLOSURE
     state = wait_for_state(serial, detector, ["PET_ENCLOSURE"], timeout_sec=10, check_mode="construction")
     if state != "PET_ENCLOSURE":
         print(f"[{serial}] [FAILED] Did not reach PET_ENCLOSURE state.")
         return False
 
-    # Navigate release tabs
+    # 3. Navigate sort/release tabs
     print(f"[{serial}] Selecting Release Tabs (254,93) -> (670,131) -> (50,135)...")
     adb_helper.tap(serial, 254, 93)
     time.sleep(2)
@@ -732,31 +867,51 @@ def release_pet(serial: str, detector: GameStateDetector) -> bool:
     time.sleep(2)
     adb_helper.tap(serial, 50, 135)
     time.sleep(2)
-    
-    def release_loop(tap_point, count):
-        print(f"[{serial}] Release loop {tap_point} x{count}...")
-        for _ in range(count):
-            adb_helper.tap(serial, tap_point[0], tap_point[1])
-            time.sleep(1.5)
-            adb_helper.tap(serial, 352, 214)
-            time.sleep(1.5)
-            adb_helper.tap(serial, 577, 365)
-            time.sleep(1.5)
-            adb_helper.tap(serial, 547, 414)
-            time.sleep(2)
-            
-    release_loop((217, 320), 5)  # x5
-    release_loop((151, 315), 3)  # x3
-    release_loop((217, 320), 2)  # x2
-    
-    # Back x2
+
+    # 4. Linear release flow (max 5 pets/day)
+    _RELEASE_COUNT = 5
+    released = 0
+
+    # Step A: Check slot 8 — if already blank, nothing to release
+    if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
+        print(f"[{serial}] [PET] Slot 8 already empty → nothing to release.")
+    else:
+        # Step B: Release from slot 8 x5
+        print(f"[{serial}] [PET] Releasing from slot 8 (up to {_RELEASE_COUNT})...")
+        for i in range(_RELEASE_COUNT):
+            _release_single_pet(serial, _PET_SLOT_8["tap"])
+            if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
+                released += (i + 1)
+                print(f"[{serial}] [PET] Slot 8 empty after {i + 1} release(s).")
+                break
+        else:
+            # After 5 releases slot 8 still has pet → it's LOCKED
+            # Edge case: sort put locked pet at slot 8, free pet at slot 7
+            print(f"[{serial}] [PET] Slot 8 still occupied after {_RELEASE_COUNT}x → pet is LOCKED.")
+            print(f"[{serial}] [PET] Trying slot 7 fallback (x1)...")
+            _release_single_pet(serial, _PET_SLOT_7["tap"])
+
+            # After releasing slot 7, grid shifts: locked pet → slot 7, new pet → slot 8
+            if not _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
+                print(f"[{serial}] [PET] Slot 8 has new pet after grid shift. Releasing slot 8 (up to {_RELEASE_COUNT})...")
+                for j in range(_RELEASE_COUNT):
+                    _release_single_pet(serial, _PET_SLOT_8["tap"])
+                    if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
+                        released += (j + 1) + 1  # +1 for slot 7 release
+                        print(f"[{serial}] [PET] Slot 8 empty after {j + 1} release(s).")
+                        break
+            else:
+                released += 1  # Only the slot 7 release counted
+                print(f"[{serial}] [PET] Slot 8 empty after slot 7 release.")
+
+    # 5. Exit
     print(f"[{serial}] Back x2 to exit Pet screen...")
     adb_helper.press_back(serial)
     time.sleep(2)
     adb_helper.press_back(serial)
     time.sleep(2)
-    
-    print(f"[{serial}] Pet Release completed!")
+
+    print(f"[{serial}] === RELEASE PET COMPLETE — released {released} pet(s) ===")
     return True
 
 def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> bool:
@@ -896,9 +1051,9 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     """
     RSS_12H_SEC = 43200
     BUFFER_SEC = 300  # 5 minutes
-    ROI_BUILDER_COUNT = (750, 265, 800, 285)
+    ROI_BUILDER_COUNT = (750, 265, 800, 290)
     ROI_BUILDING_TIME = (725, 350, 800, 370)
-    ROI_REMAINING_TIME = (659, 222, 725, 240)
+    ROI_REMAINING_TIME = (655, 222, 725, 240)
 
     print(f"[{serial}] Starting Alliance Resource Center Farming...")
     if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
@@ -1931,6 +2086,8 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
     DARKLING_LEGIONS_TAB_TAP = (50, 210)
     ACTION_BUTTON_TAP = (285, 400)
     DISPATCH_TAP = (500, 465)
+    CHOOSE_LEGIONS_TAP = (500, 265)
+    CONFIRM_TAP = (800, 480)
     TARGET_STATES = ["AUTO_PEACEKEEPING"]
 
     # 1. Back to lobby OUT_CITY
@@ -1965,6 +2122,13 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
         print(f"[{serial}] [FAILED] Did not reach Darkling Legions attack window.")
         return False
 
+    #7. Use all free Legions
+    print(f"[{serial}] Using all free Legions...")
+    adb_helper.tap(serial, CHOOSE_LEGIONS_TAP[0], CHOOSE_LEGIONS_TAP[1])
+    time.sleep(2)
+    adb_helper.tap(serial, CONFIRM_TAP[0], CONFIRM_TAP[1])
+    time.sleep(2)
+
     # 7. Tap Start
     print(f"[{serial}] Starting Peacekeeping dispatch {DISPATCH_TAP}...")
     adb_helper.tap(serial, DISPATCH_TAP[0], DISPATCH_TAP[1])
@@ -1976,6 +2140,7 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
 
     if outcome is None:
         print(f"[{serial}] Dispatch started & game pushed to map! Attack successful.")
+        time.sleep(60)
         return True
 
     if outcome == "AUTO_PEACEKEEPING":
@@ -2050,7 +2215,7 @@ def go_to_check_legions_state(serial: str, detector: GameStateDetector, max_legi
     
     return result
 
-def research_technology(serial: str, detector: GameStateDetector, research_type: str = "default") -> bool:
+def research_technology(serial: str, detector: GameStateDetector, research_type: str = "default", max_power: int = 0) -> dict:
     """
     Automates Technology Research at Research Center.
     
@@ -2060,16 +2225,29 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
       - "balance": alternate economy/military per slot
       - "default": don't tap any tab, just research whatever is shown
     
-    Flow:
-      1. Navigate to Research Center
-      2. Handle any existing Alliance Help buttons
-      3. Detect empty slots → select tech type → research → confirm
-      4. Handle edge cases (no resources, no tech available)
+    max_power: if > 0, skip research when account power exceeds this value (in raw number, e.g. 14000000 for 14M).
+    
+    Returns:
+      bool: True if at least 1 slot researched, False otherwise.
     """
     print(f"[{serial}] === TECHNOLOGY RESEARCH (type={research_type}) ===")
+    research_type = research_type.lower()
+
+    if max_power > 0:
+        from workflow.ocr_helper import ocr_region_with_retry
+        try:
+            power_text = ocr_region_with_retry(serial, detector, (0, 0, 120, 30), attempts=2, style="outline")
+            if power_text:
+                power_val = int(power_text.replace(",", "").replace(".", "").strip())
+                if power_val > max_power:
+                    print(f"[{serial}] Power {power_val:,} > max_power {max_power:,}. Skipping research.")
+                    return False
+        except Exception as e:
+            print(f"[{serial}] [WARNING] Could not read power: {e}. Proceeding anyway.")
 
     ECONOMY_TAB_TAP = (30, 190)
     MILITARY_TAB_TAP = (30, 320)
+    BUFFER_SEC = 120  # 2 minutes buffer for research cooldown
 
     # 1. Navigate to Research Center
     if not go_to_construction(serial, detector, "RESEARCH_CENTER"):
@@ -2084,21 +2262,29 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
 
     print(f"[{serial}] Research Center opened successfully.")
 
-    # 2. Scan for Alliance Help buttons first (already researching, need help)
-    alliance_help_count = 0
-    for scan in range(2):
-        help_match = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
-        if help_match:
-            _, hx, hy = help_match
-            print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
-            adb_helper.tap(serial, hx, hy)
-            time.sleep(2)
-            alliance_help_count += 1
-        else:
-            break
+    # 1b. Dismiss any auto-popup (when research is active, the current node popup appears)
+    print(f"[{serial}] Dismissing any auto-popup (415, 520)...")
+    adb_helper.tap(serial, 415, 520)
+    time.sleep(1.5)
 
-    if alliance_help_count > 0:
-        print(f"[{serial}] Tapped {alliance_help_count} Alliance Help button(s).")
+    # 2. Scan for Alliance Help buttons first (already researching, need help)
+    alliance_help_tpl = os.path.join(detector.templates_dir, "research", "research_alliance_help.png")
+    alliance_help_count = 0
+    if os.path.exists(alliance_help_tpl):
+        for scan in range(2):
+            help_match = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
+            if help_match:
+                _, hx, hy = help_match
+                print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
+                adb_helper.tap(serial, hx, hy)
+                time.sleep(2)
+                alliance_help_count += 1
+            else:
+                break
+        if alliance_help_count > 0:
+            print(f"[{serial}] Tapped {alliance_help_count} Alliance Help button(s).")
+    else:
+        print(f"[{serial}] Alliance Help template not found, skipping help scan.")
 
     # 3. Scan for empty research slots
     slots_researched = 0
@@ -2107,7 +2293,7 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     for slot_idx in range(max_slots):
         print(f"\n[{serial}] --- Checking Research Slot #{slot_idx + 1} ---")
 
-        # Detect empty slot
+        # Detect empty slot (green "RESEARCH" button at top)
         empty_match = detector.check_activity(serial, target="RESEARCH_EMPTY_SLOT", threshold=0.8)
         if not empty_match:
             print(f"[{serial}] No empty research slot found. Done.")
@@ -2140,28 +2326,42 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
         adb_helper.tap(serial, slot_x, slot_y)
         time.sleep(3)
 
-        # 3c. Edge case #2: no tech to research (no confirm button visible)
+        # 3b2. Tab verification: game may auto-switch tab when current tab
+        #      has no available tech (e.g. economy maxed -> jumps to military).
+        #      If user selected a specific type, verify we're still on that tab.
+        if research_type in ("economy", "military"):
+            expected_tab = "RESEARCH_ECONOMY_TECH" if research_type == "economy" else "RESEARCH_MILITARY_TECH"
+            tab_match = detector.check_activity(serial, target=expected_tab, threshold=0.8)
+            if not tab_match:
+                print(f"[{serial}] [WARNING] Tab switched away from {research_type}! "
+                      f"Expected {expected_tab} but not found. Dismissing popup...")
+                adb_helper.tap(serial, 415, 520)
+                time.sleep(2)
+                break  # stop — all techs in desired tab are maxed
+
+        # 3c. Edge case: no tech to research (no confirm button visible)
         no_confirm = detector.check_special_state(serial, target="RESEARCH_NO_CONFIRM")
         if no_confirm:
-            print(f"[{serial}] No available tech to research (requirements not met). Backing out.")
-            adb_helper.press_back(serial)
+            print(f"[{serial}] No available tech to research (requirements not met). Dismissing popup...")
+            adb_helper.tap(serial, 415, 520)
             time.sleep(2)
             continue
 
         # 3d. Tap Confirm Research
         confirm_match = detector.check_activity(serial, target="RESEARCH_CONFIRM", threshold=0.8)
         if not confirm_match:
-            print(f"[{serial}] [WARNING] Confirm button not found. Backing out.")
-            adb_helper.press_back(serial)
+            print(f"[{serial}] [WARNING] Confirm button not found. Dismissing popup...")
+            adb_helper.tap(serial, 415, 520)
             time.sleep(2)
             continue
 
+        # TODO: OCR timer reading for dynamic cooldown (future feature)
         _, cx, cy = confirm_match
         print(f"[{serial}] Tapping Confirm Research at ({cx}, {cy})...")
         adb_helper.tap(serial, cx, cy)
         time.sleep(3)
 
-        # 3e. Edge case #1: not enough resources
+        # 3f. Edge case: not enough resources
         no_resource = detector.check_special_state(serial, target="RESEARCH_NO_RESOURCE")
         if no_resource:
             print(f"[{serial}] Not enough resources! Trying to use bag resources...")
@@ -2172,27 +2372,27 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
                 adb_helper.tap(serial, bx, by)
                 time.sleep(3)
                 
-                # Re-check if still no resource after using bag
                 still_no = detector.check_special_state(serial, target="RESEARCH_NO_RESOURCE")
                 if still_no:
                     print(f"[{serial}] Still not enough resources even after bag. Cancelling.")
-                    adb_helper.press_back(serial)
+                    adb_helper.tap(serial, 415, 520)
                     time.sleep(2)
                     continue
             else:
                 print(f"[{serial}] No 'Use Bag' button found. Cancelling research.")
-                adb_helper.press_back(serial)
+                adb_helper.tap(serial, 415, 520)
                 time.sleep(2)
                 continue
 
-        # 3f. Check for Alliance Help popup after confirming
+        # 3g. Handle Alliance Help popup after confirming
         time.sleep(2)
-        post_help = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
-        if post_help:
-            _, phx, phy = post_help
-            print(f"[{serial}] Alliance Help appeared at ({phx}, {phy}). Tapping...")
-            adb_helper.tap(serial, phx, phy)
-            time.sleep(2)
+        if os.path.exists(alliance_help_tpl):
+            post_help = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
+            if post_help:
+                _, phx, phy = post_help
+                print(f"[{serial}] Alliance Help appeared at ({phx}, {phy}). Tapping...")
+                adb_helper.tap(serial, phx, phy)
+                time.sleep(2)
 
         slots_researched += 1
         print(f"[{serial}] Slot #{slot_idx + 1} research started successfully!")
@@ -2200,7 +2400,49 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     print(f"[{serial}] === TECHNOLOGY RESEARCH COMPLETE ({slots_researched} slot(s) started) ===")
     adb_helper.press_back(serial)
     time.sleep(2)
-    return True
+
+    # TODO: dynamic cooldown via OCR timer (future feature)
+    return slots_researched > 0
+
+
+def _parse_research_timer(timer_str: str) -> int:
+    """
+    Parse research timer from text like '2d 21:43:41', '21:43:41', '03:15:22'.
+    Returns total seconds. Supports days, hours, minutes, seconds.
+    """
+    import re
+    if not timer_str:
+        return 0
+
+    total_sec = 0
+    remaining = timer_str.strip()
+
+    # Extract days if present (e.g., "2d", "2d ")
+    day_match = re.search(r'(\d+)\s*d', remaining, re.IGNORECASE)
+    if day_match:
+        total_sec += int(day_match.group(1)) * 86400
+        remaining = remaining[day_match.end():].strip()
+
+    # Extract HH:MM:SS or MM:SS from remaining
+    time_match = re.search(r'(\d+):(\d+):(\d+)', remaining)
+    if time_match:
+        h, m, s = int(time_match.group(1)), int(time_match.group(2)), int(time_match.group(3))
+        total_sec += h * 3600 + m * 60 + s
+    else:
+        time_match_short = re.search(r'(\d+):(\d+)', remaining)
+        if time_match_short:
+            m, s = int(time_match_short.group(1)), int(time_match_short.group(2))
+            total_sec += m * 60 + s
+        else:
+            # Fallback: Xh Ym format
+            h_match = re.search(r'(\d+)\s*h', remaining, re.IGNORECASE)
+            m_match = re.search(r'(\d+)\s*m', remaining, re.IGNORECASE)
+            if h_match:
+                total_sec += int(h_match.group(1)) * 3600
+            if m_match:
+                total_sec += int(m_match.group(1)) * 60
+
+    return total_sec
 
 def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: int = 5) -> bool:
     """
@@ -2771,8 +3013,13 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
         if result == "TARGET_REACHED":
             print(f"[{serial}] [POLICY] All target columns completed!")
             break
-        elif result in ("TARGET_ENACTED", "ENACT_SUCCESS", "GOVERNANCE_DONE"):
+        elif result == "GOVERNANCE_DONE":
             enacted_count += 1
+            # Governance selected — continue loop to enact the policy
+        elif result in ("TARGET_ENACTED", "ENACT_SUCCESS"):
+            enacted_count += 1
+            print(f"[{serial}] [POLICY] Policy enacted — done for this run.")
+            break
         elif result == "ALL_LOCKED":
             print(f"[{serial}] [POLICY] All locked — stopping.")
             break
@@ -2785,5 +3032,367 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
     print(f"[{serial}] ═══════════════════════════════════════════\n")
 
     return True
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  CONSTRUCTION UPGRADE
+# ═══════════════════════════════════════════════════════════════════
+
+def check_builder_slots(serial: str, detector: GameStateDetector) -> dict:
+    """
+    Checks how many builder slots are free by navigating to Halfling House
+    and counting BUILD buttons visible on screen.
+
+    Flow:
+      1. go_to_construction("HALFLING_HOUSE")
+      2. If "Unlock Permanently" button found → tap → Hire → Confirm (unlock 2nd slot)
+      3. Count CONSTRUCTION_BUILD_BTN matches = free slots
+         (slots in use show "speedup" instead of "BUILD")
+
+    Returns:
+        {
+            "free_slots": int,   # 0, 1 or 2
+            "total_slots": int,  # 2
+            "unlocked_2nd": bool, # True if 2nd slot was unlocked during this call
+        }
+    """
+    result = {"free_slots": 0, "total_slots": 2, "unlocked_2nd": False}
+
+    print(f"[{serial}] === CHECK BUILDER SLOTS ===")
+
+    # 1. Navigate to Halfling House
+    if not go_to_construction(serial, detector, "HALFLING_HOUSE"):
+        print(f"[{serial}] [FAILED] Could not navigate to Halfling House.")
+        # Fallback: assume 1 free slot
+        result["free_slots"] = 1
+        return result
+
+    time.sleep(2)
+
+    # 2. Check for "Unlock Permanently" button → unlock 2nd builder slot
+    unlock_match = detector.check_activity(serial, target="CONSTRUCTION_UNLOCK_PERMANENTLY_BTN", threshold=0.80)
+    if unlock_match:
+        _, ulx, uly = unlock_match
+        print(f"[{serial}] 'Unlock Permanently' found at ({ulx}, {uly}). Tapping to unlock 2nd builder...")
+        adb_helper.tap(serial, ulx, uly)
+        time.sleep(2)
+
+        # Wait for "Hire" button
+        for retry in range(3):
+            hire_match = detector.check_activity(serial, target="CONSTRUCTION_HIRE_BTN", threshold=0.80)
+            if hire_match:
+                _, hx, hy = hire_match
+                print(f"[{serial}] 'Hire' button found at ({hx}, {hy}). Tapping...")
+                adb_helper.tap(serial, hx, hy)
+                time.sleep(2)
+
+                # Wait for "Confirm" button
+                for confirm_retry in range(3):
+                    confirm_match = detector.check_activity(serial, target="CONSTRUCTION_CONFIRM_BTN", threshold=0.80)
+                    if confirm_match:
+                        _, cx, cy = confirm_match
+                        print(f"[{serial}] 'Confirm' button found at ({cx}, {cy}). Tapping...")
+                        adb_helper.tap(serial, cx, cy)
+                        time.sleep(2)
+                        result["unlocked_2nd"] = True
+                        print(f"[{serial}] 2nd builder slot unlocked!")
+                        break
+                    time.sleep(1)
+                break
+            time.sleep(1)
+
+        if not result["unlocked_2nd"]:
+            print(f"[{serial}] [WARNING] Could not complete unlock flow. Continuing with slot count.")
+    else:
+        print(f"[{serial}] No 'Unlock Permanently' button. 2nd slot already unlocked or not available.")
+
+    # 3. Count BUILD buttons = free slots
+    # Re-capture screen after potential unlock
+    time.sleep(1)
+    build_positions = detector.find_all_activity_matches(serial, target="CONSTRUCTION_BUILD_BTN", threshold=0.80)
+    free_count = len(build_positions)
+
+    result["free_slots"] = min(free_count, result["total_slots"])
+    print(f"[{serial}] Builder slots: {result['free_slots']}/{result['total_slots']} free (BUILD buttons found: {free_count})")
+
+    # 4. Press back to exit Halfling House
+    adb_helper.press_back(serial)
+    time.sleep(1)
+
+    return result
+
+
+def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Dismiss promotional popup by detecting X button in top-right corner.
+    ROI: (775, 75) → (850, 150) to avoid false matches.
+    Reusable across all workflows that may trigger promo popups.
+
+    Returns True if popup was found and dismissed.
+    """
+    ROI_X1, ROI_Y1, ROI_X2, ROI_Y2 = 775, 75, 850, 150
+
+    frame = detector.get_frame(serial)
+    if frame is None:
+        return False
+
+    # Crop ROI from frame
+    roi_frame = frame[ROI_Y1:ROI_Y2, ROI_X1:ROI_X2]
+
+    # Load template
+    template_path = os.path.join(detector.templates_dir, "special", "popup_X_btn.png")
+    if not os.path.exists(template_path):
+        return False
+
+    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+    if template is None:
+        return False
+
+    # Template match within ROI
+    result = cv2.matchTemplate(roi_frame, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+    if max_val >= 0.80:
+        # Calculate absolute position from ROI-relative coords
+        th, tw = template.shape[:2]
+        abs_x = ROI_X1 + max_loc[0] + tw // 2
+        abs_y = ROI_Y1 + max_loc[1] + th // 2
+        print(f"[{serial}] Promo popup detected (conf={max_val:.3f}). Dismissing at ({abs_x}, {abs_y})...")
+        adb_helper.tap(serial, abs_x, abs_y)
+        time.sleep(1)
+        return True
+
+    return False
+
+
+def reset_position(serial: str):
+    """
+    Resets camera position by double-tapping lobby toggle (50, 500).
+    Switches IN_CITY ↔ OUT_CITY and back, which recenters the camera.
+    """
+    print(f"[{serial}] Resetting position...")
+    adb_helper.tap(serial, 50, 500)
+    time.sleep(1.5)
+    adb_helper.tap(serial, 50, 500)
+    time.sleep(1.5)
+    print(f"[{serial}] -> Position reset.")
+
+
+def _navigate_to_hall_upgrade(serial: str, detector: GameStateDetector) -> bool:
+    """
+    Navigates to the Hall upgrade screen.
+    Taps Hall building coords → detects CONSTRUCTION_UPGRADE_ICON → taps icon.
+    """
+    print(f"[{serial}] Navigating to Hall upgrade screen...")
+
+    # 1. Back to IN_CITY
+    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+        print(f"[{serial}] [FAILED] Could not reach IN_CITY.")
+        return False
+
+    # 2. Tap Hall building (first coordinate only — selects building, shows popup icons)
+    taps = CONSTRUCTION_TAPS["HALL"]
+    x, y = taps[0]
+    adb_helper.tap(serial, x, y)
+    time.sleep(1.5)
+
+    # 3. Detect upgrade icon on the building popup
+    for retry in range(5):
+        icon_match = detector.check_activity(serial, target="CONSTRUCTION_UPGRADE_ICON", threshold=0.80)
+        if icon_match:
+            _, ix, iy = icon_match
+            print(f"[{serial}] Upgrade icon found at ({ix}, {iy}). Tapping to enter upgrade...")
+            adb_helper.tap(serial, ix, iy)
+            time.sleep(2)
+            print(f"[{serial}] -> Hall upgrade screen entered.")
+            return True
+        print(f"[{serial}] Upgrade icon not found. Retry {retry + 1}/5...")
+        time.sleep(1)
+
+    print(f"[{serial}] [FAILED] Could not find upgrade icon on Hall.")
+    return False
+
+
+def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: int = 5,
+                          max_power: int = 0, max_hall_level: int = 0) -> dict:
+    """
+    Automates construction upgrade starting from Hall.
+
+    Algorithm:
+      1. Validate max_power (<= 14M) and max_hall_level (<= 21)
+      2. check_builder_slots() → get free_slots
+      3. Tap Hall → detect upgrade icon → enter upgrade screen
+      4. _try_upgrade_or_go() → recursive
+
+    Supports:
+      - Recursive GO chain (Hall → GO → Sub → GO → Sub2 → upgrade)
+      - Multi-path (2 GO buttons + 2 free slots → upgrade both paths)
+      - max_depth safety limit
+
+    Args:
+        max_power: if > 0, skip upgrade when power exceeds this value. Max allowed: 14000000.
+        max_hall_level: if > 0, skip upgrade when hall level exceeds this value. Max allowed: 21.
+
+    Returns:
+        {
+            "upgraded": int,       # constructions upgraded
+            "paths_found": int,    # GO paths discovered
+            "depth_reached": int,  # deepest GO chain level
+        }
+    """
+    print(f"[{serial}] === UPGRADE CONSTRUCTION (max_depth={max_depth}) ===")
+
+    result = {"upgraded": 0, "paths_found": 0, "depth_reached": 0}
+
+    # NOTE: max_power and max_hall_level are pre-validated by executor via DB check.
+    # They are kept as params here for direct-call compatibility.
+
+    # 1. Check builder slots
+    builder_info = check_builder_slots(serial, detector)
+    remaining_slots = builder_info["free_slots"]
+
+    if remaining_slots <= 0:
+        print(f"[{serial}] No free builder slots. Cannot upgrade.")
+        return result
+
+    print(f"[{serial}] {remaining_slots} builder slot(s) available for upgrade.")
+
+    # 2. Navigate to Hall upgrade screen
+    if not _navigate_to_hall_upgrade(serial, detector):
+        print(f"[{serial}] [FAILED] Could not enter Hall upgrade screen.")
+        return result
+
+    time.sleep(2)
+
+    # 4. Recursive upgrade
+    _try_upgrade_or_go(serial, detector, remaining_slots, depth=0, max_depth=max_depth, result=result)
+
+    print(f"[{serial}] === UPGRADE CONSTRUCTION COMPLETE ===")
+    print(f"[{serial}]   Upgraded: {result['upgraded']}")
+    print(f"[{serial}]   Paths found: {result['paths_found']}")
+    print(f"[{serial}]   Depth reached: {result['depth_reached']}")
+
+    return result
+
+
+def _try_upgrade_or_go(
+    serial: str,
+    detector: GameStateDetector,
+    remaining_slots: int,
+    depth: int,
+    max_depth: int,
+    result: dict,
+) -> int:
+    """
+    Inner recursive function for upgrade_construction.
+    At the current construction screen, checks for upgrade button or GO buttons.
+
+    Returns updated remaining_slots count.
+    """
+    if remaining_slots <= 0:
+        print(f"[{serial}] [depth={depth}] No remaining builder slots. Stopping.")
+        return remaining_slots
+
+    if depth > max_depth:
+        print(f"[{serial}] [WARNING] Max depth {max_depth} reached. Aborting GO chain.")
+        return remaining_slots
+
+    result["depth_reached"] = max(result["depth_reached"], depth)
+
+    print(f"[{serial}] [depth={depth}] Checking construction screen... (remaining_slots={remaining_slots})")
+
+    # --- Case 1: Check for UPGRADE button ---
+    upgrade_match = detector.check_activity(serial, target="CONSTRUCTION_UPGRADE_BTN", threshold=0.85)
+    if upgrade_match:
+        _, ux, uy = upgrade_match
+        print(f"[{serial}] [depth={depth}] UPGRADE button found at ({ux}, {uy})! Tapping...")
+        adb_helper.tap(serial, ux, uy)
+        time.sleep(3)
+
+        result["upgraded"] += 1
+        remaining_slots -= 1
+        print(f"[{serial}] [depth={depth}] Construction upgraded! (total upgraded: {result['upgraded']}, remaining_slots: {remaining_slots})")
+
+        # Dismiss any promo popup that appears after upgrade
+        time.sleep(1)
+        dismiss_promo_popup(serial, detector)
+
+        # Get alliance help after upgrade
+        print(f"[{serial}] Requesting alliance help...")
+        adb_helper.tap(serial, 475, 275)
+        time.sleep(1)
+
+        # Reset camera position after upgrade
+        reset_position(serial)
+
+        # Just return — parent for loop handles navigating to next GO path
+        return remaining_slots
+
+    # --- Case 2: Check for GO button(s) ---
+    print(f"[{serial}] [depth={depth}] No UPGRADE button. Checking for GO button(s)...")
+
+    # Use dedicated construction GO button template
+    go_positions = detector.find_all_activity_matches(serial, target="CONSTRUCTION_GO_BTN", threshold=0.85)
+
+    if not go_positions:
+        print(f"[{serial}] [depth={depth}] No GO button found either. Cannot upgrade this construction.")
+        return remaining_slots
+
+    result["paths_found"] += len(go_positions)
+    print(f"[{serial}] [depth={depth}] Found {len(go_positions)} GO button(s).")
+
+    # Process each GO path (limited by remaining slots)
+    for go_idx, (gx, gy) in enumerate(go_positions):
+        if remaining_slots <= 0:
+            print(f"[{serial}] [depth={depth}] No more builder slots. Skipping remaining paths.")
+            break
+
+        print(f"[{serial}] [depth={depth}] --- GO Path {go_idx + 1}/{len(go_positions)} at ({gx}, {gy}) ---")
+
+        # Tap GO button → game camera pans to the sub-construction on map
+        adb_helper.tap(serial, gx, gy)
+        time.sleep(3)  # Wait for camera pan animation
+
+        # After GO, screen shows map with the target construction highlighted.
+        # Look for CONSTRUCTION_UPGRADE_ICON on the map to tap into it.
+        icon_found = False
+        for retry in range(3):
+            icon_match = detector.check_activity(serial, target="CONSTRUCTION_UPGRADE_ICON", threshold=0.80)
+            if icon_match:
+                _, ix, iy = icon_match
+                print(f"[{serial}] [depth={depth}] Upgrade icon found at ({ix}, {iy}). Tapping to enter construction...")
+                adb_helper.tap(serial, ix, iy)
+                time.sleep(2)
+                icon_found = True
+                break
+            else:
+                print(f"[{serial}] [depth={depth}] Upgrade icon not found. Retry {retry + 1}/3...")
+                time.sleep(1)
+
+        if not icon_found:
+            print(f"[{serial}] [depth={depth}] [WARNING] Could not find upgrade icon after GO. Skipping this path.")
+            reset_position(serial)
+            # Try to go back for next path
+            if go_idx + 1 < len(go_positions) and remaining_slots > 0:
+                if _navigate_to_hall_upgrade(serial, detector):
+                    time.sleep(2)
+            continue
+
+        # Wait for construction screen to load
+        time.sleep(2)
+
+        # Recurse into sub-construction
+        remaining_slots = _try_upgrade_or_go(serial, detector, remaining_slots, depth + 1, max_depth, result)
+
+        # If more paths to process AND slots available, go back to Hall
+        if go_idx + 1 < len(go_positions) and remaining_slots > 0:
+            print(f"[{serial}] [depth={depth}] Going back to Hall for next GO path...")
+            if not _navigate_to_hall_upgrade(serial, detector):
+                print(f"[{serial}] [depth={depth}] [FAILED] Could not return to Hall upgrade screen.")
+                break
+            time.sleep(2)
+
+    return remaining_slots
+
 
 

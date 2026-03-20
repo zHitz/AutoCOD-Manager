@@ -8,6 +8,7 @@ from backend.core.workflow import (
     workflow_registry,
     execution_log,
 )
+from backend.core.workflow.workflow_registry import ACTIVITY_REGISTRY
 import uuid
 from backend.core.workflow.state_detector import GameStateDetector
 from backend.core.workflow.account_detector import AccountDetector
@@ -103,6 +104,12 @@ class BotOrchestrator:
         # Resolve templates dir once for detector usage inside orchestrator (if needed)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.templates_dir = os.path.join(current_dir, "templates")
+
+        # Build weight lookup: registry definitions are the source of truth.
+        # Frontend payload only has {id, name, config} — weight is NOT included.
+        self._weight_map = {}
+        for act in ACTIVITY_REGISTRY:
+            self._weight_map[act["id"]] = act.get("weight", "heavy")
 
     async def broadcast_state(self):
         """Sends the current orchestrator queue state to the frontend via WebSocket."""
@@ -318,7 +325,7 @@ class BotOrchestrator:
         for i, act in enumerate(self.activities):
             act_id = act.get("id", act.get("name", f"act_{i}"))
             act_cfg = act.get("config", {})
-            weight = act_cfg.get("weight", "light")
+            weight = act_cfg.get("weight") or self._weight_map.get(act_id, "heavy")
 
             # Determine if this activity is currently on cooldown
             is_on_cd = False
@@ -347,9 +354,10 @@ class BotOrchestrator:
         # Heavy tasks exist but none are ready, and some light tasks are ready → skip
         return has_any_ready and not has_heavy_ready
 
-    async def _earliest_activity_ready_sec(self) -> float:
+    async def _earliest_activity_ready_sec(self, heavy_only: bool = False) -> float:
         """Scan all accounts × activities to find the shortest remaining cooldown.
         Returns seconds until the earliest activity becomes runnable.
+        If heavy_only=True, only considers heavy-weight activities.
         Falls back to 60s if nothing can be computed.
         """
         now = time.time()
@@ -359,12 +367,15 @@ class BotOrchestrator:
             aid = str(acc["id"])
             for i, act in enumerate(self.activities):
                 act_cfg = act.get("config", {})
+                act_id = act.get("id", act.get("name", f"act_{i}"))
+                weight = act_cfg.get("weight") or self._weight_map.get(act_id, "heavy")
+                if heavy_only and weight != "heavy":
+                    continue  # Skip light activities when waiting for heavy
                 if not act_cfg.get("cooldown_enabled"):
                     return 0  # At least one activity has no cooldown → ready now
                 cd_minutes = act_cfg.get("cooldown_minutes", 0)
                 if cd_minutes <= 0:
                     return 0
-                act_id = act.get("id", act.get("name", f"act_{i}"))
                 last_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(aid), act_id)
                 if last_run <= 0:
                     return 0  # Never run → ready now
@@ -849,7 +860,7 @@ class BotOrchestrator:
                     self.account_statuses[acc_id] = "pending"
                     consecutive_skips += 1
                     if consecutive_skips >= len(self.queue):
-                        sleep_sec = await self._earliest_activity_ready_sec()
+                        sleep_sec = await self._earliest_activity_ready_sec(heavy_only=True)
                         sleep_min = round(sleep_sec / 60, 1)
                         print(
                             f"[BotOrchestrator] All accounts waiting for heavy tasks. "
@@ -1082,6 +1093,7 @@ class BotOrchestrator:
 
                 limit_min = self.misc_config.get("limit_min", 0)
                 account_success = True
+                ran_heavy = False  # Track if any heavy activity ran (for conditional account CD)
 
                 # Execute activities one by one
                 for i, act in enumerate(self.activities):
@@ -1116,9 +1128,12 @@ class BotOrchestrator:
                         self.activity_statuses[act_id_or_name] = "skipped"
                         continue
 
-                    # Inject account_id into each step config for per-account tracking
+                    # Inject account_id + global limits into each step config
                     for step in steps:
-                        step.setdefault("config", {})["account_id"] = acc_id
+                        step_cfg = step.setdefault("config", {})
+                        step_cfg["account_id"] = acc_id
+                        step_cfg["max_power"] = self.misc_config.get("max_power", 14_000_000)
+                        step_cfg["max_hall_level"] = self.misc_config.get("max_hall_level", 21)
 
                     self.current_activity = {
                         "id": act_id_or_name,
@@ -1180,6 +1195,10 @@ class BotOrchestrator:
                         else:
                             self.activity_statuses[act_id_or_name] = "done"
                             step_status = "SUCCESS"
+                            # Track if a heavy activity succeeded (for conditional account CD)
+                            act_weight = act_cfg.get("weight") or self._weight_map.get(act_id_or_name, "heavy")
+                            if act_weight == "heavy":
+                                ran_heavy = True
 
                         await self.broadcast_state()
 
@@ -1258,7 +1277,10 @@ class BotOrchestrator:
                 self.current_activity = None
 
                 # Update last run time for cooldown tracking
-                self.last_run_times[acc_id] = time.time()
+                # Only update account-level CD if at least one heavy activity ran.
+                # Light-only runs should NOT trigger account cooldown.
+                if ran_heavy:
+                    self.last_run_times[acc_id] = time.time()
 
                 if account_success and not self.stop_requested:
                     self.account_statuses[acc_id] = "done"

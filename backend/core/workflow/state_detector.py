@@ -70,6 +70,10 @@ class GameStateDetector:
             "contructions/con_train_units.png": "TRAIN_UNITS",
             "contructions/con_scout_sentry_post.png": "SCOUT_SENTRY_POST",
             "contructions/con_tavern.png": "TAVERN",
+            "contructions/con_halfling_house.png": "HALFLING_HOUSE",
+            # Research Center — detect via tab headers (economy/military)
+            "research/research_economy_tech.png": "RESEARCH_CENTER",
+            "research/research_military_tech.png": "RESEARCH_CENTER",
         }
         
         # Special templates — loaded separately, called on specific conditions
@@ -89,6 +93,9 @@ class GameStateDetector:
             # Policy screen verification
             "policy/policy_header.png": "POLICY_SCREEN",
             "policy/governance_header.png": "GOVERNANCE_HEADER",
+            # Research Technology
+            "research/research_no_resource.png": "RESEARCH_NO_RESOURCE",
+            "research/research_no_confirm.png": "RESEARCH_NO_CONFIRM",
         }
         
         # Activity templates — returns name + center coordinates when matched
@@ -116,6 +123,21 @@ class GameStateDetector:
             "policy/target_default.png": "POLICY_TARGET_DEFAULT",
             "policy/replenish_resources.png": "POLICY_REPLENISH",
             "policy/alliance_help_btn.png": "POLICY_ALLIANCE_HELP",
+            # Research Technology
+            "research/research_empty_slot.png": "RESEARCH_EMPTY_SLOT",
+            "research/research_confirm.png": "RESEARCH_CONFIRM",
+            "research/research_alliance_help.png": "RESEARCH_ALLIANCE_HELP",
+            "research/research_use_bag.png": "RESEARCH_USE_BAG",
+            "research/research_economy_tech.png": "RESEARCH_ECONOMY_TECH",
+            "research/research_military_tech.png": "RESEARCH_MILITARY_TECH",
+            # Construction Upgrade
+            "contructions/upgrade_btn.png": "CONSTRUCTION_UPGRADE_BTN",
+            "contructions/upgrade_icon.png": "CONSTRUCTION_UPGRADE_ICON",
+            "contructions/build_btn.png": "CONSTRUCTION_BUILD_BTN",
+            "contructions/unlock_permanently_btn.png": "CONSTRUCTION_UNLOCK_PERMANENTLY_BTN",
+            "contructions/hire_btn.png": "CONSTRUCTION_HIRE_BTN",
+            "contructions/confirm_btn_gold_color.png": "CONSTRUCTION_CONFIRM_BTN",
+            "contructions/building_go_btn.png": "CONSTRUCTION_GO_BTN",
         }
 
         # Alliance templates
@@ -269,6 +291,10 @@ class GameStateDetector:
                 roi = None  # Fallback to full screen
         else:
             region = screen_gray
+
+        # Safety: region must be larger than template for matchTemplate
+        if region.shape[0] < tmpl_gray.shape[0] or region.shape[1] < tmpl_gray.shape[1]:
+            return 0.0, (0, 0)
 
         res = cv2.matchTemplate(region, tmpl_gray, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
@@ -452,6 +478,68 @@ class GameStateDetector:
                     return (name, center_x, center_y)
                 
         return None
+
+    def find_all_activity_matches(self, serial: str, target: str, threshold: float = 0.8) -> list:
+        """
+        Multi-match activity detector with Non-Maximum Suppression.
+        Returns ALL matching positions for a given target template.
+        Used for counting BUILD buttons and detecting multiple GO buttons.
+
+        Returns: list of (center_x, center_y) tuples, sorted top-to-bottom.
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return []
+        screen_gray = self._get_gray(screen)
+
+        if target not in self.activity_templates:
+            print(f"[ACTIVITY-MULTI] Target '{target}' not found in activity_templates.")
+            return []
+
+        results = []
+        entries = self.activity_templates[target]
+
+        for entry in entries:
+            tmpl_gray = entry["gray"]
+            roi = entry.get("roi")
+
+            if roi:
+                x1, y1, x2, y2 = roi
+                region = screen_gray[y1:y2, x1:x2]
+                if region.shape[0] < tmpl_gray.shape[0] or region.shape[1] < tmpl_gray.shape[1]:
+                    region = screen_gray
+                    roi = None
+            else:
+                region = screen_gray
+
+            res = cv2.matchTemplate(region, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+            h, w = tmpl_gray.shape[:2]
+
+            # Find all locations above threshold with NMS
+            while True:
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val < threshold:
+                    break
+
+                # Calculate absolute center position
+                offset_x = roi[0] if roi else 0
+                offset_y = roi[1] if roi else 0
+                center_x = offset_x + max_loc[0] + w // 2
+                center_y = offset_y + max_loc[1] + h // 2
+                results.append((center_x, center_y))
+
+                # Suppress this match region (NMS)
+                sx = max(0, max_loc[0] - w // 2)
+                sy = max(0, max_loc[1] - h // 2)
+                ex = min(res.shape[1], max_loc[0] + w // 2 + 1)
+                ey = min(res.shape[0], max_loc[1] + h // 2 + 1)
+                res[sy:ey, sx:ex] = 0
+
+        # Sort top-to-bottom
+        results.sort(key=lambda p: p[1])
+        if results:
+            print(f"[ACTIVITY-MULTI] '{target}' found {len(results)} match(es): {results}")
+        return results
 
     def check_alliance(self, serial: str, target: str = None, threshold: float = 0.98) -> tuple:
         """

@@ -21,7 +21,7 @@ def alliance_help(serial: str, detector: GameStateDetector) -> bool:
 - Cooldown: dùng static `cooldown_minutes` từ config UI
 - **Đây là behavior mặc định**, tất cả activities cũ đều hoạt động y nguyên
 
-### Type B: `dict` (Activities CÓ dynamic cooldown)
+### Type B: `dict` (Activities CÓ dynamic cooldown hoặc cần error message)
 
 ```python
 def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> dict:
@@ -29,12 +29,14 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
     # ... game logic ...
     return {"ok": True, "dynamic_cooldown_sec": 12000}
     return {"ok": False, "dynamic_cooldown_sec": 12000}  # partial fail
+    return {"ok": False, "error": "Could not find RSS tile"}  # fail with reason
     return {"ok": False}  # complete fail — no dynamic CD
     return True  # fallback — cũng hợp lệ (executor handle cả hai)
 ```
 
 - `ok`: **Bắt buộc** — `True` = SUCCESS, `False` = FAILED
 - `dynamic_cooldown_sec`: **Optional** — số giây cooldown override
+- `error`: **Optional** — lý do fail hiển thị trên UI (thay vì generic "fn_id failed")
 
 ---
 
@@ -43,10 +45,11 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
 ```
 Activity chạy xong
   │
-  ├─ Có cần dynamic cooldown?
+  ├─ Có cần dynamic cooldown HOẶC error message?
   │   │
-  │   ├─ KHÔNG → return True / return False (bool)
+  │   ├─ KHÔNG (simple action) → return True / return False (bool)
   │   │           └─ Dùng static cooldown_minutes config
+  │   │           └─ Error trên UI: "fn_id failed" (generic)
   │   │
   │   └─ CÓ → return dict:
   │       │
@@ -54,11 +57,12 @@ Activity chạy xong
   │       │   └─ return {"ok": True, "dynamic_cooldown_sec": <seconds>}
   │       │
   │       ├─ Game action committed + verify FAIL?
-  │       │   └─ return {"ok": False, "dynamic_cooldown_sec": <seconds>}
+  │       │   └─ return {"ok": False, "dynamic_cooldown_sec": <seconds>,
+  │       │              "error": "March sent but verify failed"}
   │       │     (March đã đi → vẫn cần chờ dù verify fail)
   │       │
   │       ├─ Game action CHƯA committed + fail?
-  │       │   └─ return {"ok": False}
+  │       │   └─ return {"ok": False, "error": "Could not navigate to RSS tile"}
   │       │     (Không gửi quân → không cần dynamic CD → retry bình thường)
   │       │
   │       └─ Không đọc được timer (OCR fail)?
@@ -306,26 +310,35 @@ Khi thêm dynamic cooldown cho 1 activity:
 ## 10. Quick Reference Card
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ RETURN TYPE CHEAT SHEET                              │
-├──────────────────────────────────────────────────────┤
-│                                                      │
-│ return True                → SUCCESS + static CD     │
-│ return False               → FAILED  + no CD         │
-│ return {"ok": True}        → SUCCESS + static CD     │
-│ return {"ok": False}       → FAILED  + no CD         │
-│ return {"ok": True,                                  │
-│   "dynamic_cooldown_sec": N} → SUCCESS + dynamic CD  │
-│ return {"ok": False,                                 │
-│   "dynamic_cooldown_sec": N} → FAILED  + dynamic CD  │
-│                                                      │
-│ Priority: dynamic_cooldown_sec > cooldown_minutes    │
-│ Fallback: dynamic=0 hoặc missing → static config    │
-│                                                      │
-│ Buffer khuyến nghị:                                  │
-│   Farming:  +5 phút (300s)                           │
-│   Training: +2 phút (120s)                           │
-│   Research: +2 phút (120s)                           │
-│                                                      │
-└──────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ RETURN TYPE CHEAT SHEET                                        │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│ return True                        → SUCCESS + static CD       │
+│ return False                       → FAILED  + generic error   │
+│ return {"ok": True}                → SUCCESS + static CD       │
+│ return {"ok": False}               → FAILED  + generic error   │
+│ return {"ok": False,                                           │
+│   "error": "reason"}               → FAILED  + specific error  │
+│ return {"ok": True,                                            │
+│   "dynamic_cooldown_sec": N}       → SUCCESS + dynamic CD      │
+│ return {"ok": False,                                           │
+│   "dynamic_cooldown_sec": N,                                   │
+│   "error": "reason"}               → FAILED + dynamic CD       │
+│                                      + specific error          │
+│                                                                │
+│ Fields:                                                        │
+│   ok    (required)  → True=SUCCESS, False=FAILED               │
+│   error (optional)  → reason hiển thị trên UI                  │
+│   dynamic_cooldown_sec (optional) → override static CD         │
+│                                                                │
+│ Priority: dynamic_cooldown_sec > cooldown_minutes              │
+│ Fallback: dynamic=0 hoặc missing → static config              │
+│                                                                │
+│ Buffer khuyến nghị:                                            │
+│   Farming:  +5 phút (300s)                                     │
+│   Training: +2 phút (120s)                                     │
+│   Research: +2 phút (120s)                                     │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```

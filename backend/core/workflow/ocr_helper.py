@@ -213,7 +213,7 @@ def ocr_from_frame(serial: str, screen: np.ndarray, roi_box: tuple, style: str =
 
     text = pytesseract.image_to_string(
         binary,
-        config='--psm 7 -c tessedit_char_whitelist=0123456789hm/:'
+        config='--psm 7 -c tessedit_char_whitelist=0123456789dhm/:'
     ).strip()
     print(f"[{serial}] [OCR] ROI {roi_box} [{style}] -> '{text}'")
     return text

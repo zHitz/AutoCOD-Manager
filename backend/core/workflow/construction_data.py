@@ -20,13 +20,16 @@ CONSTRUCTION_TAPS = {
         (693, 351),
     ],
     "RESEARCH_CENTER": [
-        # TODO: User cần cung cấp tọa độ navigate từ IN_CITY
-        (0, 0),
-        (0, 0),
+        (535, 210),   # Tap College of Orther building
+        (615, 230),   # Confirm enter Research Center
     ],
     "TAVERN": [
         # TODO: User cần cung cấp tọa độ navigate từ IN_CITY
         (610, 365),
         (523, 327),
+    ],
+    "HALFLING_HOUSE": [
+        (715, 210),   # Tap Halfling House building
+        (760, 260),   # Open Halfling House menu
     ],
 }

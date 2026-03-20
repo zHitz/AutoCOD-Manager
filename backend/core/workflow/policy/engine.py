@@ -248,6 +248,33 @@ class PolicyV3Engine:
         adb_helper.tap(self.serial, CLOSE_POPUP_POS[0], CLOSE_POPUP_POS[1])
         time.sleep(1)
 
+    def _tap_policy_icon_with_retry(self):
+        """Tap Season Policies icon (890, 260) with overlay-dismiss retry.
+
+        Edge case: if a policy was recently researched, the first tap only
+        dismisses the 'complete' overlay icon. A second tap is needed to
+        actually enter the policy screen.
+        """
+        adb_helper.tap(self.serial, 890, 260)
+        time.sleep(3)
+
+        if self.detector.check_special_state(
+                self.serial, target="POLICY_SCREEN", threshold=0.80):
+            return True
+
+        # Retry: first tap may have dismissed overlay
+        _log("POLICY_SCREEN not detected — retrying tap (dismiss overlay)...")
+        adb_helper.tap(self.serial, 890, 260)
+        time.sleep(3)
+
+        if self.detector.check_special_state(
+                self.serial, target="POLICY_SCREEN", threshold=0.80):
+            _log("POLICY_SCREEN detected on retry.")
+            return True
+
+        _log("[WARNING] Could not confirm POLICY_SCREEN after retry.")
+        return False
+
     def _ensure_at_home(self):
         """Ensure we're on policy screen at home position (screen 0).
         Entering Season Policies always starts at screen 0, no scroll needed.
@@ -260,8 +287,7 @@ class PolicyV3Engine:
             adb_helper.press_back(self.serial)
             time.sleep(2)
             # Now on Season menu, tap Policies to re-enter
-            adb_helper.tap(self.serial, 890, 260)
-            time.sleep(3)
+            self._tap_policy_icon_with_retry()
         else:
             # Navigate from lobby
             state = self.detector.check_state(self.serial)
@@ -270,12 +296,10 @@ class PolicyV3Engine:
                 _log("Navigating: Lobby → Season → Policies")
                 adb_helper.tap(self.serial, 815, 80)
                 time.sleep(3)
-                adb_helper.tap(self.serial, 890, 260)
-                time.sleep(3)
+                self._tap_policy_icon_with_retry()
             else:
                 _log(f"Unknown state: {state}, trying Season Policies tap")
-                adb_helper.tap(self.serial, 890, 260)
-                time.sleep(3)
+                self._tap_policy_icon_with_retry()
 
     def _scroll_right(self):
         s = SCROLL_RIGHT
@@ -680,6 +704,15 @@ class PolicyV3Engine:
             popup = detect_policy_popup(self.serial, self.detector)
             _log(f"  Popup: {popup}")
 
+            # Edge case: recently-researched policy shows "complete" overlay.
+            # First tap dismisses overlay → LOCKED. Re-tap to open actual popup.
+            if popup == "LOCKED":
+                _log("  LOCKED on first tap — retrying (dismiss overlay)...")
+                adb_helper.tap(self.serial, x_center, y)
+                time.sleep(2)
+                popup = detect_policy_popup(self.serial, self.detector)
+                _log(f"  Retry popup: {popup}")
+
             if popup == "SELECT":
                 handled = self._handle_governance(col_idx)
                 if handled:
@@ -726,6 +759,15 @@ class PolicyV3Engine:
 
             popup = detect_policy_popup(self.serial, self.detector)
             _log(f"  Popup: {popup}")
+
+            # Edge case: recently-researched policy shows "complete" overlay.
+            # First tap dismisses overlay → LOCKED. Re-tap to open actual popup.
+            if popup == "LOCKED":
+                _log(f"  [{pos_key}] LOCKED on first tap — retrying (dismiss overlay)...")
+                adb_helper.tap(self.serial, x_center, y)
+                time.sleep(2)
+                popup = detect_policy_popup(self.serial, self.detector)
+                _log(f"  Retry popup: {popup}")
 
             if popup == "ENACT":
                 _log("  >>> ENACTING target policy!")

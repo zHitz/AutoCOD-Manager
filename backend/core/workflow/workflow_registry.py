@@ -426,6 +426,13 @@ FUNCTION_REGISTRY = [
                 "options": ["default", "economy", "military", "balance"],
                 "default": "default",
             },
+            {
+                "key": "max_power",
+                "label": "Max Power (0=unlimited)",
+                "type": "number",
+                "default": 0,
+                "min": 0,
+            },
         ],
     },
     {
@@ -496,6 +503,24 @@ FUNCTION_REGISTRY = [
         "color": "#6366f1",
         "description": "Automate Season Policies tech tree progression",
         "params": [],
+    },
+    {
+        "id": "nav_to_upgrade_construction",
+        "label": "Upgrade Construction",
+        "category": "Core Actions",
+        "icon": "🏗️",
+        "color": "#6366f1",
+        "description": "Auto-upgrade constructions via Hall recursive GO chain",
+        "params": [
+            {
+                "key": "max_depth",
+                "label": "Max GO Depth",
+                "type": "number",
+                "default": 5,
+                "min": 1,
+                "max": 10,
+            },
+        ],
     },
 ]
 
@@ -837,6 +862,13 @@ ACTIVITY_REGISTRY = [
                 "options": ["default", "economy", "military", "balance"],
                 "default": "default",
             },
+            {
+                "key": "max_power",
+                "label": "Max Power (0=unlimited)",
+                "type": "number",
+                "default": 0,
+                "min": 0,
+            },
         ],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
     },
@@ -938,6 +970,28 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_season_policies", "config": {}},
         ],
         "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+    },
+    {
+        "id": "upgrade_construction_task",
+        "name": "Upgrade Construction",
+        "icon": "🏗️",
+        "description": "Auto-upgrade constructions via Hall (recursive GO chain, multi-path, builder slot detection)",
+        "weight": "heavy",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_upgrade_construction", "config": {}},
+        ],
+        "config_fields": [
+            {
+                "key": "max_depth",
+                "label": "Max GO Depth",
+                "type": "number",
+                "default": 5,
+                "min": 1,
+                "max": 10,
+            },
+        ],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
     },
 ]

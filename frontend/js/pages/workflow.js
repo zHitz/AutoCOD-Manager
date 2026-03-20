@@ -1125,7 +1125,7 @@ const WF3 = {
     },
 
     getMiscConfig(groupId) {
-        const defaultMisc = { cooldown_min: 30, limit_min: 45, swap_wait_threshold_min: 5, choose_start_account: false, skip_cooldown: false, continue_on_error: false };
+        const defaultMisc = { cooldown_min: 30, limit_min: 45, swap_wait_threshold_min: 5, choose_start_account: false, skip_cooldown: false, continue_on_error: false, max_power: 14000000, max_hall_level: 21 };
         if (!groupId) return defaultMisc;
         const conf = this._groupConfigs[groupId];
         if (conf && conf.misc) {
@@ -1143,6 +1143,9 @@ const WF3 = {
         const skipCdEl = document.getElementById('misc-skip-cooldown');
         const continueOnErrEl = document.getElementById('misc-continue-on-error');
 
+        const maxPowerEl = document.getElementById('misc-max-power');
+        const maxHallEl = document.getElementById('misc-max-hall-level');
+
         if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
 
         this._groupConfigs[groupId].misc = {
@@ -1151,7 +1154,9 @@ const WF3 = {
             swap_wait_threshold_min: swapWaitEl ? parseInt(swapWaitEl.value) || 0 : 5,
             choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
             skip_cooldown: skipCdEl ? skipCdEl.checked : false,
-            continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false
+            continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false,
+            max_power: maxPowerEl ? parseInt(maxPowerEl.value) || 0 : 14000000,
+            max_hall_level: maxHallEl ? parseInt(maxHallEl.value) || 0 : 21
         };
 
         this._saveConfigToBackend(groupId);
@@ -2101,6 +2106,25 @@ const WF3 = {
                         </div>
                     </div>
                 </label>
+            </div>
+
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <div style="font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                    <span>🚧</span> Farm Account Limits
+                </div>
+                <div style="font-size: 11px; color: var(--muted-foreground); margin-bottom: 6px; line-height: 1.3;">
+                    Skip upgrade/research if account exceeds these limits. Set to 0 to disable.
+                </div>
+                <div style="display: flex; gap: 16px; font-size: 12px; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="white-space: nowrap;">Max Power</label>
+                        <input type="number" class="acv-input-num" id="misc-max-power" value="${misc.max_power || 0}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 100px;">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="white-space: nowrap;">Max Hall Lv</label>
+                        <input type="number" class="acv-input-num" id="misc-max-hall-level" value="${misc.max_hall_level || 0}" min="0" max="21" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;">
+                    </div>
+                </div>
             </div>
 `;
     },

@@ -5,9 +5,39 @@ from backend.core.workflow import core_actions
 from backend.core.workflow import adb_helper
 from backend.core.workflow.state_detector import GameStateDetector
 from backend.core import full_scan as full_scan_module
+from backend.storage.database import Database
 
 # To be resilient, we'll keep a mapped dictionary of function_ids to actual python logic.
 # These function_ids match what is defined in workflow_registry.py
+
+_db = Database()
+
+
+async def _check_power_hall_limits(
+    serial: str, max_power: int = 0, max_hall_level: int = 0
+) -> tuple:
+    """
+    Pre-flight DB check: query current power & hall_level from latest scan.
+    Returns (should_skip: bool, reason: str, account_data: dict).
+    """
+    try:
+        data = await _db.get_emulator_data(serial=serial)
+    except Exception:
+        data = None
+
+    if not data:
+        return False, "", {}
+
+    current_power = int(data.get("power", 0) or 0)
+    current_hall = int(data.get("hall_level", 0) or 0)
+
+    if max_power > 0 and current_power > max_power:
+        return True, f"power={current_power:,} > max_power={max_power:,}", data
+
+    if max_hall_level > 0 and current_hall > max_hall_level:
+        return True, f"hall_level={current_hall} > max_hall_level={max_hall_level}", data
+
+    return False, "", data
 
 
 async def execute_recipe(
@@ -79,6 +109,7 @@ async def execute_recipe(
 
     all_ok = True
     _activity_meta = {}  # Collects metadata from dict-returning core_actions
+    fn_id = "unknown"  # Safe default for error reporting
 
     try:
         # Step Execution Loop
@@ -519,9 +550,20 @@ async def execute_recipe(
 
             elif fn_id == "nav_to_research_tech":
                 research_type = (config or {}).get("research_type", "default")
+                max_power = int((config or {}).get("max_power", 0))
+
+                # DB pre-flight: check power limit
+                if max_power > 0:
+                    skip, reason, _ = await _check_power_hall_limits(serial, max_power=max_power)
+                    if skip:
+                        await log(f"  [SKIP] Research skipped: {reason}", "warn")
+                        ok = True
+                        continue
+
                 ok = await asyncio.to_thread(
                     core_actions.research_technology, serial, detector,
-                    research_type=research_type
+                    research_type=research_type,
+                    max_power=max_power
                 )
 
             elif fn_id == "nav_to_buy_merchant":
@@ -556,6 +598,28 @@ async def execute_recipe(
                     account_id=policy_account_id
                 )
 
+            elif fn_id == "nav_to_upgrade_construction":
+                max_depth = int((config or {}).get("max_depth", 5))
+                max_power = int((config or {}).get("max_power", 0))
+                max_hall_level = int((config or {}).get("max_hall_level", 0))
+
+                # DB pre-flight: check power + hall level limits
+                if max_power > 0 or max_hall_level > 0:
+                    skip, reason, _ = await _check_power_hall_limits(
+                        serial, max_power=max_power, max_hall_level=max_hall_level
+                    )
+                    if skip:
+                        await log(f"  [SKIP] Upgrade Construction skipped: {reason}", "warn")
+                        ok = True
+                        continue
+
+                ok = await asyncio.to_thread(
+                    core_actions.upgrade_construction, serial, detector,
+                    max_depth=max_depth,
+                    max_power=max_power,
+                    max_hall_level=max_hall_level
+                )
+
             else:
                 await log(
                     f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.",
@@ -566,6 +630,7 @@ async def execute_recipe(
 
             # Normalize dict returns from core_actions
             # e.g. {"ok": True, "dynamic_cooldown_sec": 11700}
+            # e.g. {"ok": False, "error": "Research Center not found"}
             if isinstance(ok, dict):
                 _activity_meta.update(ok)
                 ok = ok.get("ok", False)
@@ -573,7 +638,9 @@ async def execute_recipe(
             if ok:
                 await log(f"  ✓ {fn_id} complete", "ok")
             else:
-                await log(f"  ✕ {fn_id} failed", "err")
+                err_reason = _activity_meta.get("error", "")
+                fail_msg = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
+                await log(f"  ✕ {fail_msg}", "err")
                 all_ok = False
                 break
 
@@ -587,12 +654,17 @@ async def execute_recipe(
             await status("ERROR")
 
         result = {"success": all_ok}
+        if not all_ok:
+            err_reason = _activity_meta.get("error", "")
+            result["error"] = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
         # Propagate dynamic cooldown if any core_action provided it
         if _activity_meta.get("dynamic_cooldown_sec"):
             result["dynamic_cooldown_sec"] = _activity_meta["dynamic_cooldown_sec"]
         return result
 
     except Exception as e:
-        await log(f"Exception during execution: {str(e)}", "err")
+        import traceback
+        tb = traceback.format_exc()
+        await log(f"Exception during execution: {str(e)}\n{tb}", "err")
         await status("ERROR")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Exception in {fn_id}: {str(e)}"}
