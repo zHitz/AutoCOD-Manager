@@ -192,11 +192,11 @@ def check_app_crash(serial: str, package_name: str = "com.farlightgames.samo.gp.
         return False
 
 
-def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str, adb_path: str = config.adb_path, load_timeout: int = 120) -> bool:
+def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str, adb_path: str = config.adb_path, load_timeout: int = 120) -> dict:
     """
     All-in-one startup: Boot game nếu chưa chạy -> chờ load vào Lobby.
     Nếu game đang chạy rồi -> dùng back_to_lobby() để mò về Lobby từ bất kỳ state nào.
-    Returns True nếu đã chắc chắn đang ở Lobby, False nếu thất bại.
+    Returns dict: _ok() on success, _fail() on failure.
     """
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     
@@ -204,18 +204,19 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
     
     if was_running is None:
         print(f"[{serial}] [FAILED] Could not launch app at all.")
-        return False
+        return _fail("CRASH_LAUNCH_FAILED: Could not launch app")
     
     if not was_running:
         print(f"[{serial}] App was not running. Waiting for game to load into Lobby...")
         lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout)
         if not lobby:
             print(f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s.")
-            return False
-        return True
+            return _fail(f"TIMEOUT_LOAD: Game did not load into Lobby after {load_timeout}s")
+        return _ok()
     else:
         print(f"[{serial}] App is already running. Navigating back to Lobby...")
-        return back_to_lobby(serial, detector)
+        result = back_to_lobby(serial, detector)
+        return result if isinstance(result, dict) else (_ok() if result else _fail("NAV_LOBBY_UNREACHABLE: back_to_lobby failed"))
 
 def wait_for_state(serial: str, detector: GameStateDetector, target_states: list, timeout_sec: int = 60, package_name: str = "com.farlightgames.samo.gp.vn", check_mode: str = "state") -> str:
     """Blocks and loops until the emulator reaches one of the target_states."""
@@ -264,32 +265,26 @@ def wait_for_state(serial: str, detector: GameStateDetector, target_states: list
                 
             time.sleep(0.5)
 
-def go_to_profile(serial: str, detector: GameStateDetector) -> bool:
-    """
-    Assumes we are at the main lobby (`IN_CITY` or `OUT_CITY`).
-    Navigates to the Profile menu. Returning True on success.
-    """
+def go_to_profile(serial: str, detector: GameStateDetector) -> dict:
+    """Navigates to the Profile menu."""
     if detector.check_state(serial) == "IN-GAME LOBBY (PROFILE MENU)":
-        return True
+        return _ok()
         
     print(f"[{serial}] Navigating to Profile...")
     adb_helper.tap(serial, 25, 25)
     
     state = wait_for_state(serial, detector, ["IN-GAME LOBBY (PROFILE MENU)"], timeout_sec=10)
-    return state is not None
+    return _ok() if state else _fail("NAV_TARGET_NOT_REACHED: Could not reach Profile Menu")
 
-def go_to_profile_details(serial: str, detector: GameStateDetector) -> bool:
-    """
-    Assumes we are at the Profile Menu.
-    Navigates to the Profile Details menu. Returning True on success.
-    """
+def go_to_profile_details(serial: str, detector: GameStateDetector) -> dict:
+    """Navigates to the Profile Details menu."""
     print(f"[{serial}] Navigating to Profile Details...")
     go_to_profile(serial, detector)
     time.sleep(3)
     adb_helper.tap(serial, 550, 200)
     
     state = wait_for_state(serial, detector, ["IN-GAME LOBBY (PROFILE MENU DETAIL)"], timeout_sec=10)
-    return state is not None
+    return _ok() if state else _fail("NAV_TARGET_NOT_REACHED: Could not reach Profile Details")
 
 def extract_player_id(serial: str, detector: GameStateDetector, adb_path: str = config.adb_path) -> str:
     """
@@ -319,7 +314,7 @@ def extract_player_id(serial: str, detector: GameStateDetector, adb_path: str = 
     
     return None
 
-def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 30, target_lobby: str = None, debug: bool = False) -> bool:
+def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 30, target_lobby: str = None, debug: bool = False) -> dict:
     """
     Intelligently navigates back to the main Lobby from ANY state.
     Uses a time-based loop (timeout_sec) instead of attempt count.
@@ -333,7 +328,7 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
       - Known menu states: Press back, max 3 per same state before escalating.
 
     target_lobby: Optional. 'IN-GAME LOBBY (IN_CITY)' or 'IN-GAME LOBBY (OUT_CITY)'.
-    Returns True if Lobby was reached, False on failure.
+    Returns dict: _ok() on success, _fail() on failure.
     """
     import numpy as np
     BLACK_SCREEN_THRESHOLD = 15  # Mean brightness below this = black screen (game booting)
@@ -355,13 +350,13 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
     was_running = ensure_app_running(serial, "com.farlightgames.samo.gp.vn", config.adb_path)
     if was_running is None:
         print(f"[{serial}] [FAILED] Could not launch app during back_to_lobby.")
-        return False
+        return _fail("CRASH_LAUNCH_FAILED: Could not launch app during back_to_lobby")
     if not was_running:
         print(f"[{serial}] [WARNING] Game was not running during back_to_lobby! Attempting to wait for lobby...")
         lobby_ok = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
         if not lobby_ok:
             print(f"[{serial}] [FAILED] Game did not load into Lobby after booting.")
-            return False
+            return _fail("TIMEOUT_LOAD: Game did not load into Lobby after booting")
         current_state = detector.check_state(serial)
         if target_lobby and current_state != target_lobby:
             print(f"[{serial}] -> Swapping to {target_lobby}...")
@@ -369,9 +364,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
             swapped = wait_for_state(serial, detector, [target_lobby], timeout_sec=10)
             if not swapped:
                 print(f"[{serial}] [WARNING] Could not swap to {target_lobby}.")
-                return False
+                return _fail(f"NAV_SWAP_FAILED: Could not swap to {target_lobby}")
             print(f"[{serial}] -> Swapped to {target_lobby}.")
-        return True
+        return _ok()
 
     # --- Time-based main loop ---
     known_state_back_count = 0
@@ -404,9 +399,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                 swapped = wait_for_state(serial, detector, [target_lobby], timeout_sec=10)
                 if not swapped:
                     print(f"[{serial}] [WARNING] Could not swap to {target_lobby}.")
-                    return False
+                    return _fail(f"NAV_SWAP_FAILED: Could not swap to {target_lobby}")
                 print(f"[{serial}] -> Swapped to {target_lobby}.")
-            return True
+            return _ok()
 
         # === CASE 1: LOADING SCREEN — Wait patiently ===
         if current_state == "LOADING SCREEN":
@@ -509,21 +504,21 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
             known_state_back_count = 0
 
     print(f"[{serial}] [FAILED] Could not reach Lobby within {timeout_sec}s.")
-    return False
+    return _fail(f"TIMEOUT_STATE_WAIT: Could not reach Lobby within {timeout_sec}s")
 
-def ensure_lobby_menu_open(serial: str, detector: GameStateDetector, max_attempts: int = 5) -> bool:
+def ensure_lobby_menu_open(serial: str, detector: GameStateDetector, max_attempts: int = 5) -> dict:
     """
     Ensures the expandable lobby menu is open.
     Uses detector.is_menu_expanded() which is separate from check_state().
     If menu is closed and we're at Lobby, taps the expand button (925, 500).
-    Returns True if menu is confirmed open, False on failure.
+    Returns dict: _ok() on success, _fail() on failure.
     """
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     
     for attempt in range(1, max_attempts + 1):
         if detector.is_menu_expanded(serial):
             print(f"[{serial}] -> Lobby menu is already open.")
-            return True
+            return _ok()
         
         current_state = detector.check_state(serial)
         print(f"[{serial}] [ensure_menu] Attempt {attempt}/{max_attempts} | State: {current_state} | Menu: closed")
@@ -536,18 +531,19 @@ def ensure_lobby_menu_open(serial: str, detector: GameStateDetector, max_attempt
         
         # Not in a lobby state at all
         print(f"[{serial}] -> [WARNING] Not in Lobby state ({current_state}). Cannot expand menu.")
-        return False
+        return _fail(f"STATE_WRONG_SCREEN: Not in Lobby ({current_state}), cannot expand menu")
     
     print(f"[{serial}] [FAILED] Could not confirm lobby menu open after {max_attempts} attempts.")
-    return False
+    return _fail(f"NAV_MENU_OPEN_FAILED: Could not open lobby menu after {max_attempts} attempts")
 
-def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
-    """Navigates to the Resources menu from Lobby."""
+def go_to_resources(serial: str, detector: GameStateDetector) -> dict:
+    """Navigates to the Resources menu from Lobby. Returns dict."""
     print(f"[{serial}] Navigating to Resources...")
     
-    if not ensure_lobby_menu_open(serial, detector):
+    result = ensure_lobby_menu_open(serial, detector)
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not open lobby menu.")
-        return False
+        return _bubble(result, "NAV_MENU_OPEN_FAILED: Could not open lobby menu")
     # Tap (780, 500) with retry — could land on any IN-GAME ITEMS tab
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     ITEMS_STATES = ["IN-GAME ITEMS (ARTIFACTS)", "IN-GAME ITEMS (RESOURCES)"]
@@ -565,8 +561,9 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
         if current in LOBBY_STATES:
             # Tap didn't register, re-expand and retry
             print(f"[{serial}] -> Tap (780,500) missed. Retry {retry}/3 — re-expanding menu...")
-            if not ensure_lobby_menu_open(serial, detector):
-                return False
+            menu_result = ensure_lobby_menu_open(serial, detector)
+            if not _is_ok(menu_result):
+                return _bubble(menu_result, "NAV_MENU_OPEN_FAILED: Could not re-expand lobby menu")
             continue
         
         # Unknown state — likely some other IN-GAME ITEMS tab without a template
@@ -577,7 +574,7 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
     
     if not items_reached:
         print(f"[{serial}] [FAILED] Could not enter Items menu after 3 retries.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Could not enter Items menu after 3 retries")
     
     # If we landed on Resources directly, skip tapping (75, 180)
     if state != "IN-GAME ITEMS (RESOURCES)":
@@ -586,14 +583,14 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> bool:
 
         if not state:
             print(f"[{serial}] [FAILED] Could not reach Items - Resources state.")
-            return False
+            return _fail("NAV_TARGET_NOT_REACHED: Could not reach Items - Resources state")
 
     adb_helper.tap(serial, 620, 100)
     time.sleep(5)
     
-    return True
+    return _ok()
 
-def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> bool:
+def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> dict:
     """
     Generic navigation to any construction building.
     Looks up tap coordinates from construction_data.py.
@@ -603,46 +600,44 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> b
     
     if name_upper not in CONSTRUCTION_TAPS:
         print(f"[{serial}] [FAILED] Unknown construction '{name}'. Not found in construction_data.")
-        return False
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown construction '{name}'")
     
     print(f"[{serial}] Navigating to construction: {name_upper}...")
     
-    back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(result):
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY")
     current_state = detector.check_state(serial)
     if current_state != "IN-GAME LOBBY (IN_CITY)":
         print(f"[{serial}] [FAILED] Must be IN_CITY. Current: {current_state}")
-        return False
+        return _fail(f"STATE_WRONG_SCREEN: Must be IN_CITY, current: {current_state}")
     
     # Execute tap sequence from data
     taps = CONSTRUCTION_TAPS[name_upper]
     for i, (x, y) in enumerate(taps):
         adb_helper.tap(serial, x, y)
         time.sleep(2)
-    time.sleep(3)  # Extra wait for building info to load
+    time.sleep(3)
     
-    # Verify via construction detector
-    # Edge case: recently-upgraded constructions show a "success" icon overlay.
-    # First tap only dismisses that icon; a second tap is needed to actually open.
     result = detector.check_construction(serial, target=name_upper)
     if result:
         print(f"[{serial}] -> {name_upper} detected successfully.")
-        return True
+        return _ok()
     
-    # Retry: tap the final coordinate again (dismiss upgrade icon → re-open)
     last_x, last_y = taps[-1]
-    print(f"[{serial}] [RETRY] {name_upper} not detected. Re-tapping ({last_x}, {last_y}) to dismiss upgrade icon...")
+    print(f"[{serial}] [RETRY] {name_upper} not detected. Re-tapping ({last_x}, {last_y})...")
     adb_helper.tap(serial, last_x, last_y)
     time.sleep(3)
     
     result = detector.check_construction(serial, target=name_upper)
     if result:
         print(f"[{serial}] -> {name_upper} detected on retry.")
-        return True
+        return _ok()
     
     print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened after retry.")
-    return False
+    return _fail(f"NAV_TARGET_NOT_REACHED: Could not confirm {name_upper} opened")
 
-def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
+def go_to_capture_pet(serial: str, detector: GameStateDetector) -> dict:
     """
     Go to Capture Pet Full Phase
     """
@@ -650,19 +645,18 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> bool:
     go_to_pet_sanctuary(serial, detector)
     release_pet(serial, detector)
     capture_pet(serial, detector)
-    return True
+    return _ok()
     
-def capture_pet(serial: str, detector: GameStateDetector) -> bool:
+def capture_pet(serial: str, detector: GameStateDetector) -> dict:
     """
     Navigates from OUT_CITY to Auto Capture Pet screen and starts capture.
-    Returns True if capture was started successfully.
     """
     print(f"[{serial}] Navigating to Capture Pet...")
     
-    # 1. Back to lobby OUT_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
 
     # 2. Tap Menu search
     print(f"[{serial}] Opening Search Menu (42, 422)...")
@@ -689,7 +683,7 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     
     if state not in ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"]:
         print(f"[{serial}] [FAILED] Did not reach Capture window.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach Capture window")
 
     # 6. Tap (284, 398) x5 to configure
     print(f"[{serial}] Configuring Pet Capture (284, 398) x5...")
@@ -709,7 +703,7 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
     
     if outcome is None:
         print(f"[{serial}] Auto capture started & game pushed to map! Capture successful.")
-        return True
+        return _ok()
         
     if outcome == "AUTO_CAPTURE_IN_PROGRESS":
         print(f"[{serial}] Auto Capture remains on screen and is in progress! Waiting for completion...")
@@ -732,36 +726,34 @@ def capture_pet(serial: str, detector: GameStateDetector) -> bool:
         print(f"[{serial}] Not enough warrants to capture pet (or idle state returned).")
         adb_helper.press_back(serial)
         
-    return True
+    return _ok()
 
-def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> bool:
+def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> dict:
     """
     Navigates from lobby (OUT_CITY) through Pet Sanctuary into Pet Enclosure.
-    Returns True if PET_ENCLOSURE state is reached successfully.
     """
     print(f"[{serial}] Navigating to Pet Sanctuary...")
 
-    # 1. Back to lobby OUT_CITY & open menu
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY.")
-        return False
-    if not ensure_lobby_menu_open(serial, detector):
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
+    menu_result = ensure_lobby_menu_open(serial, detector)
+    if not _is_ok(menu_result):
         print(f"[{serial}] [FAILED] Could not expand lobby menu.")
-        return False
+        return _bubble(menu_result, "NAV_MENU_OPEN_FAILED: Could not expand lobby menu")
         
-    # 2. Tap (510, 507) to open Sanctuary
     print(f"[{serial}] Opening Pet Sanctuary (510, 507)...")
     adb_helper.tap(serial, 510, 507)
     time.sleep(3)
     
-    # 3. Verify PET_SANCTUARY
     state = wait_for_state(serial, detector, ["PET_SANCTUARY"], timeout_sec=10, check_mode="construction")
     if state != "PET_SANCTUARY":
         print(f"[{serial}] [FAILED] Did not reach PET_SANCTUARY state.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach PET_SANCTUARY")
     
     print(f"[{serial}] -> PET_SANCTUARY reached successfully.")
-    return True
+    return _ok()
 
 # Pet grid slot definitions (3 columns × N rows, 1-indexed)
 # Slot 7 = row 3 col 1, Slot 8 = row 3 col 2
@@ -830,34 +822,17 @@ def _release_single_pet(serial: str, tap_point: tuple):
     time.sleep(2)
 
 
-def release_pet(serial: str, detector: GameStateDetector) -> bool:
-    """Release all unlocked pets from PET_ENCLOSURE.
-
-    Precondition: call go_to_pet_sanctuary() first.
-
-    Algorithm:
-      1. Navigate to PET_ENCLOSURE and sort tabs.
-      2. Smart loop — check slot 8 (primary) and slot 7 (fallback):
-         - Slot 8 blank + Slot 7 blank → done, no more pets.
-         - Slot 8 has pet → try release → verify. If still occupied (locked),
-           fall back to slot 7 for remaining releases.
-         - Slot 7 has pet (edge case: sort locked slot 8) → release from slot 7.
-      3. Back x2 to exit.
-
-    Returns True on completion.
-    """
+def release_pet(serial: str, detector: GameStateDetector) -> dict:
+    """Release all unlocked pets from PET_ENCLOSURE."""
     print(f"[{serial}] === RELEASE PET ===")
 
-    # 1. Tap to open Enclosure
-    print(f"[{serial}] Opening Pet Enclosure (918, 504)...")
     adb_helper.tap(serial, 918, 504)
     time.sleep(3)
 
-    # 2. Verify PET_ENCLOSURE
     state = wait_for_state(serial, detector, ["PET_ENCLOSURE"], timeout_sec=10, check_mode="construction")
     if state != "PET_ENCLOSURE":
         print(f"[{serial}] [FAILED] Did not reach PET_ENCLOSURE state.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach PET_ENCLOSURE")
 
     # 3. Navigate sort/release tabs
     print(f"[{serial}] Selecting Release Tabs (254,93) -> (670,131) -> (50,135)...")
@@ -912,9 +887,9 @@ def release_pet(serial: str, detector: GameStateDetector) -> bool:
     time.sleep(2)
 
     print(f"[{serial}] === RELEASE PET COMPLETE — released {released} pet(s) ===")
-    return True
+    return _ok()
 
-def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> bool:
+def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> dict:
     """
     Farming Workflow:
     1. Back to OUT_CITY
@@ -926,7 +901,6 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
     """
     print(f"[{serial}] Starting Farming Workflow for: {resource_type.upper()}")
     
-    # Coordinates mapping
     RESOURCE_TAPS = {
         "gold": (320, 485),
         "wood": (475, 485),
@@ -942,22 +916,19 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
     }
     
     LEGION_TAPS = [
-        (695, 90), # legion_1
-        (735, 90), # legion_2
-        (780, 90), # legion_3
-        (825, 90), # legion_4
-        (865, 90)  # legion_5
+        (695, 90), (735, 90), (780, 90), (825, 90), (865, 90)
     ]
     
     r_type = resource_type.lower()
     if r_type not in RESOURCE_TAPS:
         print(f"[{serial}] [ERROR] Unknown resource type: {resource_type}")
-        return False
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown resource type '{resource_type}'")
         
     # 1. Back to lobby OUT_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
+    result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
-        return False
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY lobby")
         
     # Loop over legions. Will break when we hit max/can't deploy
     for idx, legion_tap in enumerate(LEGION_TAPS):
@@ -1036,7 +1007,7 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
         time.sleep(7)
         
     print(f"[{serial}] Farming Deployment Finished.")
-    return True
+    return _ok()
 
 def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     """
@@ -1056,9 +1027,10 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     ROI_REMAINING_TIME = (655, 222, 725, 240)
 
     print(f"[{serial}] Starting Alliance Resource Center Farming...")
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
+    result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
-        return False
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
 
     print(f"[{serial}] Tapping Markers Icon (180, 16)...")
     adb_helper.tap(serial, 180, 16)
@@ -1068,7 +1040,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     state = wait_for_state(serial, detector, ["MARKERS_MENU"], timeout_sec=10, check_mode="construction")
     if state != "MARKERS_MENU":
         print(f"[{serial}] [FAILED] Could not open Markers Menu.")
-        return {"ok": False}
+        return _fail("NAV_TARGET_NOT_REACHED: Could not open Markers Menu")
 
     # Check for Resource Center marker
     print(f"[{serial}] Searching for Resource Center marker...")
@@ -1083,7 +1055,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         print(f"[{serial}] Resource Center not found in markers! Aborting.")
         adb_helper.press_back(serial)
         time.sleep(2)
-        return {"ok": False}
+        return _fail("TEMPLATE_NO_MATCH: Resource Center marker not found")
 
     # Navigate to RSS Center on map
     center_x, center_y = rss_marker[1], rss_marker[2]
@@ -1110,7 +1082,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         print(f"[{serial}] Neither Gather nor Build button found. Aborting.")
         adb_helper.tap(serial, 50, 500)
         time.sleep(2)
-        return True  # fallback
+        return _ok()  # fallback — no gather available
 
     g_x, g_y = gather_state[1], gather_state[2]
 
@@ -1201,69 +1173,58 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
 
         # OCR fail — fallback to static
         print(f"[{serial}] [TH2] OCR remaining time failed. Using static fallback.")
-        return True
+        return _ok()  # OCR fallback — static CD
 
-def go_to_market(serial: str, detector: GameStateDetector) -> bool:
+def go_to_market(serial: str, detector: GameStateDetector) -> dict:
     """Navigates to Market."""
     print(f"[{serial}] Navigating to Market...")
     adb_helper.tap(serial, 639, 232)
     time.sleep(2)
     adb_helper.tap(serial, 545, 267)
     time.sleep(3)
-    return True
+    return _ok()
 
-def go_to_alliance(serial: str, detector: GameStateDetector) -> bool:
+def go_to_alliance(serial: str, detector: GameStateDetector) -> dict:
     """
     Navigates to the Alliance menu from Lobby IN_CITY.
-    Returns True if ALLIANCE_MENU state is reached successfully.
     """
     print(f"[{serial}] Navigating to Alliance Menu...")
     
-    # 1. Back to lobby IN_CITY & open menu
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY lobby")
         
-    if not ensure_lobby_menu_open(serial, detector):
+    menu_result = ensure_lobby_menu_open(serial, detector)
+    if not _is_ok(menu_result):
         print(f"[{serial}] [FAILED] Could not expand lobby menu.")
-        return False
+        return _bubble(menu_result, "NAV_MENU_OPEN_FAILED: Could not expand lobby menu")
         
-    # 2. Tap Alliance Icon
     print(f"[{serial}] Tapping Alliance Icon...")
     adb_helper.tap(serial, 719, 503)
     time.sleep(3)
     
-    # 3. Verify ALLIANCE_MENU
     state = wait_for_state(serial, detector, ["ALLIANCE_MENU"], timeout_sec=10, check_mode="construction")
     if state != "ALLIANCE_MENU":
-        print(f"[{serial}] [FAILED] Did not reach ALLIANCE_MENU. Account might not be in an Alliance.")
-        return False
+        print(f"[{serial}] [FAILED] Did not reach ALLIANCE_MENU.")
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach ALLIANCE_MENU")
         
     print(f"[{serial}] -> ALLIANCE_MENU reached successfully.")
-    return True
+    return _ok()
 
-def go_to_alliance_war_loop(serial: str, detector: GameStateDetector, loop_count: int = 1) -> bool:
+def go_to_alliance_war_loop(serial: str, detector: GameStateDetector, loop_count: int = 1) -> dict:
     """
-    Function Claim Ressource in CITY LOBBY
-    Workflow:
-    1. in lobby IN_CITY
-    2. Go to Alliance
-    3. Go to War (alliance/war.png)
-    4. Check state in war if have rally (alliance/rally.png)
-    5. Join Rally (tap rally button) 
-    6. Using #6 in go_to_farm funciton (core_actions.py) to deploy legions. -> use legion_1
-    7. tap (x.y) to go to lobby IN_CITY
-    -> loop loop_count times
+    Alliance War Rally Loop.
     """
     print(f"[{serial}] Starting Alliance War Rally Loop (Count: {loop_count})...")
     
     for loop in range(loop_count):
         print(f"\n[{serial}] --- Rally Loop #{loop+1}/{loop_count} ---")
             
-        # 2. Go to Alliance
-        if not go_to_alliance(serial, detector):
+        result = go_to_alliance(serial, detector)
+        if not _is_ok(result):
             print(f"[{serial}] [FAILED] Could not open Alliance Menu.")
-            return False
+            return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not open Alliance Menu")
             
         # 3. Go to War
         print(f"[{serial}] Searching for War tab...")
@@ -1356,18 +1317,11 @@ def go_to_alliance_war_loop(serial: str, detector: GameStateDetector, loop_count
         print(f"[{serial}] Rally join complete for this loop.")
 
     print(f"[{serial}] Finished all {loop_count} Rally loops.")
-    return True
+    return _ok()
 
-def train_troops(serial: str, detector: GameStateDetector, training_list: list = None) -> bool:
+def train_troops(serial: str, detector: GameStateDetector, training_list: list = None) -> dict:
     """
     Trains troops at the specified training houses and tiers.
-    Requirements:
-    - User must configure the 5 house center coordinates in HOUSE_TAPS.
-    - User must configure the 5 tier coordinates in TIER_TAPS.
-    - Requires TRAIN_UNITS, TRAINING_ICON, BTN_TRAIN templates in state_detector.
-    
-    Args:
-        training_list: A list of tuples, e.g., [("cavalry", 3), ("infantry", 5)]
     """
     if training_list is None:
         training_list = [("infantry", 1)]
@@ -1390,13 +1344,13 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
         5: (429, 460)
     }
     
-    # Default train button coordinate (adjust if needed)
     TRAIN_BTN_COORD = (792, 466) 
     
     # 1. Back to IN_CITY once at the start
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY lobby")
         
     all_success = True
         
@@ -1424,7 +1378,8 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
         # Ensure we are in the lobby before tapping the next house
         current_state = detector.check_state(serial)
         if current_state != "IN-GAME LOBBY (IN_CITY)":
-            if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+            retry_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+            if not _is_ok(retry_result):
                  print(f"[{serial}] [FAILED] Not in IN_CITY lobby. Aborting current training.")
                  all_success = False
                  continue
@@ -1515,43 +1470,37 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
     print(f"[{serial}] Finished all training requests. Returning to lobby.")
     back_to_lobby(serial, detector)
     
-    return all_success
+    return _ok() if all_success else _fail("ACTION_VERIFY_FAILED: Some training houses failed")
 
 
-def claim_alliance_resource(serial: str, detector: GameStateDetector) -> bool:
+def claim_alliance_resource(serial: str, detector: GameStateDetector) -> dict:
     """
     Claims Alliance Territory Resource.
-    1. Go to Alliance Menu
-    2. Tap Territory Icon
-    3. Tap Claim Button
     """
     print(f"[{serial}] Starting Claim Alliance Resource...")
     
-    # 1. Request in alliance menu
-    if not go_to_alliance(serial, detector):
+    result = go_to_alliance(serial, detector)
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach Alliance Menu to claim resource.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Alliance Menu")
         
-    # 2. Tap territory icon
     print(f"[{serial}] Tapping Territory Icon...")
     adb_helper.tap(serial, 635, 350)
     time.sleep(3)
     
-    # 3. Tap claim button (826, 175)
     print(f"[{serial}] Tapping Claim Button (826, 175)...")
     adb_helper.tap(serial, 826, 175)
     time.sleep(2)
     
     print(f"[{serial}] -> Claim Alliance Resource completed.")
 
-    # back to lobby
     adb_helper.press_back(serial)
     time.sleep(2)
     adb_helper.press_back(serial)
     time.sleep(2)
-    return True
+    return _ok()
 
-def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all") -> bool:
+def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all") -> dict:
     """
     Checks and claims mail in the game.
     mail_type can be 'events', 'system', 'alliance', or 'all' (default).
@@ -1560,16 +1509,15 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
     mail_type = mail_type.lower()
     if mail_type not in valid_types:
         print(f"[{serial}] [ERROR] Invalid mail_type '{mail_type}'. Use {valid_types}.")
-        return False
+        return _fail(f"CONFIG_INVALID_PARAM: Invalid mail_type '{mail_type}'")
         
     print(f"[{serial}] Starting Check Mail ({mail_type})...")
 
-
-    
     # 1. Back to lobby
-    if not back_to_lobby(serial, detector):
+    lobby_result = back_to_lobby(serial, detector)
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach lobby")
         
     # 2. Tap mail icon
     print(f"[{serial}] Tapping Mail Icon (926, 447)...")
@@ -1580,11 +1528,10 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
     state = wait_for_state(serial, detector, ["MAIL_MENU"], timeout_sec=10, check_mode="special")
     if state != "MAIL_MENU":
         print(f"[{serial}] [FAILED] Did not reach MAIL_MENU.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach MAIL_MENU")
         
     print(f"[{serial}] -> MAIL_MENU reached successfully.")
     
-    # 4. Locations for tabs
     tabs = {
         "alliance": (370, 25),
         "events": (500, 25),
@@ -1592,35 +1539,26 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
     }
     claim_button = (100, 512)
     
-    tabs_to_check = []
-    if mail_type == "all":
-        tabs_to_check = ["alliance", "events", "system"]
-    else:
-        tabs_to_check = [mail_type]
+    tabs_to_check = ["alliance", "events", "system"] if mail_type == "all" else [mail_type]
         
     for tab in tabs_to_check:
         print(f"[{serial}] Checking '{tab.capitalize()}' mail...")
         tab_x, tab_y = tabs[tab]
-        
-        # Tap tab
         adb_helper.tap(serial, tab_x, tab_y)
         time.sleep(2)
-        
-        # Tap claim
         print(f"[{serial}] Tapping Claim ({claim_button[0]}, {claim_button[1]})...")
         adb_helper.tap(serial, claim_button[0], claim_button[1])
         time.sleep(2)
         
-    # 5. Back out
     print(f"[{serial}] Closing Mail Menu...")
     adb_helper.press_back(serial)
     time.sleep(2)
     
     print(f"[{serial}] -> Check Mail completed.")
-    return True
+    return _ok()
 
 
-def go_to_pet_token(serial: str, detector: GameStateDetector) -> bool:
+def go_to_pet_token(serial: str, detector: GameStateDetector) -> dict:
     """Navigates to Pet Token area."""
     print(f"[{serial}] Navigating to Pet Token...")
     adb_helper.tap(serial, 750, 80)
@@ -1633,9 +1571,9 @@ def go_to_pet_token(serial: str, detector: GameStateDetector) -> bool:
     time.sleep(1)
     adb_helper.tap(serial, 100, 375)
     time.sleep(3)
-    return True
+    return _ok()
 
-def swap_account(serial: str, account_detector: AccountDetector, detector: GameStateDetector, target_account: str = None, max_scrolls: int = 5) -> bool:
+def swap_account(serial: str, account_detector: AccountDetector, detector: GameStateDetector, target_account: str = None, max_scrolls: int = 5) -> dict:
     """
     In-game account switch flow.
     Navigates: LOBBY -> Profile -> Settings -> Switch Account -> Find & Select Account -> Confirm -> LOBBY.
@@ -1654,16 +1592,16 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     print(f"[{serial}] === SWAP ACCOUNT: {target_account} ===")
 
-    # 1. Ensure we're in LOBBY first (and game is running)
-    if not startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp.vn", load_timeout=120):
+    result = startup_to_lobby(serial, detector, package_name="com.farlightgames.samo.gp.vn", load_timeout=120)
+    if not _is_ok(result):
         print(f"[{serial}] swap_account failed: Could not reach lobby.")
-        return False
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach lobby")
 
-    # 2. Navigate to Profile
     print(f"[{serial}] Step 1/6: Opening Profile...")
-    if not go_to_profile(serial, detector):
+    profile_result = go_to_profile(serial, detector)
+    if not _is_ok(profile_result):
         print(f"[{serial}] swap_account failed: Could not open Profile.")
-        return False
+        return _bubble(profile_result, "NAV_TARGET_NOT_REACHED: Could not open Profile")
     time.sleep(1) 
 
     # 4. Tap Settings button (683, 340) -> wait via account detector
@@ -1672,7 +1610,7 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     state = wait_for_state(serial, detector, ["SETTINGS"], timeout_sec=10, check_mode="special")
     if not state:
         print(f"[{serial}] swap_account failed: Could not reach Settings screen.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Could not reach Settings screen")
     time.sleep(1)
 
     # 5. Tap "Switch Account" (478, 354) -> wait via account detector
@@ -1681,7 +1619,7 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     state = wait_for_state(serial, detector, ["CHARACTER_MANAGEMENT"], timeout_sec=10, check_mode="special")
     if not state:
         print(f"[{serial}] swap_account failed: Could not reach Character Management screen.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Could not reach Character Management")
         
     # Give the Character Management UI time to fully slide in and render its text
     print(f"[{serial}] Waiting 3s for Character Management UI to settle...")
@@ -1737,7 +1675,7 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
             for _ in range(3):
                 adb_helper.press_back(serial)
                 time.sleep(1.5)
-            return True
+            return _ok()
         else: 
             print("Account not selected, proceeding to confirm")
     else:
@@ -1767,10 +1705,10 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     lobby_state = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=120)
     if not lobby_state:
         print(f"[{serial}] swap_account failed: Game did not reload into Lobby after switch.")
-        return False
+        return _fail("TIMEOUT_LOAD: Game did not reload into Lobby after account switch")
 
     print(f"[{serial}] === SWAP ACCOUNT SUCCESS -> {lobby_state} ===")
-    return True
+    return _ok()
 
 def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
     """
@@ -1783,7 +1721,8 @@ def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
     print(f"[{serial}] Starting Claim City Resources workflow...")
     
     # 1. Back to IN_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
         return 0
         
@@ -1813,18 +1752,17 @@ def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
     return claimed_count
 
 
-def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = "elixir", troop_priorities: list = None) -> bool:
+def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = "elixir", troop_priorities: list = None) -> dict:
     """
     Heals troops using Elixir Healing building.
-    healing_method: 'elixir' or 'resources' (default: 'elixir')
-    troop_priorities: list of strings (e.g., ['infantry', 'cavalry', 'archer', 'mage', 'workhorses', 'siege'])
     """
     print(f"[{serial}] Starting Troop Healing workflow...")
 
     # 1. Back to lobby IN_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY lobby")
 
     # 2. Check for Healing Icon
     print(f"[{serial}] Scanning for Healing Icon...")
@@ -1837,7 +1775,7 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
 
     if not icon_match:
         print(f"[{serial}] No Healing Icon found. Troops are fully healed or icon is missing.")
-        return False
+        return _ok()  # Not an error — nothing to heal
 
     # 3. Tap Healing Icon
     _, icon_x, icon_y = icon_match
@@ -1848,7 +1786,7 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
     state = wait_for_state(serial, detector, ["ELIXIR_HEALING"], timeout_sec=10, check_mode="construction")
     if state != "ELIXIR_HEALING":
         print(f"[{serial}] [FAILED] Did not reach ELIXIR_HEALING screen.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach ELIXIR_HEALING screen")
 
     # 5. Select Healing Method
     if healing_method.lower() == "resources":
@@ -1897,57 +1835,52 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
     adb_helper.press_back(serial)
     time.sleep(2)
 
-    return True
+    return _ok()
 
 
-def alliance_help(serial: str, detector: GameStateDetector) -> bool:
+def alliance_help(serial: str, detector: GameStateDetector) -> dict:
     """
     Alliance Help — single-shot.
     Navigate to Alliance Menu, detect & tap Help button, return.
-    Re-runs are handled by the activity-level cooldown in the orchestrator.
     """
     print(f"[{serial}] === ALLIANCE HELP (single-shot) ===")
 
-    # 1. Navigate to Alliance Menu
-    if not go_to_alliance(serial, detector):
+    result = go_to_alliance(serial, detector)
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach Alliance Menu.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Alliance Menu")
 
-    # 2. Tap Alliance Help Menu
     print(f"[{serial}] Tapping Alliance Help Menu (730, 330)...")
     adb_helper.tap(serial, 730, 330)
     time.sleep(3)
 
-    # 3. Detect Alliance Help button
     help_match = detector.check_alliance(serial, target="ALLIANCE_HELP", threshold=0.8)
 
     if not help_match:
         print(f"[{serial}] No Alliance Help button detected. Nothing to help with.")
         adb_helper.press_back(serial)
         time.sleep(2)
-        return True  # Not an error — just nothing to do
+        return _ok()
 
-    # 3. Tap Alliance Help button
     _, hx, hy = help_match
     print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
     adb_helper.tap(serial, hx, hy)
     time.sleep(3)
     print(f"[{serial}] Help completed!")
 
-    # 4. Back to lobby
     adb_helper.press_back(serial)
     time.sleep(1)
     adb_helper.press_back(serial)
     time.sleep(1)
 
     print(f"[{serial}] === ALLIANCE HELP DONE ===")
-    return True
+    return _ok()
 
 
 def claim_daily_chests(serial: str, detector: GameStateDetector,
                        draw_x10_silver: bool = False,
                        draw_x10_gold: bool = False,
-                       draw_x10_artifact: bool = False) -> bool:
+                       draw_x10_artifact: bool = False) -> dict:
     """
     Claim daily free Hero & Artifact chest draws at the Tavern.
 
@@ -1982,15 +1915,15 @@ def claim_daily_chests(serial: str, detector: GameStateDetector,
     SILVER_X10_ROI = (0.0, 0.0, 0.5, 1.0)   # TODO: left half of screen (sample)
     GOLD_X10_ROI = (0.5, 0.0, 0.5, 1.0)     # TODO: right half of screen (sample)
 
-    # 1. Navigate to Tavern
-    if not go_to_construction(serial, detector, "TAVERN"):
+    result = go_to_construction(serial, detector, "TAVERN")
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not navigate to Tavern.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not navigate to Tavern")
 
     state = wait_for_state(serial, detector, ["TAVERN"], timeout_sec=10, check_mode="construction")
     if state != "TAVERN":
         print(f"[{serial}] [FAILED] Did not reach TAVERN screen.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach TAVERN screen")
 
     print(f"[{serial}] Tavern opened -> Hero Recruitment screen.")
     time.sleep(2)
@@ -2070,14 +2003,12 @@ def claim_daily_chests(serial: str, detector: GameStateDetector,
     time.sleep(2)
 
     print(f"[{serial}] === TAVERN CHEST DRAW COMPLETE ===")
-    return True
+    return _ok()
 
 
-def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -> bool:
+def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -> dict:
     """
     Basic Darkling Legions attack flow.
-    Mirrors capture_pet structure but uses its own taps and target detector state.
-    Adjust the tap coordinates below once the real UI is confirmed.
     """
     print(f"[{serial}] Navigating to Attack Darkling Legions V1 (BASIC)...")
 
@@ -2090,10 +2021,10 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
     CONFIRM_TAP = (800, 480)
     TARGET_STATES = ["AUTO_PEACEKEEPING"]
 
-    # 1. Back to lobby OUT_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
 
     # 2. Open search menu
     print(f"[{serial}] Opening Search Menu {SEARCH_MENU_TAP}...")
@@ -2120,7 +2051,7 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
     state = wait_for_state(serial, detector, TARGET_STATES, timeout_sec=10, check_mode="special")
     if state not in TARGET_STATES:
         print(f"[{serial}] [FAILED] Did not reach Darkling Legions attack window.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach Darkling Legions window")
 
     #7. Use all free Legions
     print(f"[{serial}] Using all free Legions...")
@@ -2141,13 +2072,13 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
     if outcome is None:
         print(f"[{serial}] Dispatch started & game pushed to map! Attack successful.")
         time.sleep(60)
-        return True
+        return _ok()
 
     if outcome == "AUTO_PEACEKEEPING":
         print(f"[{serial}] Still on Peacekeeping screen. Out of CP.")
         adb_helper.press_back(serial)
 
-    return True
+    return _ok()
 
 def check_legion_state(serial: str, detector: GameStateDetector, max_legions: int = 5) -> dict:
     """Thin wrapper — delegates to detector.check_legion_state()."""
@@ -2178,7 +2109,8 @@ def go_to_check_legions_state(serial: str, detector: GameStateDetector, max_legi
     # 1. Ensure at lobby
     current = detector.check_state(serial)
     if current not in LOBBY_STATES:
-        if not back_to_lobby(serial, detector):
+        lobby_result = back_to_lobby(serial, detector)
+        if not _is_ok(lobby_result):
             print(f"[{serial}] [FAILED] Could not reach Lobby for legion check.")
             return None
     
@@ -2241,7 +2173,7 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
                 power_val = int(power_text.replace(",", "").replace(".", "").strip())
                 if power_val > max_power:
                     print(f"[{serial}] Power {power_val:,} > max_power {max_power:,}. Skipping research.")
-                    return False
+                    return _fail(f"CONFIG_EXCEEDED_LIMIT: Power {power_val:,} > max_power {max_power:,}")
         except Exception as e:
             print(f"[{serial}] [WARNING] Could not read power: {e}. Proceeding anyway.")
 
@@ -2250,15 +2182,16 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     BUFFER_SEC = 120  # 2 minutes buffer for research cooldown
 
     # 1. Navigate to Research Center
-    if not go_to_construction(serial, detector, "RESEARCH_CENTER"):
+    result = go_to_construction(serial, detector, "RESEARCH_CENTER")
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not navigate to Research Center.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not navigate to Research Center")
 
     # Verify we're at Research Center
     state = wait_for_state(serial, detector, ["RESEARCH_CENTER"], timeout_sec=10, check_mode="construction")
     if state != "RESEARCH_CENTER":
         print(f"[{serial}] [FAILED] Did not reach RESEARCH_CENTER screen.")
-        return False
+        return _fail("NAV_TARGET_NOT_REACHED: Did not reach RESEARCH_CENTER screen")
 
     print(f"[{serial}] Research Center opened successfully.")
 
@@ -2444,7 +2377,7 @@ def _parse_research_timer(timer_str: str) -> int:
 
     return total_sec
 
-def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: int = 5) -> bool:
+def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: int = 5) -> dict:
     """
     Buys all resource-priced items from the Goblin Merchant.
     Skips gem-priced items. Scrolls down for more items. Refreshes up to max_refreshes times.
@@ -2458,7 +2391,7 @@ def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: 
     resource_icon = cv2.imread(resource_icon_path, cv2.IMREAD_COLOR)
     if resource_icon is None:
         print(f"[{serial}] [FAILED] Could not load merchant_resource_icon.png from {resource_icon_path}")
-        return False
+        return _fail("TEMPLATE_NO_MATCH: Could not load merchant_resource_icon.png")
     
     # Grid layout: 4 columns x 2 rows of buy buttons (center coordinates)
     SLOT_BUY_BUTTONS = [
@@ -2560,23 +2493,20 @@ def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: 
     adb_helper.press_back(serial)
     time.sleep(2)
     
-    return True
+    return _ok()
 
-def claim_daily_vip_gift(serial: str, detector: GameStateDetector) -> bool:
+def claim_daily_vip_gift(serial: str, detector: GameStateDetector) -> dict:
     """
-    Claim daily VIP Gift:
-    - Navigates to IN_CITY and taps SHOP construction
-    - Taps VIP ICON, Claim, Hornor Point (+), Claim point
-    - Back x2 to return
+    Claim daily VIP Gift.
     """
     print(f"[{serial}] Starting Claim Daily VIP Gift workflow...")
     workflow_start = time.time()
     
     t0 = time.time()
-    # 1. Access SHOP
-    if not go_to_construction(serial, detector, "SHOP"):
+    result = go_to_construction(serial, detector, "SHOP")
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not access SHOP construction.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not access SHOP")
         
     time.sleep(3)
     print(f"[{serial}] [TIMING] Accessing SHOP construction took {time.time() - t0:.2f}s")
@@ -2612,7 +2542,7 @@ def claim_daily_vip_gift(serial: str, detector: GameStateDetector) -> bool:
     print(f"[{serial}] [TIMING] Pressing BACK x2 took {time.time() - t0:.2f}s")
     
     print(f"[{serial}] VIP Gift claim workflow finished successfully in {time.time() - workflow_start:.2f}s.")
-    return True
+    return _ok()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2751,7 +2681,7 @@ def _execute_event_task_stub(serial: str, detector: GameStateDetector, task_id: 
     print(f"[{serial}] [FESTIVAL] [STUB] execute_event_task('{task_id}') — not implemented yet, skipping.")
 
 
-def process_festival_of_fortitude_event(serial: str, detector: GameStateDetector) -> bool:
+def process_festival_of_fortitude_event(serial: str, detector: GameStateDetector) -> dict:
     """
     Automate the Festival of Fortitude event workflow.
 
@@ -2780,7 +2710,7 @@ def process_festival_of_fortitude_event(serial: str, detector: GameStateDetector
     active_day = _detect_active_festival_day(serial, detector)
     if active_day == 0:
         print(f"[{serial}] [FESTIVAL] [FAILED] Could not detect any unlocked day.")
-        return False
+        return _fail("TEMPLATE_NO_MATCH: Could not detect any unlocked festival day")
 
     print(f"[{serial}] [FESTIVAL] Active Day: {active_day}")
 
@@ -2821,7 +2751,7 @@ def process_festival_of_fortitude_event(serial: str, detector: GameStateDetector
           f"Errors: {total_stats['skipped']}")
     print(f"[{serial}] ═══════════════════════════════════════════\n")
 
-    return True
+    return _ok()
 
 
 def clean_trash_pet_sanctuary(
@@ -2829,7 +2759,7 @@ def clean_trash_pet_sanctuary(
     detector: GameStateDetector,
     duration: float = 60,
     score_threshold: float = 0.30,
-) -> bool:
+) -> dict:
     """
     Clean trash at Pet Sanctuary.
 
@@ -2852,21 +2782,22 @@ def clean_trash_pet_sanctuary(
     print(f"[{serial}] === CLEAN TRASH PET SANCTUARY ===")
 
     # 1. Navigate to Pet Sanctuary
-    if not go_to_pet_sanctuary(serial, detector):
+    result = go_to_pet_sanctuary(serial, detector)
+    if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach Pet Sanctuary.")
-        return False
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Pet Sanctuary")
 
     # 2. Load baseline image
     templates_dir = detector.templates_dir
     clean_path = os.path.join(templates_dir, "clean_state_960x540.png")
     if not os.path.exists(clean_path):
         print(f"[{serial}] [FAILED] Clean baseline image not found: {clean_path}")
-        return False
+        return _fail("TEMPLATE_NO_MATCH: Clean baseline image not found")
 
     clean_img = cv2.imread(clean_path, cv2.IMREAD_COLOR)
     if clean_img is None:
         print(f"[{serial}] [FAILED] Could not load clean baseline image.")
-        return False
+        return _fail("TEMPLATE_NO_MATCH: Could not load clean baseline image")
 
     print(f"[{serial}] [TRASH] Duration: {duration}s | Threshold: {score_threshold}")
 
@@ -2908,7 +2839,7 @@ def clean_trash_pet_sanctuary(
 
     elapsed_total = round(time.time() - start, 1)
     print(f"[{serial}] === CLEAN TRASH COMPLETE -- {cycle} cycles, {total_taps} taps in {elapsed_total}s ===")
-    return True
+    return _ok()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2954,7 +2885,7 @@ def detect_policy_popup(serial: str, detector: GameStateDetector) -> str:
     return "LOCKED"
 
 
-def _tap_policy_enact(serial: str, detector: GameStateDetector) -> bool:
+def _tap_policy_enact(serial: str, detector: GameStateDetector) -> dict:
     """Find and tap the ENACT button on the policy popup.
 
     Returns True if tapped, False if button not found.
@@ -2965,12 +2896,12 @@ def _tap_policy_enact(serial: str, detector: GameStateDetector) -> bool:
         print(f"[{serial}] [POLICY] Tapping ENACT at ({ex}, {ey})")
         adb_helper.tap(serial, ex, ey)
         time.sleep(2)
-        return True
+        return _ok()
     print(f"[{serial}] [POLICY] ENACT button not found")
-    return False
+    return _fail("TEMPLATE_NO_MATCH: ENACT button not found")
 
 
-def _tap_policy_go(serial: str, detector: GameStateDetector) -> bool:
+def _tap_policy_go(serial: str, detector: GameStateDetector) -> dict:
     """Find and tap the GO button on the policy popup.
 
     Returns True if tapped, False if button not found.
@@ -2981,12 +2912,12 @@ def _tap_policy_go(serial: str, detector: GameStateDetector) -> bool:
         print(f"[{serial}] [POLICY] Tapping GO at ({gx}, {gy})")
         adb_helper.tap(serial, gx, gy)
         time.sleep(2)
-        return True
+        return _ok()
     print(f"[{serial}] [POLICY] GO button not found")
-    return False
+    return _fail("TEMPLATE_NO_MATCH: GO button not found")
 
 
-def process_season_policies(serial: str, detector: GameStateDetector, account_id: str = "default") -> bool:
+def process_season_policies(serial: str, detector: GameStateDetector, account_id: str = "default") -> dict:
     """Main entry point for Season Policies automation.
 
     Runs the PolicyV3Engine in a loop until target is reached or all locked.
@@ -3031,7 +2962,7 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
     print(f"[{serial}]   SEASON POLICIES — COMPLETE ({enacted_count} enacted)")
     print(f"[{serial}] ═══════════════════════════════════════════\n")
 
-    return True
+    return _ok()
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -3061,7 +2992,8 @@ def check_builder_slots(serial: str, detector: GameStateDetector) -> dict:
     print(f"[{serial}] === CHECK BUILDER SLOTS ===")
 
     # 1. Navigate to Halfling House
-    if not go_to_construction(serial, detector, "HALFLING_HOUSE"):
+    construction_result = go_to_construction(serial, detector, "HALFLING_HOUSE")
+    if not _is_ok(construction_result):
         print(f"[{serial}] [FAILED] Could not navigate to Halfling House.")
         # Fallback: assume 1 free slot
         result["free_slots"] = 1
@@ -3122,7 +3054,7 @@ def check_builder_slots(serial: str, detector: GameStateDetector) -> dict:
     return result
 
 
-def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> bool:
+def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> dict:
     """
     Dismiss promotional popup by detecting X button in top-right corner.
     ROI: (775, 75) → (850, 150) to avoid false matches.
@@ -3134,7 +3066,7 @@ def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> bool:
 
     frame = detector.get_frame(serial)
     if frame is None:
-        return False
+        return _fail("ADB_NO_FRAME: Could not capture frame")
 
     # Crop ROI from frame
     roi_frame = frame[ROI_Y1:ROI_Y2, ROI_X1:ROI_X2]
@@ -3142,11 +3074,11 @@ def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> bool:
     # Load template
     template_path = os.path.join(detector.templates_dir, "special", "popup_X_btn.png")
     if not os.path.exists(template_path):
-        return False
+        return _fail("TEMPLATE_NO_MATCH: popup_X_btn.png not found")
 
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
     if template is None:
-        return False
+        return _fail("TEMPLATE_NO_MATCH: Could not load popup_X_btn template")
 
     # Template match within ROI
     result = cv2.matchTemplate(roi_frame, template, cv2.TM_CCOEFF_NORMED)
@@ -3160,9 +3092,9 @@ def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> bool:
         print(f"[{serial}] Promo popup detected (conf={max_val:.3f}). Dismissing at ({abs_x}, {abs_y})...")
         adb_helper.tap(serial, abs_x, abs_y)
         time.sleep(1)
-        return True
+        return _ok()
 
-    return False
+    return _fail("TEMPLATE_NO_MATCH: No promo popup detected")
 
 
 def reset_position(serial: str):
@@ -3178,17 +3110,16 @@ def reset_position(serial: str):
     print(f"[{serial}] -> Position reset.")
 
 
-def _navigate_to_hall_upgrade(serial: str, detector: GameStateDetector) -> bool:
+def _navigate_to_hall_upgrade(serial: str, detector: GameStateDetector) -> dict:
     """
     Navigates to the Hall upgrade screen.
-    Taps Hall building coords → detects CONSTRUCTION_UPGRADE_ICON → taps icon.
     """
     print(f"[{serial}] Navigating to Hall upgrade screen...")
 
-    # 1. Back to IN_CITY
-    if not back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)"):
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY.")
-        return False
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY")
 
     # 2. Tap Hall building (first coordinate only — selects building, shows popup icons)
     taps = CONSTRUCTION_TAPS["HALL"]
@@ -3205,12 +3136,12 @@ def _navigate_to_hall_upgrade(serial: str, detector: GameStateDetector) -> bool:
             adb_helper.tap(serial, ix, iy)
             time.sleep(2)
             print(f"[{serial}] -> Hall upgrade screen entered.")
-            return True
+            return _ok()
         print(f"[{serial}] Upgrade icon not found. Retry {retry + 1}/5...")
         time.sleep(1)
 
     print(f"[{serial}] [FAILED] Could not find upgrade icon on Hall.")
-    return False
+    return _fail("TEMPLATE_NO_MATCH: Could not find upgrade icon on Hall")
 
 
 def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: int = 5,
@@ -3258,7 +3189,8 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
     print(f"[{serial}] {remaining_slots} builder slot(s) available for upgrade.")
 
     # 2. Navigate to Hall upgrade screen
-    if not _navigate_to_hall_upgrade(serial, detector):
+    hall_result = _navigate_to_hall_upgrade(serial, detector)
+    if not _is_ok(hall_result):
         print(f"[{serial}] [FAILED] Could not enter Hall upgrade screen.")
         return result
 
@@ -3387,7 +3319,8 @@ def _try_upgrade_or_go(
         # If more paths to process AND slots available, go back to Hall
         if go_idx + 1 < len(go_positions) and remaining_slots > 0:
             print(f"[{serial}] [depth={depth}] Going back to Hall for next GO path...")
-            if not _navigate_to_hall_upgrade(serial, detector):
+            hall_retry = _navigate_to_hall_upgrade(serial, detector)
+            if not _is_ok(hall_retry):
                 print(f"[{serial}] [depth={depth}] [FAILED] Could not return to Hall upgrade screen.")
                 break
             time.sleep(2)

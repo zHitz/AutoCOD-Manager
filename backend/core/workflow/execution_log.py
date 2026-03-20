@@ -176,17 +176,23 @@ async def get_last_activity_run(account_id: int, activity_id: str) -> float:
             return 0
 
 
-async def get_effective_cooldown_sec(account_id: int, activity_id: str) -> tuple:
-    """Return (last_run_epoch, dynamic_cooldown_sec) from the latest SUCCESS log.
+async def get_effective_cooldown_sec(
+    account_id: int, activity_id: str, include_failures: bool = False
+) -> tuple:
+    """Return (last_run_epoch, dynamic_cooldown_sec) from the latest log.
 
     If the activity's result_json contains 'dynamic_cooldown_sec', that value
     is returned. Otherwise dynamic_cooldown_sec = 0, meaning the caller should
     fall back to the static cooldown_minutes config.
+
+    When include_failures=True, also considers FAILED runs for cooldown timing.
+    FAILED runs always return dynamic_cooldown_sec=0 (uses static cooldown).
     """
+    status_filter = "status IN ('SUCCESS', 'FAILED')" if include_failures else "status = 'SUCCESS'"
     async with aiosqlite.connect(config.db_path) as db:
         async with db.execute(
-            """SELECT started_at, result_json FROM account_activity_logs
-               WHERE account_id = ? AND activity_id = ? AND status = 'SUCCESS'
+            f"""SELECT started_at, result_json, status FROM account_activity_logs
+               WHERE account_id = ? AND activity_id = ? AND {status_filter}
                ORDER BY started_at DESC LIMIT 1""",
             (account_id, activity_id),
         ) as cursor:
@@ -198,6 +204,11 @@ async def get_effective_cooldown_sec(account_id: int, activity_id: str) -> tuple
                 last_run = datetime.fromisoformat(row[0]).timestamp()
             except ValueError:
                 return (0, 0)
+
+            # FAILED runs: no dynamic cooldown, caller uses static config
+            row_status = row[2] if row[2] else "SUCCESS"
+            if row_status == "FAILED":
+                return (last_run, 0)
 
             dynamic_cd = 0
             if row[1]:

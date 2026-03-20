@@ -1093,7 +1093,8 @@ class BotOrchestrator:
 
                 limit_min = self.misc_config.get("limit_min", 0)
                 account_success = True
-                ran_heavy = False  # Track if any heavy activity ran (for conditional account CD)
+                ran_heavy = False  # Track if any heavy activity succeeded (for conditional account CD)
+                ran_heavy_attempted = False  # Track if any heavy activity was attempted (for failure CD)
 
                 # Execute activities one by one
                 for i, act in enumerate(self.activities):
@@ -1142,6 +1143,11 @@ class BotOrchestrator:
                     }
                     self.activity_statuses[act_id_or_name] = "running"
                     await self.broadcast_state()
+
+                    # Track heavy attempt BEFORE execution (for failure cooldown)
+                    act_weight_pre = act_cfg.get("weight") or self._weight_map.get(act_id_or_name, "heavy")
+                    if act_weight_pre == "heavy":
+                        ran_heavy_attempted = True
 
                     step_start = time.time()
                     result = None
@@ -1279,7 +1285,7 @@ class BotOrchestrator:
                 # Update last run time for cooldown tracking
                 # Only update account-level CD if at least one heavy activity ran.
                 # Light-only runs should NOT trigger account cooldown.
-                if ran_heavy:
+                if ran_heavy or ran_heavy_attempted:
                     self.last_run_times[acc_id] = time.time()
 
                 if account_success and not self.stop_requested:
