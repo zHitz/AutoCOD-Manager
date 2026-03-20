@@ -45,6 +45,16 @@ const API = {
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
     getQueueHistory(limit) { return this.get(`/api/tasks/history/queue?limit=${limit || 50}`); },
     getExecutionRuns() { return this.get('/api/execution/runs'); },
+    getDebugLogs(serial, limit) {
+        let url = `/api/debug/logs?limit=${limit || 100}`;
+        if (serial) url += `&serial=${serial}`;
+        return this.get(url);
+    },
+    clearDebugLogs(serial) {
+        let url = '/api/debug/logs';
+        if (serial) url += `?serial=${serial}`;
+        return fetch(url, { method: 'DELETE' }).then(r => r.json());
+    },
 
     // ── Reports ──
     getReports(limit, serial) {

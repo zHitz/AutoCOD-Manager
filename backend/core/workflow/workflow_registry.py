@@ -628,7 +628,7 @@ ACTIVITY_REGISTRY = [
                 "key": "resource_type",
                 "label": "Farm Resource Type",
                 "type": "select",
-                "options": ["gold", "wood", "stone", "mana"],
+                "options": ["gold", "wood", "stone", "mana", "rotation"],
                 "default": "wood",
             },
         ],

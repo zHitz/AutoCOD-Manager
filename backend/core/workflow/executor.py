@@ -5,12 +5,17 @@ from backend.core.workflow import core_actions
 from backend.core.workflow import adb_helper
 from backend.core.workflow.state_detector import GameStateDetector
 from backend.core import full_scan as full_scan_module
-from backend.storage.database import Database
+from backend.storage.database import Database, database as _main_db
 
 # To be resilient, we'll keep a mapped dictionary of function_ids to actual python logic.
 # These function_ids match what is defined in workflow_registry.py
 
 _db = Database()
+
+# Round-robin rotation tracker for resource farming
+# Key: serial string, Value: index into _ROTATION_ORDER
+_farming_rotation_idx: dict[str, int] = {}
+_ROTATION_ORDER = ["gold", "wood", "stone", "mana"]
 
 
 async def _check_power_hall_limits(
@@ -60,6 +65,9 @@ async def execute_recipe(
     templates_dir = os.path.join(current_dir, "templates")
 
     detector = GameStateDetector(adb_path=config.adb_path, templates_dir=templates_dir)
+
+    # Set debug context so _fail() can capture screenshots
+    core_actions._set_debug_context(serial, detector)
 
     async def log(msg: str, log_type: str = "info"):
         print(f"[{emulator_name}] {msg}")
@@ -467,6 +475,15 @@ async def execute_recipe(
 
             elif fn_id == "nav_to_farming":
                 resource_type = (config or {}).get("resource_type", "wood")
+
+                # Rotation mode: cycle through all resource types
+                if resource_type == "rotation":
+                    idx = _farming_rotation_idx.get(serial, -1)
+                    idx = (idx + 1) % len(_ROTATION_ORDER)
+                    _farming_rotation_idx[serial] = idx
+                    resource_type = _ROTATION_ORDER[idx]
+                    await log(f"  [Rotation] Selected: {resource_type} (slot {idx + 1}/{len(_ROTATION_ORDER)})", "info")
+
                 ok = await asyncio.to_thread(
                     core_actions.go_to_farming,
                     serial,
@@ -641,6 +658,22 @@ async def execute_recipe(
                 err_reason = _activity_meta.get("error", "")
                 fail_msg = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
                 await log(f"  ✕ {fail_msg}", "err")
+
+                # Fire-and-forget: save debug log to DB
+                try:
+                    asyncio.create_task(
+                        _main_db.save_debug_log(
+                            serial=serial,
+                            error_code=err_reason.split(":")[0].strip() if err_reason else "UNKNOWN",
+                            error_message=err_reason,
+                            function_name=fn_id,
+                            activity_id=step.get("activity_id", ""),
+                            screenshot_path=_activity_meta.get("debug_screenshot", ""),
+                        )
+                    )
+                except Exception:
+                    pass  # Never block workflow for debug logging
+
                 all_ok = False
                 break
 

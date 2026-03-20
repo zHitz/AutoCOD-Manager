@@ -239,6 +239,10 @@ const WorkflowPage = {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M20.49 9A10 10 0 0 1 3.51 9M3.51 15a10 10 0 0 0 16.98 0"/></svg>
                     Misc
                   </button>
+                  <button class="acv-tab" id="acv-tab-btn-settings" onclick="WF3.switchActivityTab('settings')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    Settings
+                  </button>
                 </div>
                 <span id="wf-act-group-badge" class="acv-group-badge">No group</span>
               </div>
@@ -254,6 +258,13 @@ const WorkflowPage = {
               <div id="wf-act-tab-misc" class="acv-panel-body" style="display:none">
                 <div class="acv-misc-list" id="wf-act-dynamic-misc-list">
                   <div class="acv-empty-hint">Select a group to configure its Misc settings.</div>
+                </div>
+              </div>
+
+              <!-- Settings tab -->
+              <div id="wf-act-tab-settings" class="acv-panel-body" style="display:none">
+                <div id="wf-act-settings-content" style="padding:12px 16px;">
+                  <div class="acv-empty-hint">Select a group to view settings.</div>
                 </div>
               </div>
             </div>
@@ -820,12 +831,16 @@ const WF3 = {
     switchActivityTab(tab) {
         const tasks = document.getElementById('wf-act-tab-tasks');
         const misc = document.getElementById('wf-act-tab-misc');
+        const settings = document.getElementById('wf-act-tab-settings');
         const btnTasks = document.getElementById('acv-tab-btn-tasks');
         const btnMisc = document.getElementById('acv-tab-btn-misc');
+        const btnSettings = document.getElementById('acv-tab-btn-settings');
         if (tasks) tasks.style.display = (tab === 'tasks') ? '' : 'none';
         if (misc) misc.style.display = (tab === 'misc') ? '' : 'none';
+        if (settings) settings.style.display = (tab === 'settings') ? '' : 'none';
         if (btnTasks) btnTasks.classList.toggle('active', tab === 'tasks');
         if (btnMisc) btnMisc.classList.toggle('active', tab === 'misc');
+        if (btnSettings) btnSettings.classList.toggle('active', tab === 'settings');
     },
 
     // ── RIGHT PANEL TAB SWITCHING ──
@@ -1036,6 +1051,7 @@ const WF3 = {
         }
         this.renderActivitiesForGroup(this.activitySelectedGroupId);
         this.renderMiscForGroup(this.activitySelectedGroupId);
+        this.renderSettingsForGroup(this.activitySelectedGroupId);
 
         // Fetch status for this group in case it's running
         if (this.activitySelectedGroupId) {
@@ -2127,6 +2143,110 @@ const WF3 = {
                 </div>
             </div>
 `;
+    },
+
+    // ── Settings Tab: Config Sync ──
+    renderSettingsForGroup(groupId) {
+        const container = document.getElementById('wf-act-settings-content');
+        if (!container) return;
+
+        if (!groupId) {
+            container.innerHTML = '<div class="acv-empty-hint">Select a group to view settings.</div>';
+            return;
+        }
+
+        const currentGroup = (this.groupsData || []).find(g => g.id === groupId);
+        const otherGroups = (this.groupsData || []).filter(g => g.id !== groupId);
+
+        if (!otherGroups.length) {
+            container.innerHTML = '<div class="acv-empty-hint">No other groups available to sync to.</div>';
+            return;
+        }
+
+        container.innerHTML = `
+            <div style="margin-bottom: 12px;">
+                <div style="font-weight: 700; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    Sync Config
+                </div>
+                <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.4;">
+                    Copy <strong>${currentGroup ? currentGroup.name : 'this group'}</strong>'s activity config (activities + misc) to selected target groups.
+                </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border);">
+                <label style="font-size: 11px; font-weight: 600; color: var(--muted-foreground); cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                    <input type="checkbox" id="sync-select-all" onchange="WF3._toggleSyncAll(this.checked)"> Select All
+                </label>
+            </div>
+
+            <div id="sync-target-list" style="display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto;">
+                ${otherGroups.map(g => `
+                    <label style="display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-md); cursor: pointer; font-size: 12px; transition: background 0.15s;"
+                        onmouseover="this.style.background='var(--accent)'" onmouseout="this.style.background='transparent'">
+                        <input type="checkbox" class="sync-target-cb" value="${g.id}">
+                        <span style="flex:1;">${g.name}</span>
+                        <span style="font-size: 10px; color: var(--muted-foreground); font-family: var(--font-mono);">#${g.id}</span>
+                    </label>
+                `).join('')}
+            </div>
+
+            <button onclick="WF3.syncConfigToGroups(${groupId})" style="
+                margin-top: 12px; display: inline-flex; align-items: center; gap: 6px;
+                padding: 7px 16px; font-size: 12px; font-weight: 700;
+                background: var(--indigo-500); color: white; border: none;
+                border-radius: var(--radius-md); cursor: pointer;
+                transition: all 0.15s; box-shadow: 0 1px 4px rgba(99,102,241,0.3);
+            " onmouseover="this.style.background='var(--indigo-600)'" onmouseout="this.style.background='var(--indigo-500)'">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                Sync Config
+            </button>
+        `;
+    },
+
+    _toggleSyncAll(checked) {
+        document.querySelectorAll('.sync-target-cb').forEach(cb => cb.checked = checked);
+    },
+
+    async syncConfigToGroups(sourceGroupId) {
+        const checkboxes = document.querySelectorAll('.sync-target-cb:checked');
+        const targetIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+        if (!targetIds.length) {
+            WfToast.show('w', 'Sync', 'No target groups selected.');
+            return;
+        }
+
+        const targetNames = targetIds.map(id => {
+            const g = (this.groupsData || []).find(g => g.id === id);
+            return g ? g.name : `#${id}`;
+        }).join(', ');
+
+        if (!confirm(`⚠️ This will OVERWRITE the config for:\n\n${targetNames}\n\nAre you sure?`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/workflow/activity-config/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source_group_id: sourceGroupId, target_group_ids: targetIds })
+            });
+            const data = await res.json();
+
+            if (data.status === 'ok') {
+                const count = data.synced?.length || 0;
+                WfToast.show('s', 'Synced', `Config copied to ${count} group(s).`);
+                // Uncheck all after success
+                document.querySelectorAll('.sync-target-cb').forEach(cb => cb.checked = false);
+                const selectAll = document.getElementById('sync-select-all');
+                if (selectAll) selectAll.checked = false;
+            } else {
+                WfToast.show('e', 'Sync Failed', data.error || 'Unknown error');
+            }
+        } catch (err) {
+            WfToast.show('e', 'Sync Error', err.message);
+        }
     },
 
     // Update status badge for a specific activity

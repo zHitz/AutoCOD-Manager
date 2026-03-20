@@ -721,6 +721,9 @@ class BotOrchestrator:
                 cooldown_min = self.misc_config.get("cooldown_min", 0)
                 last_run = self.last_run_times.get(acc_id, 0)
                 cooldown_sec = cooldown_min * 60
+                # DEBUG: Account Cooldown values
+                _elapsed = round((time.time() - last_run) / 60, 1) if last_run > 0 else -1
+                print(f"[DEBUG-CD] Account {acc_id}: cooldown_min={cooldown_min}, last_run={last_run:.0f}, elapsed={_elapsed}m, skip_cooldown={self.skip_cooldown}")
                 
                 if (
                     not self.skip_cooldown
@@ -1283,10 +1286,12 @@ class BotOrchestrator:
                 self.current_activity = None
 
                 # Update last run time for cooldown tracking
-                # Only update account-level CD if at least one heavy activity ran.
-                # Light-only runs should NOT trigger account cooldown.
-                if ran_heavy or ran_heavy_attempted:
+                # - SUCCESS path: only update if heavy activity ran (light-only = no account CD)
+                # - ERROR path: ALWAYS update (prevent rapid re-run after failure)
+                print(f"[DEBUG-CD] Account {acc_id} POST-LOOP: ran_heavy={ran_heavy}, ran_heavy_attempted={ran_heavy_attempted}, account_success={account_success}")
+                if ran_heavy or ran_heavy_attempted or (not account_success):
                     self.last_run_times[acc_id] = time.time()
+                    print(f"[DEBUG-CD] Account {acc_id}: last_run_times UPDATED to {time.time():.0f}")
 
                 if account_success and not self.stop_requested:
                     self.account_statuses[acc_id] = "done"

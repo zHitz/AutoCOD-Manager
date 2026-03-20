@@ -213,3 +213,63 @@
         opacity: 0.4;
     }
 }
+
+/* ── History Page Animations ── */
+
+@keyframes skeletonShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+@keyframes historyRowIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes expandPanelIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* Row stagger delays */
+.history-data-row:nth-child(1) { animation-delay: 0ms; }
+.history-data-row:nth-child(2) { animation-delay: 30ms; }
+.history-data-row:nth-child(3) { animation-delay: 60ms; }
+.history-data-row:nth-child(4) { animation-delay: 90ms; }
+.history-data-row:nth-child(5) { animation-delay: 120ms; }
+.history-data-row:nth-child(6) { animation-delay: 150ms; }
+.history-data-row:nth-child(7) { animation-delay: 180ms; }
+.history-data-row:nth-child(8) { animation-delay: 210ms; }
+.history-data-row:nth-child(9) { animation-delay: 240ms; }
+.history-data-row:nth-child(10) { animation-delay: 270ms; }
+
+/* Skeleton stagger */
+.history-table tbody tr:nth-child(1) .skeleton-cell { animation-delay: 0ms; }
+.history-table tbody tr:nth-child(2) .skeleton-cell { animation-delay: 100ms; }
+.history-table tbody tr:nth-child(3) .skeleton-cell { animation-delay: 200ms; }
+.history-table tbody tr:nth-child(4) .skeleton-cell { animation-delay: 300ms; }
+.history-table tbody tr:nth-child(5) .skeleton-cell { animation-delay: 400ms; }
+.history-table tbody tr:nth-child(6) .skeleton-cell { animation-delay: 500ms; }
+
+/* Accessibility: respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .history-data-row,
+    .history-expand-row.open,
+    .skeleton-cell,
+    .debug-card,
+    .lightbox,
+    .lightbox__image {
+        animation: none !important;
+        transition: none !important;
+    }
+}

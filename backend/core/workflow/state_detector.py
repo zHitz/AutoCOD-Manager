@@ -119,6 +119,7 @@ class GameStateDetector:
             # Policy button detection
             "policy/enact_btn.png": "POLICY_ENACT_BTN",
             "policy/go_btn.png": "POLICY_GO_BTN",
+            "policy/go_btn_uppercase.png": "POLICY_GO_BTN",
             "policy/select_btn.png": "POLICY_SELECT_BTN",
             "policy/target_default.png": "POLICY_TARGET_DEFAULT",
             "policy/replenish_resources.png": "POLICY_REPLENISH",
@@ -188,6 +189,11 @@ class GameStateDetector:
             # Pet capture — bottom button area only
             "pets/Auto-capture_in_progress.png": (305, 411, 761, 509),
             "pets/Auto-capture_start_icon.png": (305, 411, 761, 509),
+            # Policy popup buttons — center popup area only
+            "policy/go_btn.png": (250, 200, 710, 480),
+            "policy/enact_btn.png": (250, 200, 710, 480),
+            "policy/select_btn.png": (250, 200, 710, 480),
+            "policy/replenish_resources.png": (250, 200, 710, 480),
         }
 
         self._load_templates()

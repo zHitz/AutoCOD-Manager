@@ -6,6 +6,11 @@ const HistoryPage = {
         loading: false,
         error: null,
         items: [],
+        activeTab: 'history',
+        debugLogs: [],
+        debugLoading: false,
+        debugFilter: 'all',
+        lightboxSrc: null,
         filters: {
             search: '',
             date: 'all',
@@ -83,12 +88,25 @@ const HistoryPage = {
                     </div>
                 </div>
 
-                <div class="card history-filter-bar" id="history-filter-bar"></div>
-                <div class="history-quick-filters" id="history-quick-filters"></div>
+                <div class="history-tabs" id="history-tabs">
+                    <button class="history-tab history-tab--active" id="tab-history" data-tab="history">&#128203; History</button>
+                    <button class="history-tab" id="tab-debug" data-tab="debug">&#128027; Debug</button>
+                </div>
 
-                <div class="card history-table-card" id="history-state-area"></div>
+                <div id="history-tab-content">
+                    <div id="history-panel">
+                        <div class="history-filter-bar" id="history-filter-bar"></div>
+                        <div class="history-quick-filters" id="history-quick-filters"></div>
+                        <div class="card history-table-card" id="history-state-area"></div>
+                    </div>
+                    <div id="debug-panel" style="display:none;"></div>
+                </div>
 
-                <div class="history-footer" id="history-footer" style="padding: 16px 0; text-align: center; color: var(--muted-foreground); font-size: 13px;">Showing 0 results</div>
+                <div class="history-footer" id="history-footer">Showing 0 results</div>
+            </div>
+
+            <div class="lightbox" id="debug-lightbox" onclick="HistoryPage.closeLightbox()">
+                <img class="lightbox__image" id="debug-lightbox-img" />
             </div>
         `;
     },
@@ -108,6 +126,221 @@ const HistoryPage = {
                 this.renderContent();
             });
         }
+
+        document.querySelectorAll('#history-tabs [data-tab]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.switchTab(btn.dataset.tab);
+            });
+        });
+    },
+
+    switchTab(tab) {
+        this.state.activeTab = tab;
+        const historyPanel = document.getElementById('history-panel');
+        const debugPanel = document.getElementById('debug-panel');
+        const tabHistory = document.getElementById('tab-history');
+        const tabDebug = document.getElementById('tab-debug');
+
+        if (tab === 'history') {
+            if (historyPanel) historyPanel.style.display = '';
+            if (debugPanel) debugPanel.style.display = 'none';
+            if (tabHistory) { tabHistory.classList.add('history-tab--active'); }
+            if (tabDebug) { tabDebug.classList.remove('history-tab--active'); }
+            this.renderContent();
+        } else {
+            if (historyPanel) historyPanel.style.display = 'none';
+            if (debugPanel) debugPanel.style.display = '';
+            if (tabDebug) { tabDebug.classList.add('history-tab--active'); }
+            if (tabHistory) { tabHistory.classList.remove('history-tab--active'); }
+            this.loadDebugLogs();
+        }
+    },
+
+    async loadDebugLogs() {
+        const panel = document.getElementById('debug-panel');
+        if (!panel) return;
+
+        this.state.debugLoading = true;
+        panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading debug logs...</div>';
+
+        try {
+            const serial = this.state.debugFilter === 'all' ? null : this.state.debugFilter;
+            this.state.debugLogs = await API.getDebugLogs(serial, 100);
+        } catch (e) {
+            this.state.debugLogs = [];
+            console.warn('[Debug] Failed to load logs:', e);
+        } finally {
+            this.state.debugLoading = false;
+            this.renderDebugPanel();
+        }
+    },
+
+    renderDebugPanel() {
+        const panel = document.getElementById('debug-panel');
+        const footer = document.getElementById('history-footer');
+        if (!panel) return;
+
+        const devices = ['all', ...new Set(this.state.debugLogs.map(l => l.serial).filter(Boolean))];
+        const filterHtml = `
+            <div class="debug-filter-row">
+                <label>Device:</label>
+                <select id="debug-device-filter" class="form-select" style="max-width:220px;">
+                    ${devices.map(d => `<option value="${d}" ${d === this.state.debugFilter ? 'selected' : ''}>${d === 'all' ? 'All devices' : d}</option>`).join('')}
+                </select>
+                <div style="margin-left:auto;display:flex;gap:8px;">
+                    <button class="btn btn-outline btn-sm" id="debug-btn-refresh" onclick="HistoryPage.loadDebugLogs()">
+                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        Refresh
+                    </button>
+                    <button class="btn btn-outline btn-sm" id="debug-btn-export" onclick="HistoryPage.exportDebugLogs()">
+                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Export
+                    </button>
+                    <button class="btn btn-outline btn-sm" id="debug-btn-clear" onclick="HistoryPage.clearDebugLogs()" style="color:var(--red-500);border-color:var(--red-300);">
+                        <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Clear
+                    </button>
+                </div>
+            </div>
+        `;
+
+        if (!this.state.debugLogs.length) {
+            panel.innerHTML = filterHtml + `
+                <div class="card debug-empty">
+                    <div class="debug-empty__icon">🐛</div>
+                    <h3 class="debug-empty__title">No debug logs yet</h3>
+                    <p class="debug-empty__desc">Error screenshots will appear here when workflow functions fail.</p>
+                </div>
+            `;
+            if (footer) footer.textContent = '0 debug entries';
+            this._bindDebugFilter();
+            return;
+        }
+
+        const cardsHtml = this.state.debugLogs.map(log => this._renderDebugCard(log)).join('');
+        panel.innerHTML = filterHtml + `
+            <div class="debug-grid">
+                ${cardsHtml}
+            </div>
+        `;
+        if (footer) footer.textContent = `${this.state.debugLogs.length} debug entries`;
+        this._bindDebugFilter();
+    },
+
+    _getErrorCodeClass(code) {
+        if (code.startsWith('NAV_')) return 'debug-card__code--nav';
+        if (code.startsWith('TEMPLATE_')) return 'debug-card__code--template';
+        if (code.startsWith('ADB_')) return 'debug-card__code--adb';
+        if (code.startsWith('TIMEOUT_')) return 'debug-card__code--timeout';
+        if (code.startsWith('CONFIG_')) return 'debug-card__code--config';
+        return 'debug-card__code--unknown';
+    },
+
+    _renderDebugCard(log) {
+        const time = log.created_at ? new Date(log.created_at).toLocaleString() : '--';
+        const code = log.error_code || 'UNKNOWN';
+        const message = log.error_message || '';
+        const fn = log.function_name || '--';
+        const serial = log.serial || '--';
+        const screenshotPath = log.screenshot_path || '';
+
+        let imgUrl = '';
+        if (screenshotPath) {
+            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
+            if (parts.length > 1) {
+                imgUrl = `/debug_captures/${parts[1]}`;
+            }
+        }
+
+        const codeClass = this._getErrorCodeClass(code);
+
+        return `
+            <div class="debug-card">
+                ${imgUrl ? `
+                    <div class="debug-card__image" onclick="HistoryPage.openLightbox('${imgUrl}')">
+                        <img src="${imgUrl}" onerror="this.parentElement.style.display='none'" />
+                    </div>
+                ` : `
+                    <div class="debug-card__no-image">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                        No screenshot
+                    </div>
+                `}
+                <div class="debug-card__body">
+                    <div class="debug-card__header">
+                        <span class="debug-card__code ${codeClass}">${code}</span>
+                        <span class="debug-card__time">${time}</span>
+                    </div>
+                    <div class="debug-card__message">${message || 'No message'}</div>
+                    <div class="debug-card__meta">
+                        <span>📱 ${serial}</span>
+                        <span>⚙️ ${fn}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    openLightbox(src) {
+        const lb = document.getElementById('debug-lightbox');
+        const img = document.getElementById('debug-lightbox-img');
+        if (lb && img) {
+            img.src = src;
+            lb.classList.add('lightbox--open');
+        }
+    },
+
+    closeLightbox() {
+        const lb = document.getElementById('debug-lightbox');
+        if (lb) lb.classList.remove('lightbox--open');
+    },
+
+    _bindDebugFilter() {
+        const sel = document.getElementById('debug-device-filter');
+        if (sel) {
+            sel.onchange = (e) => {
+                this.state.debugFilter = e.target.value;
+                this.loadDebugLogs();
+            };
+        }
+    },
+
+    async clearDebugLogs() {
+        const count = this.state.debugLogs.length;
+        if (!count) return;
+        const serial = this.state.debugFilter === 'all' ? null : this.state.debugFilter;
+        const target = serial || 'all devices';
+        if (!confirm(`Clear ${count} debug log(s) for ${target}? This also deletes screenshot files.`)) return;
+
+        try {
+            const res = await API.clearDebugLogs(serial);
+            if (typeof Toast !== 'undefined') Toast.success('Cleared', `${res.deleted} debug log(s) deleted`);
+        } catch (e) {
+            console.warn('[Debug] Clear failed:', e);
+            if (typeof Toast !== 'undefined') Toast.error('Error', 'Failed to clear debug logs');
+        }
+        await this.loadDebugLogs();
+    },
+
+    exportDebugLogs() {
+        if (!this.state.debugLogs.length) return;
+        const headers = ['time', 'serial', 'error_code', 'error_message', 'function_name', 'activity_id'];
+        const rows = this.state.debugLogs.map(log => [
+            log.created_at || '',
+            log.serial || '',
+            log.error_code || '',
+            (log.error_message || '').replace(/"/g, '""'),
+            log.function_name || '',
+            log.activity_id || '',
+        ]);
+        const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `debug_logs_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
     },
 
     async load() {
@@ -272,9 +505,8 @@ const HistoryPage = {
         }
 
         const filtered = this.getFilteredItems();
-        footer.textContent = `Showing ${filtered.length} result${filtered.length === 1 ? '' : 's'}${this.state.useMockData ? ' • mock data' : ''}`;
+        footer.textContent = `Showing ${filtered.length} result${filtered.length === 1 ? '' : 's'}${this.state.useMockData ? ' · mock data' : ''}`;
 
-        // Always render quick filters so user can reset them if they lead to 0 results
         quickFilters.innerHTML = this.renderQuickFilters();
 
         if (!filtered.length) {
@@ -291,15 +523,9 @@ const HistoryPage = {
         const devices = ['all', ...new Set(this.state.items.map((item) => item.serial).filter(Boolean))];
         const tasks = ['all', ...new Set(this.state.items.map((item) => item.task_type).filter(Boolean))];
 
-        container.style.padding = '16px';
-        container.style.marginBottom = '16px';
-        container.style.display = 'flex';
-        container.style.flexDirection = 'column';
-        container.style.gap = '12px';
-
         container.innerHTML = `
             <div class="grid-4" style="margin-bottom: 0;">
-                ${this.renderSelect('Date Range', 'history-filter-date', this.state.filters.date, [
+                ${this.renderSelect('Date range', 'history-filter-date', this.state.filters.date, [
             { value: 'all', label: 'All time' },
             { value: 'today', label: 'Today' },
         ])}
@@ -310,7 +536,7 @@ const HistoryPage = {
             { value: 'FAILED', label: 'Failed' },
             { value: 'RUNNING', label: 'Running' },
         ])}
-                ${this.renderSelect('Task Type', 'history-filter-task', this.state.filters.task, tasks.map((value) => ({ value, label: value === 'all' ? 'All tasks' : value })))}
+                ${this.renderSelect('Task type', 'history-filter-task', this.state.filters.task, tasks.map((value) => ({ value, label: value === 'all' ? 'All tasks' : value })))}
             </div>
         `;
     },
@@ -330,21 +556,27 @@ const HistoryPage = {
         const quicks = [
             { value: 'today', label: 'Today' },
             { value: 'failed', label: 'Failed' },
-            { value: 'long', label: 'Long Runs' },
-            { value: 'manual', label: 'Manual Tasks' },
+            { value: 'long', label: 'Long runs' },
+            { value: 'manual', label: 'Manual tasks' },
         ];
 
-        return `
-            <div style="display: flex; gap: 8px; margin-bottom: 24px;">
-                ${quicks.map((chip) => `
-                    <button class="badge badge-outline ${this.state.filters.quick === chip.value ? 'active bg-primary text-white' : ''}" data-quick="${chip.value}" style="cursor: pointer;">${chip.label}</button>
-                `).join('')}
-                <button class="badge badge-outline ${this.state.filters.quick === 'all' ? 'active bg-primary text-white' : ''}" data-quick="all" style="cursor: pointer;">Reset</button>
-            </div>
+        return quicks.map((chip) => `
+            <button class="history-quick-chip ${this.state.filters.quick === chip.value ? 'history-quick-chip--active' : ''}" data-quick="${chip.value}">${chip.label}</button>
+        `).join('') + `
+            <button class="history-quick-chip ${this.state.filters.quick === 'all' ? 'history-quick-chip--active' : ''}" data-quick="all">Reset</button>
         `;
     },
 
     renderSkeletonRows() {
+        const cols = [
+            'skeleton-cell--medium',
+            'skeleton-cell--short',
+            'skeleton-cell--badge',
+            'skeleton-cell--medium',
+            'skeleton-cell--short',
+            'skeleton-cell--short',
+            'skeleton-cell--short',
+        ];
         return `
             <table class="history-table">
                 <thead>
@@ -355,7 +587,7 @@ const HistoryPage = {
                 <tbody>
                     ${Array.from({ length: 6 }).map(() => `
                         <tr>
-                            <td colspan="7"><div class="skeleton-row"></div></td>
+                            ${cols.map(cls => `<td><div class="skeleton-cell ${cls}"></div></td>`).join('')}
                         </tr>
                     `).join('')}
                 </tbody>
@@ -378,8 +610,8 @@ const HistoryPage = {
                 <h3 style="font-size: 16px; font-weight: 600; color: var(--foreground); margin-top: 8px;">No history yet</h3>
                 <p style="font-size: 14px; margin-top: 4px; max-width: 320px;">Run your first scan to see execution logs and details here.</p>
                 <div style="display: flex; gap: 12px; margin-top: 24px;">
-                    <button class="btn btn-primary btn-sm" onclick="App.router.navigate('scan-operations')">Run Scan</button>
-                    <button class="btn btn-outline btn-sm" onclick="window.open('https://github.com/mlem16/COD_CHECK', '_blank')">Learn More</button>
+                    <button class="btn btn-primary btn-sm" onclick="App.router.navigate('scan-operations')">Run scan</button>
+                    <button class="btn btn-outline btn-sm" onclick="window.open('https://github.com/mlem16/COD_CHECK', '_blank')">Learn more</button>
                 </div>
             </div>
         `;
@@ -398,7 +630,7 @@ const HistoryPage = {
                 <h3 style="font-size: 16px; font-weight: 600; color: var(--red-600); margin-top: 8px;">Failed to load history</h3>
                 <p style="font-size: 14px; color: var(--red-500); margin-top: 4px;">Something went wrong while fetching logs from the database.</p>
                 <div style="margin-top: 24px;">
-                    <button class="btn btn-primary btn-sm" onclick="HistoryPage.load()" style="background: var(--red-600); border-color: var(--red-600);">Retry Loading</button>
+                    <button class="btn btn-primary btn-sm" onclick="HistoryPage.load()" style="background: var(--red-600); border-color: var(--red-600);">Retry loading</button>
                 </div>
             </div>
         `;
@@ -453,14 +685,14 @@ const HistoryPage = {
             <tr class="history-expand-row ${isExpanded ? 'open' : ''}">
                 <td colspan="7">
                     <div class="expand-panel">
-                        <div class="expand-title">Script Output & Execution Details</div>
+                        <div class="expand-title">Script output & execution details</div>
                         <div class="expand-grid">
                             <div>
-                                <strong>📋 Output Data</strong>
+                                <strong>📋 Output data</strong>
                                 <pre>${item.data ? this.safeJson(item.data) : 'No data output'}</pre>
                             </div>
                             <div>
-                                <strong>📊 Status Info</strong>
+                                <strong>📊 Status info</strong>
                                 <pre>${this.safeJson({
             task_type: item.task_type,
             status: status,
@@ -518,7 +750,6 @@ const HistoryPage = {
     },
 
     bindInlineEvents() {
-        // ... (existing filter bindings)
         const filterDate = document.getElementById('history-filter-date');
         const filterDevice = document.getElementById('history-filter-device');
         const filterStatus = document.getElementById('history-filter-status');

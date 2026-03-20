@@ -245,7 +245,10 @@ class PolicyV3Engine:
         return None
 
     def _close_popup(self):
-        adb_helper.tap(self.serial, CLOSE_POPUP_POS[0], CLOSE_POPUP_POS[1])
+        """Close popup by tapping safe bottom-left corner (10, 530).
+        Avoids (515, 10) which hits Governance columns spanning full Y axis.
+        Cannot use press_back — it exits the entire policy screen."""
+        adb_helper.tap(self.serial, 10, 530)
         time.sleep(1)
 
     def _tap_policy_icon_with_retry(self):
@@ -421,7 +424,16 @@ class PolicyV3Engine:
         return [("target", y)]
 
     def _handle_governance(self, col_idx):
-        """Select governance card: tap card to highlight → tap SELECT to confirm."""
+        """Select governance card: tap card to highlight → verify → tap SELECT.
+
+        Handles edge case where card shows GO (prerequisites not met)
+        instead of SELECT button.
+
+        Returns:
+            True   — governance card successfully selected
+            "GO"   — card has GO button (prerequisites needed)
+            False  — governance skipped or failed
+        """
         col = COLUMNS[col_idx]
         gov = col.get("governance", {})
 
@@ -445,13 +457,34 @@ class PolicyV3Engine:
         adb_helper.tap(self.serial, card_pos[0], card_pos[1])
         time.sleep(1.5)
 
-        # Step 2: Tap SELECT button to confirm
+        # Step 2: Check GO / ENACT directly via check_activity
+        # (NOT detect_policy_popup — governance header is still visible
+        # and would always return SELECT, masking the GO button)
+        go_match = self.detector.check_activity(
+            self.serial, target="POLICY_GO_BTN", threshold=0.92)
+        if go_match:
+            _log(f"  Card {card_idx} has GO — prerequisites not met!")
+            return "GO"
+
+        enact_match = self.detector.check_activity(
+            self.serial, target="POLICY_ENACT_BTN", threshold=0.85)
+        if enact_match:
+            _log(f"  Card {card_idx} has ENACT — enacting directly")
+            success = _tap_policy_enact(self.serial, self.detector)
+            if success and self._post_enact_check():
+                return True
+            self._close_popup()
+            return False
+
+        _log(f"  No GO or ENACT after card tap — proceeding with SELECT")
+
+        # Step 3: Tap SELECT button to confirm governance choice
         SELECT_BTN = (480, 415)
         _log(f"  Tapping SELECT button at {SELECT_BTN}")
         adb_helper.tap(self.serial, SELECT_BTN[0], SELECT_BTN[1])
         time.sleep(3)
 
-        # Debug: capture after SELECT (popup should have closed)
+        # Debug: capture after SELECT
         if self.debug_dir:
             dbg = self._screencap()
             if dbg is not None:
@@ -715,10 +748,18 @@ class PolicyV3Engine:
 
             if popup == "SELECT":
                 handled = self._handle_governance(col_idx)
-                if handled:
+                if handled is True:
                     save_progress(col_idx, self.account_id)
                     _log(f"Col {col_idx}: governance done → saved progress")
                     return "GOVERNANCE_DONE"
+                elif handled == "GO":
+                    _log("  Governance card has GO → following prerequisite chain...")
+                    go_result = self._follow_go_chain()
+                    if go_result == "ENACT_SUCCESS":
+                        _log("  Prerequisite enacted! (retry same col next run)")
+                        return "ENACT_SUCCESS"
+                    self._close_popup()
+                    return "ALL_LOCKED"
                 else:
                     return "ALL_LOCKED"
 
@@ -805,9 +846,17 @@ class PolicyV3Engine:
 
             elif popup == "SELECT":
                 handled = self._handle_governance(col_idx)
-                if handled:
+                if handled is True:
                     save_progress(col_idx, self.account_id)
                     return "GOVERNANCE_DONE"
+                elif handled == "GO":
+                    _log("  Governance card has GO → following prerequisite chain...")
+                    go_result = self._follow_go_chain()
+                    if go_result == "ENACT_SUCCESS":
+                        _log("  Prerequisite enacted! (retry same col next run)")
+                        return "ENACT_SUCCESS"
+                    self._close_popup()
+                    return "ALL_LOCKED"
                 # Try next position
                 self._close_popup()
                 continue

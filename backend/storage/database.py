@@ -266,6 +266,19 @@ CREATE TABLE IF NOT EXISTS task_template_items (
     required_runs INTEGER DEFAULT 1,
     FOREIGN KEY (template_id) REFERENCES task_templates(id) ON DELETE CASCADE
 );
+
+-- Debug error logs with screenshots
+CREATE TABLE IF NOT EXISTS debug_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    serial          TEXT NOT NULL,
+    error_code      TEXT NOT NULL,
+    error_message   TEXT DEFAULT '',
+    function_name   TEXT DEFAULT '',
+    activity_id     TEXT DEFAULT '',
+    screenshot_path TEXT DEFAULT '',
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_debug_serial_time ON debug_logs(serial, created_at DESC);
 """
 
 
@@ -2098,6 +2111,123 @@ class Database:
             )
             await db.commit()
             return cursor.rowcount > 0
+
+    # ──────────────────────────────────────────
+    # Debug Logs
+    # ──────────────────────────────────────────
+
+    async def save_debug_log(
+        self,
+        serial: str,
+        error_code: str,
+        error_message: str = "",
+        function_name: str = "",
+        activity_id: str = "",
+        screenshot_path: str = "",
+    ) -> int:
+        """Save a debug log entry. Auto-prunes old entries per serial."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """INSERT INTO debug_logs
+                   (serial, error_code, error_message, function_name,
+                    activity_id, screenshot_path)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (serial, error_code, error_message, function_name,
+                 activity_id, screenshot_path),
+            )
+            await db.commit()
+            log_id = cursor.lastrowid
+
+        # Auto-prune (keep latest 50 per serial)
+        await self.prune_debug_logs(serial, keep=50)
+        return log_id
+
+    async def get_debug_logs(
+        self, serial: str = None, limit: int = 100
+    ) -> list[dict]:
+        """Get debug log entries, optionally filtered by serial."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            if serial:
+                cursor = await db.execute(
+                    """SELECT * FROM debug_logs
+                       WHERE serial = ?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (serial, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """SELECT * FROM debug_logs
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (limit,),
+                )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def prune_debug_logs(self, serial: str, keep: int = 50):
+        """Keep only the latest N debug logs per serial. Deletes old screenshot files."""
+        async with self._get_conn() as db:
+            # Find IDs to delete
+            cursor = await db.execute(
+                """SELECT id, screenshot_path FROM debug_logs
+                   WHERE serial = ?
+                   ORDER BY created_at DESC
+                   LIMIT -1 OFFSET ?""",
+                (serial, keep),
+            )
+            old_rows = await cursor.fetchall()
+
+            if not old_rows:
+                return
+
+            ids_to_delete = [row[0] for row in old_rows]
+            paths_to_delete = [row[1] for row in old_rows if row[1]]
+
+            # Delete DB records
+            placeholders = ",".join("?" * len(ids_to_delete))
+            await db.execute(
+                f"DELETE FROM debug_logs WHERE id IN ({placeholders})",
+                ids_to_delete,
+            )
+            await db.commit()
+
+            # Delete screenshot files
+            for path in paths_to_delete:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+
+    async def clear_debug_logs(self, serial: str = None) -> int:
+        """Delete all debug logs (and their screenshot files), optionally for a specific serial."""
+        async with self._get_conn() as db:
+            if serial:
+                cursor = await db.execute(
+                    "SELECT screenshot_path FROM debug_logs WHERE serial = ? AND screenshot_path != ''",
+                    (serial,),
+                )
+            else:
+                cursor = await db.execute(
+                    "SELECT screenshot_path FROM debug_logs WHERE screenshot_path != ''"
+                )
+            paths = [row[0] for row in await cursor.fetchall()]
+
+            if serial:
+                result = await db.execute("DELETE FROM debug_logs WHERE serial = ?", (serial,))
+            else:
+                result = await db.execute("DELETE FROM debug_logs")
+            await db.commit()
+            deleted = result.rowcount
+
+        # Clean up files
+        for path in paths:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+
+        return deleted
 
 
 # Global singleton

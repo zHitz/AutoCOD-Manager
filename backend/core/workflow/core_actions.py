@@ -27,6 +27,9 @@ from workflow.trash_detector import detect_with_voting as _trash_detect_with_vot
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
 
+import threading
+from datetime import datetime
+
 _KNOWN_LOG_LEVELS = {
     "ERROR",
     "WARNING",
@@ -74,6 +77,52 @@ def _exit_with_log(serial: str, level: str, message: str):
     raise SystemExit(_format_output_message(f"[{serial}] [{level}] {message}"))
 
 
+# ── Debug Context ───────────────────────────────────────────
+# Detectors stored in module-level dict (shared across all threads).
+# _debug_last_serial is a module-level fallback for asyncio.to_thread()
+# worker threads where threading.local won't have the serial.
+
+_debug_detectors = {}          # {serial: detector}
+_debug_last_serial = ""        # fallback for worker threads
+
+def _set_debug_context(serial: str, detector):
+    """Called by executor at the start of each workflow execution."""
+    global _debug_last_serial
+    _debug_detectors[serial] = detector
+    _debug_last_serial = serial
+
+
+def _activate_debug_serial(serial: str):
+    """Explicitly set serial for current thread (optional, for concurrency)."""
+    global _debug_last_serial
+    _debug_last_serial = serial
+
+
+def _capture_debug_screenshot(error_code: str) -> str:
+    """Capture screenshot at moment of failure. Returns saved file path or empty string."""
+    serial = _debug_last_serial
+    detector = _debug_detectors.get(serial) if serial else None
+    if not serial or not detector or not config.debug_screenshots:
+        return ""
+
+    try:
+        frame = detector.screencap_memory(serial)
+        if frame is None:
+            return ""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        code_tag = error_code.split(":")[0].strip().replace(" ", "_")
+        filename = f"{ts}_{code_tag}.jpg"
+
+        from pathlib import Path
+        save_dir = str(Path(config.db_path).parent / "debug_captures" / serial)
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, filename)
+        cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return path
+    except Exception:
+        return ""
+
+
 # ── Result Helpers ──────────────────────────────────────────
 # Use these for standardized return values across all core_actions.
 # See DOCS/WORKFLOWS/error_code_architecture.md for error code reference.
@@ -85,12 +134,13 @@ def _ok(**extra) -> dict:
 
 def _fail(error: str, **extra) -> dict:
     """Return failure result with error code + message.
-    
-    Usage:
-        return _fail("NAV_LOBBY_UNREACHABLE: Could not reach lobby")
-        return _fail("RESOURCE_QUEUE_BUSY: Queue full", dynamic_cooldown_sec=600)
+    Auto-captures debug screenshot when config.debug_screenshots is True.
     """
-    return {"ok": False, "error": error, **extra}
+    screenshot_path = _capture_debug_screenshot(error)
+    result = {"ok": False, "error": error, **extra}
+    if screenshot_path:
+        result["debug_screenshot"] = screenshot_path
+    return result
 
 
 def _is_ok(result) -> bool:
@@ -1544,6 +1594,9 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
     for tab in tabs_to_check:
         print(f"[{serial}] Checking '{tab.capitalize()}' mail...")
         tab_x, tab_y = tabs[tab]
+        # Tap tab twice: first tap dismisses any reward popup, second selects tab
+        adb_helper.tap(serial, tab_x, tab_y)
+        time.sleep(1)
         adb_helper.tap(serial, tab_x, tab_y)
         time.sleep(2)
         print(f"[{serial}] Tapping Claim ({claim_button[0]}, {claim_button[1]})...")
@@ -3070,17 +3123,19 @@ def dismiss_promo_popup(serial: str, detector: GameStateDetector) -> dict:
 
     # Crop ROI from frame
     roi_frame = frame[ROI_Y1:ROI_Y2, ROI_X1:ROI_X2]
+    if roi_frame.size == 0:
+        return _fail("ADB_NO_FRAME: ROI crop is empty")
 
-    # Load template
+    # Load template (COLOR to match frame's BGR format)
     template_path = os.path.join(detector.templates_dir, "special", "popup_X_btn.png")
     if not os.path.exists(template_path):
         return _fail("TEMPLATE_NO_MATCH: popup_X_btn.png not found")
 
-    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+    template = cv2.imread(template_path, cv2.IMREAD_COLOR)
     if template is None:
         return _fail("TEMPLATE_NO_MATCH: Could not load popup_X_btn template")
 
-    # Template match within ROI
+    # Template match within ROI (both BGR)
     result = cv2.matchTemplate(roi_frame, template, cv2.TM_CCOEFF_NORMED)
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
@@ -3173,7 +3228,7 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
     """
     print(f"[{serial}] === UPGRADE CONSTRUCTION (max_depth={max_depth}) ===")
 
-    result = {"upgraded": 0, "paths_found": 0, "depth_reached": 0}
+    result = {"ok": True, "upgraded": 0, "paths_found": 0, "depth_reached": 0}
 
     # NOTE: max_power and max_hall_level are pre-validated by executor via DB check.
     # They are kept as params here for direct-call compatibility.
@@ -3184,7 +3239,7 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
 
     if remaining_slots <= 0:
         print(f"[{serial}] No free builder slots. Cannot upgrade.")
-        return result
+        return result  # ok=True — no slots is not an error, just nothing to do
 
     print(f"[{serial}] {remaining_slots} builder slot(s) available for upgrade.")
 
@@ -3250,8 +3305,16 @@ def _try_upgrade_or_go(
         dismiss_promo_popup(serial, detector)
 
         # Get alliance help after upgrade
-        print(f"[{serial}] Requesting alliance help...")
-        adb_helper.tap(serial, 475, 275)
+        # depth=0 means Hall itself was upgraded — camera didn't move,
+        # so tap Hall building coords instead of generic (475, 275)
+        if depth == 0:
+            from backend.core.workflow.construction_data import CONSTRUCTION_TAPS
+            hall_coords = CONSTRUCTION_TAPS["HALL"][0]  # (456, 111)
+            print(f"[{serial}] Requesting alliance help (Hall @ {hall_coords})...")
+            adb_helper.tap(serial, hall_coords[0], hall_coords[1])
+        else:
+            print(f"[{serial}] Requesting alliance help...")
+            adb_helper.tap(serial, 475, 275)
         time.sleep(1)
 
         # Reset camera position after upgrade

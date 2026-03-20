@@ -631,6 +631,32 @@ async def get_task_history(limit: int = 200):
 
 
 # ──────────────────────────────────────────────
+# Debug Log Endpoints
+# ──────────────────────────────────────────────
+
+
+@app.get("/api/debug/logs")
+async def get_debug_logs(serial: str = None, limit: int = 100):
+    """Get debug error logs with screenshot paths."""
+    return await database.get_debug_logs(serial=serial, limit=limit)
+
+
+@app.delete("/api/debug/logs")
+async def clear_debug_logs(serial: str = None):
+    """Clear debug logs and screenshots, optionally for a specific serial."""
+    deleted = await database.clear_debug_logs(serial=serial)
+    return {"deleted": deleted}
+
+
+# Mount debug_captures directory for serving screenshots
+import os as _os
+from pathlib import Path as _Path
+_debug_captures_dir = str(_Path(config.db_path).parent / "debug_captures")
+_os.makedirs(_debug_captures_dir, exist_ok=True)
+app.mount("/debug_captures", StaticFiles(directory=_debug_captures_dir), name="debug_captures")
+
+
+# ──────────────────────────────────────────────
 # Pending Account Endpoints
 # ──────────────────────────────────────────────
 
@@ -1432,6 +1458,57 @@ def _migrate_config_v1_to_v2(group_id: int, v1_config: dict) -> dict:
     return v2_config
 
 
+@app.post("/api/workflow/activity-config/sync")
+async def sync_activity_config(body: dict):
+    """Copy activity config from source group to one or more target groups."""
+    import json
+    from datetime import datetime
+
+    source_id = body.get("source_group_id")
+    target_ids = body.get("target_group_ids", [])
+
+    if not source_id:
+        return {"status": "error", "error": "Missing source_group_id"}
+    if not target_ids:
+        return {"status": "error", "error": "No target groups selected"}
+
+    source_file = _ACTIVITY_CONFIG_DIR / f"{source_id}.json"
+    if not source_file.exists():
+        return {"status": "error", "error": f"Source config not found for group {source_id}"}
+
+    try:
+        source_config = json.loads(source_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"status": "error", "error": f"Failed to read source config: {e}"}
+
+    _ACTIVITY_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    synced = []
+    errors = []
+
+    for tid in target_ids:
+        try:
+            tid = int(tid)
+            target_config = json.loads(json.dumps(source_config))  # deep copy
+            target_config["group_id"] = tid
+            target_config["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+            target_file = _ACTIVITY_CONFIG_DIR / f"{tid}.json"
+            target_file.write_text(
+                json.dumps(target_config, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            synced.append(tid)
+        except Exception as e:
+            errors.append({"group_id": tid, "error": str(e)})
+
+    return {
+        "status": "ok",
+        "synced": synced,
+        "errors": errors,
+        "source_group_id": source_id,
+    }
+
+
 @app.get("/api/workflow/activity-config/{group_id}")
 async def get_activity_config(group_id: int):
     """Load saved activity config for a group. Auto-migrates v1 to v2 schema."""
@@ -1519,6 +1596,7 @@ async def save_activity_config(group_id: int, body: dict):
         return {"status": "ok", "group_id": group_id}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
 
 
 # ──────────────────────────────────────────────
