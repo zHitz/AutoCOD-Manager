@@ -317,6 +317,23 @@ async def save_ocr_keys(payload: dict):
     return {"status": "ok"}
 
 
+@app.get("/api/config/ocr-key-status")
+async def get_ocr_key_status():
+    """Get OCR API key status with limit info (masked keys + reset dates)."""
+    from backend.core.ocr_client import load_api_keys, KeyGateway
+
+    keys = load_api_keys()
+    if not keys:
+        return {"keys": [], "available": 0, "total": 0}
+
+    gateway = KeyGateway(keys)
+    return {
+        "keys": gateway.get_status(),
+        "available": gateway.available_count(),
+        "total": len(keys),
+    }
+
+
 # ──────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────

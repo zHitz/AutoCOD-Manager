@@ -77,9 +77,10 @@ const AccountsPage = {
     },
 
     formatPower(valAbs) {
-        if (!valAbs || isNaN(valAbs)) return '0M';
+        if (!valAbs || isNaN(valAbs)) return '0';
         if (valAbs >= 1000000000) return (valAbs / 1000000000).toFixed(1) + 'B';
         if (valAbs >= 1000000) return (valAbs / 1000000).toFixed(1) + 'M';
+        if (valAbs >= 1000) return (valAbs / 1000).toFixed(1) + 'K';
         return valAbs.toLocaleString();
     },
 

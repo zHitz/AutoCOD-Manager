@@ -2,11 +2,14 @@
 OCR API Client — ocrapi.cloud integration with key rotation.
 
 Pipeline: upload PDF -> poll job status -> download markdown result -> parse.
+Includes persistent monthly limit tracking to avoid rotating to exhausted keys.
 """
 
 import re
 import time
-import itertools
+import json as json_mod
+from datetime import datetime, timezone
+from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -15,6 +18,64 @@ from backend.config import config
 BASE_URL = "https://ocrapi.cloud/api/v1"
 POLL_INTERVAL = 3
 MAX_POLL_ATTEMPTS = 60
+
+
+# ── Key Limit Persistence ──
+
+
+def _limits_path() -> Path:
+    """Sidecar JSON file next to api_keys.txt."""
+    return config.get_api_keys_path().with_suffix(".limits.json")
+
+
+def load_key_limits() -> dict[str, str]:
+    """Load key limits from JSON. Auto-cleans expired entries.
+
+    Returns: {api_key: reset_iso_date}  — only keys still exhausted.
+    """
+    path = _limits_path()
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw: dict = json_mod.load(f)
+    except (json_mod.JSONDecodeError, OSError):
+        return {}
+
+    now = datetime.now(timezone.utc)
+    active = {}
+    for key, reset_str in raw.items():
+        try:
+            reset_dt = datetime.fromisoformat(reset_str)
+            if reset_dt > now:
+                active[key] = reset_str
+        except (ValueError, TypeError):
+            pass
+
+    # Persist cleaned version if anything was removed
+    if len(active) != len(raw):
+        save_key_limits(active)
+
+    return active
+
+
+def save_key_limits(limits: dict[str, str]) -> None:
+    """Write key limits to JSON sidecar file."""
+    path = _limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json_mod.dump(limits, f, indent=2)
+
+
+def _next_month_reset() -> str:
+    """ISO date string for 1st of next month 00:00 UTC."""
+    now = datetime.now(timezone.utc)
+    if now.month == 12:
+        reset = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        reset = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    return reset.isoformat()
 
 
 # ── API Key Gateway ──
@@ -39,21 +100,84 @@ def load_api_keys() -> list[str]:
 
 
 class KeyGateway:
-    """Round-robin API key manager."""
+    """API key manager with persistent monthly limit tracking.
+
+    Skips keys that have been marked exhausted (429 rate-limited).
+    Exhausted state persists in a JSON sidecar file until 1st of next month.
+    """
 
     def __init__(self, keys: list[str]):
         self._keys = keys
-        self._cycle = itertools.cycle(keys) if keys else None
-        self._current = next(self._cycle) if self._cycle else ""
+        self._limits = load_key_limits()
+        self._current = ""
+
+        # Find first available key
+        for key in keys:
+            if key not in self._limits:
+                self._current = key
+                break
+
+        if not self._current and keys:
+            # All keys exhausted — use first key anyway (will fail with clear msg)
+            self._current = keys[0]
+            print(f"  [OCR] ⚠️ All {len(keys)} keys exhausted until month reset!")
+
+        available = self.available_count()
+        if keys:
+            print(f"  [OCR] Keys: {available}/{len(keys)} available")
 
     def current_key(self) -> str:
         return self._current
 
     def rotate(self) -> str:
-        if self._cycle:
-            self._current = next(self._cycle)
-            print(f"  [OCR] Rotated to key ...{self._current[-6:]}")
+        """Rotate to next available (non-exhausted) key."""
+        if not self._keys:
+            return self._current
+
+        start = self._current
+        tried = 0
+        idx = self._keys.index(self._current) if self._current in self._keys else -1
+
+        while tried < len(self._keys):
+            idx = (idx + 1) % len(self._keys)
+            candidate = self._keys[idx]
+            tried += 1
+
+            if candidate not in self._limits:
+                self._current = candidate
+                print(f"  [OCR] Rotated to key ...{self._current[-6:]}")
+                return self._current
+
+        # All exhausted — stay on current
+        print(f"  [OCR] ⚠️ No available keys — all exhausted until month reset")
         return self._current
+
+    def mark_exhausted(self) -> None:
+        """Mark current key as exhausted until 1st of next month."""
+        reset_date = _next_month_reset()
+        self._limits[self._current] = reset_date
+        save_key_limits(self._limits)
+        masked = f"...{self._current[-6:]}"
+        print(f"  [OCR] 🔒 Key {masked} marked exhausted → resets {reset_date}")
+
+    def available_count(self) -> int:
+        """Number of keys not currently exhausted."""
+        return sum(1 for k in self._keys if k not in self._limits)
+
+    def get_status(self) -> list[dict]:
+        """Return status of all keys (for API endpoint)."""
+        result = []
+        for key in self._keys:
+            masked = f"...{key[-6:]}"
+            if key in self._limits:
+                result.append({
+                    "key": masked,
+                    "status": "exhausted",
+                    "resets_at": self._limits[key],
+                })
+            else:
+                result.append({"key": masked, "status": "active", "resets_at": None})
+        return result
 
     def auth_headers(self) -> dict:
         return {
@@ -95,7 +219,7 @@ def submit_job(
         "webhook_events": "job.completed job.failed",
     }
 
-    for _ in range(10):
+    for attempt in range(10):
         with open(file_path, "rb") as fobj:
             resp = session.post(
                 url,
@@ -105,6 +229,10 @@ def submit_job(
                 timeout=60,
             )
         if resp.status_code == 429:
+            gateway.mark_exhausted()
+            if gateway.available_count() == 0:
+                print("  [OCR] All API keys exhausted — aborting")
+                return None
             gateway.rotate()
             time.sleep(1)
             continue
@@ -129,7 +257,9 @@ def poll_job(
         try:
             resp = session.get(url, headers=gateway.auth_headers(), timeout=30)
             if resp.status_code == 429:
-                gateway.rotate()
+                gateway.mark_exhausted()
+                if gateway.available_count() > 0:
+                    gateway.rotate()
                 time.sleep(1)
                 continue
             resp.raise_for_status()
@@ -296,6 +426,14 @@ def run_ocr(pdf_path: str) -> dict:
 
     gateway = KeyGateway(keys)
     session = build_session()
+
+    if gateway.available_count() == 0:
+        return {
+            "success": False,
+            "error": "All API keys exhausted until month reset",
+            "text": "",
+            "parsed": {},
+        }
 
     try:
         # Submit
