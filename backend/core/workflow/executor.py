@@ -637,6 +637,11 @@ async def execute_recipe(
                     max_hall_level=max_hall_level
                 )
 
+            elif fn_id == "nav_to_claim_quest_reward":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_quest_reward, serial, detector
+                )
+
             else:
                 await log(
                     f"  [Warning] Function '{fn_id}' is not implemented yet. Skipping.",

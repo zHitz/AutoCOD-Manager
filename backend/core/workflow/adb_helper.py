@@ -3,6 +3,7 @@ ADB Helper — Low-level ADB command wrapper.
 Extracted and enhanced from cod_app_sync.py.
 """
 
+import random
 import subprocess
 import time
 from backend.config import config
@@ -55,8 +56,10 @@ def ping_device(serial: str) -> bool:
 
 
 def tap(serial: str, x: int, y: int):
-    """Send tap event to device."""
-    _run_adb(["shell", "input", "tap", str(x), str(y)], serial=serial)
+    """Send tap event to device with ±2px random offset for anti-detection."""
+    jx = x + random.randint(-2, 2)
+    jy = y + random.randint(-2, 2)
+    _run_adb(["shell", "input", "tap", str(jx), str(jy)], serial=serial)
 
 
 def swipe(serial: str, x1: int, y1: int, x2: int, y2: int, duration: int = 300):

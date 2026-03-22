@@ -1774,6 +1774,102 @@
     margin-bottom: 2px;
 }
 
+/* ── Activity Config Panel ── */
+.acv-cfg-header {
+    padding: 8px 14px 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.acv-cfg-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+}
+
+.acv-cfg-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px 14px 10px;
+    overflow-y: auto;
+}
+
+.acv-cfg-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 0;
+}
+
+.acv-cfg-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.acv-cfg-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+}
+
+.acv-cfg-input {
+    background: var(--card);
+    border: 1px solid var(--input);
+    color: var(--foreground);
+    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    width: 70px;
+    outline: none;
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.acv-cfg-input:hover {
+    border-color: var(--muted-foreground);
+}
+
+.acv-cfg-input:focus {
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+.acv-cfg-select {
+    background: var(--card);
+    border: 1px solid var(--input);
+    color: var(--foreground);
+    font-size: 12px;
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    cursor: pointer;
+    transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.acv-cfg-select:hover {
+    border-color: var(--muted-foreground);
+}
+
+.acv-cfg-select:focus {
+    border-color: var(--indigo-500);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.12);
+}
+
+.acv-cfg-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+}
+
+.acv-cfg-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    margin-bottom: 2px;
+}
+
 /* ── Activity Log Console ── */
 .acv-console {
     flex: 1;

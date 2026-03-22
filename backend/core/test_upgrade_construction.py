@@ -16,8 +16,7 @@ from backend.core.workflow.state_detector import GameStateDetector
 from backend.core.workflow import core_actions
 
 
-def test_upgrade_construction(emulator_index=4, max_depth=5, max_power=0, max_hall_level=0):
-    serial = f"emulator-{5554 + emulator_index * 2}"
+def test_upgrade_construction(serial="emulator-5562", max_depth=5, max_power=0, max_hall_level=0):
     print(f"\n[TEST] === Upgrade Construction Test on {serial} ===")
     print(f"[TEST] max_depth={max_depth}, max_power={max_power}, max_hall_level={max_hall_level}")
 
@@ -54,8 +53,8 @@ def test_upgrade_construction(emulator_index=4, max_depth=5, max_power=0, max_ha
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Test Upgrade Construction workflow")
-    parser.add_argument("emulator_index", type=int, nargs="?", default=4,
-                        help="Index of emulator (default: 4)")
+    parser.add_argument("serial", type=str, nargs="?", default="emulator-5562",
+                        help="Emulator serial (default: emulator-5562)")
     parser.add_argument("--max-depth", type=int, default=5,
                         help="Max GO chain depth (default: 5)")
     parser.add_argument("--max-power", type=int, default=0,
@@ -69,4 +68,4 @@ if __name__ == "__main__":
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-    test_upgrade_construction(args.emulator_index, args.max_depth, args.max_power, args.max_hall_level)
+    test_upgrade_construction(args.serial, args.max_depth, args.max_power, args.max_hall_level)

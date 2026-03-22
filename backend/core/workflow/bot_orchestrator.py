@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 from typing import List, Dict, Any, Callable, Optional, Tuple
 from backend.core.workflow import (
@@ -1094,17 +1095,63 @@ class BotOrchestrator:
                 ]
                 self.activity_statuses = {k: "pending" for k in act_keys}
 
+                # Shuffle activity order per-account for anti-detection
+                # Then fix relative order of troop-dependent activities:
+                #   attack_darkling_legions → catch_pet/gather_rss_center (random) → gather_resource (last)
+                # because gather_resource uses ALL troops and would block the others.
+                TROOP_FIRST = "attack_darkling_legions"
+                TROOP_MIDDLE = {"catch_pet", "gather_rss_center"}
+                TROOP_LAST = "gather_resource"
+
+                run_order = list(range(len(self.activities)))
+                random.shuffle(run_order)
+
+                # Find positions where troop activities landed after shuffle
+                troop_positions = []  # (position_in_run_order, original_index)
+                for pos, orig_idx in enumerate(run_order):
+                    aid = act_keys[orig_idx]
+                    if aid in (TROOP_FIRST, TROOP_LAST) or aid in TROOP_MIDDLE:
+                        troop_positions.append((pos, orig_idx))
+
+                if len(troop_positions) >= 2:
+                    # Separate troop activities by role
+                    first_items, middle_items, last_items = [], [], []
+                    for pos, orig_idx in troop_positions:
+                        aid = act_keys[orig_idx]
+                        if aid == TROOP_FIRST:
+                            first_items.append(orig_idx)
+                        elif aid in TROOP_MIDDLE:
+                            middle_items.append(orig_idx)
+                        elif aid == TROOP_LAST:
+                            last_items.append(orig_idx)
+
+                    # Build desired troop order: first → middle (random) → last
+                    random.shuffle(middle_items)
+                    desired_troop_order = first_items + middle_items + last_items
+
+                    # Extract just the positions (sorted) and assign desired order to them
+                    sorted_positions = sorted(p for p, _ in troop_positions)
+                    for slot_pos, orig_idx in zip(sorted_positions, desired_troop_order):
+                        run_order[slot_pos] = orig_idx
+
+                shuffled_activities = [self.activities[j] for j in run_order]
+                shuffled_keys = [act_keys[j] for j in run_order]
+                print(
+                    f"[BotOrchestrator] Shuffled activity order for Account {acc_id}: "
+                    f"{[a.get('name', k) for a, k in zip(shuffled_activities, shuffled_keys)]}"
+                )
+
                 limit_min = self.misc_config.get("limit_min", 0)
                 account_success = True
                 ran_heavy = False  # Track if any heavy activity succeeded (for conditional account CD)
                 ran_heavy_attempted = False  # Track if any heavy activity was attempted (for failure CD)
 
-                # Execute activities one by one
-                for i, act in enumerate(self.activities):
+                # Execute activities one by one (shuffled order)
+                for i, act in enumerate(shuffled_activities):
                     if self.stop_requested:
                         break
 
-                    act_id_or_name = act_keys[i]
+                    act_id_or_name = shuffled_keys[i]
                     act_cfg = act.get("config", {})
 
                     # ── ACTIVITY-LEVEL COOLDOWN (dynamic override > static config) ──
@@ -1208,6 +1255,26 @@ class BotOrchestrator:
                             act_weight = act_cfg.get("weight") or self._weight_map.get(act_id_or_name, "heavy")
                             if act_weight == "heavy":
                                 ran_heavy = True
+
+                            # ── RANDOM COOLDOWN RANGE ──
+                            # If user configured a range (cooldown_minutes_max > cooldown_minutes)
+                            # and core_actions didn't already set a dynamic_cooldown, pick a random
+                            # value and inject it into result so it gets persisted to DB.
+                            try:
+                                cd_min = int(act_cfg.get("cooldown_minutes", 0) or 0)
+                                cd_max = int(act_cfg.get("cooldown_minutes_max", 0) or 0)
+                            except (TypeError, ValueError):
+                                cd_min, cd_max = 0, 0
+                            has_dynamic = (result or {}).get("dynamic_cooldown_sec", 0) > 0
+                            if cd_max > cd_min > 0 and not has_dynamic:
+                                rand_cd_sec = int(random.uniform(cd_min, cd_max) * 60)
+                                if result is None:
+                                    result = {}
+                                result["dynamic_cooldown_sec"] = rand_cd_sec
+                                print(
+                                    f"[BotOrchestrator] 🎲 Random cooldown for '{act_id_or_name}': "
+                                    f"{rand_cd_sec // 60}m (range: {cd_min}-{cd_max}m)"
+                                )
 
                         await self.broadcast_state()
 

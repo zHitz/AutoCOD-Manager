@@ -2281,6 +2281,7 @@ const WF3 = {
             ...userPayload,
             cooldown_enabled: actConf.cooldown_enabled ?? defaults.cooldown_enabled,
             cooldown_minutes: actConf.cooldown_minutes ?? defaults.cooldown_minutes,
+            cooldown_minutes_max: actConf.cooldown_minutes_max ?? defaults.cooldown_minutes_max ?? 0,
             last_run: actConf.last_run || null
         };
     },
@@ -2291,7 +2292,7 @@ const WF3 = {
 
         if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
         if (!this._groupConfigs[groupId].activities[activityId]) {
-            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60, cooldown_minutes_max: 0 };
         }
 
         const actConf = this._groupConfigs[groupId].activities[activityId];
@@ -2302,12 +2303,22 @@ const WF3 = {
             const val = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
 
             // Map top-level cooldown fields to their proper places
-            if (key === 'cooldown_enabled' || key === 'cooldown_minutes') {
+            if (key === 'cooldown_enabled' || key === 'cooldown_minutes' || key === 'cooldown_minutes_max') {
                 actConf[key] = val;
             } else {
                 actConf.config[key] = val;
             }
         });
+
+        // ── Validate cooldown range ──
+        const cdMin = Number(actConf.cooldown_minutes) || 0;
+        const cdMax = Number(actConf.cooldown_minutes_max) || 0;
+        actConf.cooldown_minutes = Math.max(1, Math.round(cdMin));        // min 1
+        actConf.cooldown_minutes_max = Math.max(0, Math.round(cdMax));    // min 0
+        // If max is set but smaller than min → disable range (reset to 0)
+        if (actConf.cooldown_minutes_max > 0 && actConf.cooldown_minutes_max <= actConf.cooldown_minutes) {
+            actConf.cooldown_minutes_max = 0;
+        }
 
         this._saveConfigToBackend(groupId);
         WfToast.show('s', 'Saved', 'Configuration saved.');
@@ -2342,98 +2353,84 @@ const WF3 = {
         const fieldsHtml = defs.map(d => {
             const val = saved[d.key] !== undefined ? saved[d.key] : d.default;
             if (d.type === 'checkbox') {
-                return `
-    <div class="acv-cfg-field" >
-        <label class="acv-check-label" style="gap:10px;">
-            <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
-                <span class="acv-check-box"></span>
-                <span>${d.label}</span>
-        </label>
-                </div> `;
+                return `<div class="acv-cfg-field">
+                    <label class="acv-check-label" style="gap:6px;">
+                        <input type="checkbox" data-cfgkey="${d.key}" ${val ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                        <span class="acv-check-box"></span>
+                        <span>${d.label}</span>
+                    </label>
+                </div>`;
             }
             if (d.type === 'select') {
-                const opts = d.options.map(o => `<option value = "${o}" ${val === o ? 'selected' : ''}> ${o}</option> `).join('');
-                return `
-    <div class="acv-cfg-field" >
+                const opts = d.options.map(o => `<option value="${o}" ${val === o ? 'selected' : ''}>${o}</option>`).join('');
+                return `<div class="acv-cfg-row">
                     <label class="acv-cfg-label">${d.label}</label>
                     <select class="acv-cfg-select" data-cfgkey="${d.key}" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">${opts}</select>
-                </div> `;
+                </div>`;
             }
-            return `
-    <div class="acv-cfg-field" >
+            return `<div class="acv-cfg-row">
                 <label class="acv-cfg-label">${d.label}</label>
                 <input type="number" class="acv-cfg-input" data-cfgkey="${d.key}" value="${val}" ${d.min !== undefined ? 'min="' + d.min + '"' : ''} ${d.max !== undefined ? 'max="' + d.max + '"' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
             </div>`;
         }).join('');
 
-        // Cooldown section (always shown)
+        // Cooldown section
         const cdEnabled = saved.cooldown_enabled || false;
         const cdMinutes = saved.cooldown_minutes !== undefined ? saved.cooldown_minutes : 60;
+        const cdMinutesMax = saved.cooldown_minutes_max || 0;
         const lastRun = this._getLastRun(activityId, groupId);
         const lastRunStr = lastRun ? new Date(lastRun).toLocaleString() : 'Never';
         const runsToday = this._getRunsToday(activityId, groupId);
         const cooldownStatus = this._isOnCooldown(activityId, groupId)
-            ? `<span style = "color:var(--amber-500)" >⏳ ${this._formatCooldownRemaining(activityId, groupId)}</span> `
+            ? `<span style="color:var(--amber-500)">⏳ ${this._formatCooldownRemaining(activityId, groupId)}</span>`
             : (lastRun ? '<span style="color:var(--emerald-500)">✓ Ready</span>' : '');
 
         const cooldownHtml = `
-    <div class="acv-cfg-divider" ></div>
+            <div class="acv-cfg-divider"></div>
             <div class="acv-cfg-section-title">Cooldown</div>
             <div class="acv-cfg-field">
-                <label class="acv-check-label" style="gap:10px;">
+                <label class="acv-check-label" style="gap:6px; font-size:12px;">
                     <input type="checkbox" data-cfgkey="cooldown_enabled" ${cdEnabled ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
                     <span class="acv-check-box"></span>
-                    <span>After script completing put it on cooldown</span>
+                    <span>Enable cooldown after run</span>
                 </label>
             </div>
-            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:10px;">
-                <label class="acv-cfg-label" style="margin:0; white-space:nowrap;">Put on cooldown for</label>
-                <input type="number" class="acv-cfg-input" data-cfgkey="cooldown_minutes" value="${cdMinutes}" min="1" max="9999" style="width:80px;" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
-                <span style="font-size:12px; color:var(--muted-foreground);">Minutes</span>
+            <div class="acv-cfg-row" style="align-items:center;">
+                <label class="acv-cfg-label">Duration</label>
+                <input type="number" class="acv-cfg-input" data-cfgkey="cooldown_minutes" value="${cdMinutes}" min="1" max="9999" style="width:60px;" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                <span style="font-size:11px; color:var(--muted-foreground); margin:0 2px;">–</span>
+                <input type="number" class="acv-cfg-input" data-cfgkey="cooldown_minutes_max" value="${cdMinutesMax}" min="0" max="9999" style="width:60px;" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})" title="Max cooldown (0 = fixed)">
+                <span style="font-size:11px; color:var(--muted-foreground);">min</span>
             </div>
-            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground);">
-                <span>Last run: <span id="acv-cfg-last-run">${lastRunStr}</span></span>
-                <span id="acv-cooldown-status-badge">${cooldownStatus}</span>
+            <div style="font-size:10px; color:var(--muted-foreground); padding:0 0 2px 0;">
+                ${cdMinutesMax > cdMinutes ? '🎲 Random between ' + cdMinutes + '–' + cdMinutesMax + ' min each run' : 'Fixed cooldown'}
             </div>
-            <div class="acv-cfg-field" style="flex-direction:row; align-items:center; gap:8px; font-size:11px; color:var(--muted-foreground); margin-top:-5px;">
-                <span>Runs today: <strong id="acv-cfg-runs-today" style="color:var(--foreground);">${runsToday}</strong></span>
-            </div>
-`;
-        const currentWeight = saved.weight || sys.weight || 'light';
+            <div style="display:flex; gap:12px; font-size:11px; color:var(--muted-foreground); padding:2px 0;">
+                <span>Last: <span id="acv-cfg-last-run">${lastRunStr}</span> ${cooldownStatus}</span>
+                <span>Today: <strong id="acv-cfg-runs-today" style="color:var(--foreground);">${runsToday}</strong></span>
+            </div>`;
 
+        const currentWeight = saved.weight || sys.weight || 'light';
         const weightHtml = `
-    <div class="acv-cfg-divider"></div>
-            <div class="acv-cfg-section-title">Priority Weight</div>
-            <div class="acv-cfg-field">
+            <div class="acv-cfg-divider"></div>
+            <div class="acv-cfg-row">
                 <label class="acv-cfg-label">Weight</label>
                 <select class="acv-cfg-select" data-cfgkey="weight" onchange="WF3.savePerActivityConfig('${activityId}',${groupId}); WF3.renderActivitiesForGroup(${groupId})">
-                    <option value="light" ${currentWeight === 'light' ? 'selected' : ''}>🪶 Light</option>
-                    <option value="heavy" ${currentWeight === 'heavy' ? 'selected' : ''}>⚡ Heavy</option>
+                    <option value="light" ${currentWeight === 'light' ? 'selected' : ''}>Light</option>
+                    <option value="heavy" ${currentWeight === 'heavy' ? 'selected' : ''}>Heavy</option>
                 </select>
-                <div style="font-size:11px; color:var(--muted-foreground); margin-top:4px; line-height:1.4;">
-                    <b>Heavy</b> = high priority, worth swapping for.<br>
-                    <b>Light</b> = low priority, skipped if heavy tasks are waiting.
-                </div>
-            </div>
-`;
+                <span style="font-size:10px; color:var(--muted-foreground);">Heavy = priority</span>
+            </div>`;
 
         panel.innerHTML = `
-    <div class="acv-cfg-header" >
-                <div class="acv-cfg-back-row">
-                    <button class="acv-cfg-back" onclick="document.getElementById('acv-rtab-config').innerHTML='<div class=acv-empty-hint>Select an activity from the left to view its config.</div>'">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-                        Back
-                    </button>
-                </div>
-                <div class="acv-cfg-title">${activityName}</div>
-                <div class="acv-cfg-sub">Configuration for this group's activity</div>
-            </div>
+    <div class="acv-cfg-header">
+        <div class="acv-cfg-title">${activityName}</div>
+    </div>
     <div class="acv-cfg-fields">
         ${fieldsHtml}
         ${cooldownHtml}
         ${weightHtml}
-    </div>
-`;
+    </div>`;
     },
 
     // ── Event Activity — Sub-events Helpers ──
@@ -2589,7 +2586,7 @@ const WF3 = {
         popup.querySelectorAll('.acv-sub-event-cb').forEach(cb => {
             const subId = cb.dataset.subid;
             if (!actConf.sub_events_config[subId]) {
-                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60, cooldown_minutes_max: 0 };
             }
             actConf.sub_events_config[subId].enabled = cb.checked;
         });
@@ -2601,12 +2598,12 @@ const WF3 = {
             if (!subId || !key) return;
 
             if (!actConf.sub_events_config[subId]) {
-                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60 };
+                actConf.sub_events_config[subId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60, cooldown_minutes_max: 0 };
             }
 
             const val = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
 
-            if (key === 'cooldown_enabled' || key === 'cooldown_minutes') {
+            if (key === 'cooldown_enabled' || key === 'cooldown_minutes' || key === 'cooldown_minutes_max') {
                 actConf.sub_events_config[subId][key] = val;
             } else {
                 if (!actConf.sub_events_config[subId].config) actConf.sub_events_config[subId].config = {};

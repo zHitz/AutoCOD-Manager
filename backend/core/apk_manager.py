@@ -7,7 +7,9 @@ APK files are stored in data/apks/.
 
 import os
 import subprocess
+import tempfile
 import urllib.request
+import zipfile
 from pathlib import Path
 
 from backend.config import config
@@ -70,7 +72,83 @@ APK_REGISTRY = {
         "filename": "quicktouch.apk",
         "post_install": None,
     },
+    "cod": {
+        "id": "cod",
+        "name": "Call of Dragons",
+        "package": "com.farlightgames.samo.gp.vn",
+        "version": "latest",
+        "size": "~1.6 GB",
+        "note": "Main game client — Call of Dragons VN",
+        "download_url": None,
+        "filename": "cod.xapk",
+        "post_install": None,
+        "is_xapk": True,
+    },
+    "codf": {
+        "id": "codf",
+        "name": "Call of Dragons Farm",
+        "package": "com.farlightgames.samo.gp.vn",
+        "version": "latest",
+        "size": "~1.9 GB",
+        "note": "Farm/secondary game client",
+        "download_url": None,
+        "filename": "codf.xapk",
+        "post_install": None,
+        "is_xapk": True,
+    },
 }
+
+
+def _ensure_adb_connected(serial: str) -> str:
+    """Ensure ADB device is reachable, using connect fallback if needed.
+
+    LDPlayer devices don't always auto-register in `adb devices`.
+    Falls back to `adb connect 127.0.0.1:<tcp_port>` when not found.
+    Returns the working serial (may be TCP format).
+    """
+    adb_path = config.adb_path
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    # Check if device is already visible
+    try:
+        result = subprocess.run(
+            [adb_path, "devices"],
+            capture_output=True, text=True, startupinfo=si, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            if serial in line and "device" in line:
+                return serial
+    except Exception:
+        pass
+
+    # Not found — try TCP connect fallback
+    # serial "emulator-XXXX" → port XXXX, TCP port = XXXX + 1
+    try:
+        port = int(serial.split("-")[1])
+        tcp_port = port + 1
+        tcp_serial = f"127.0.0.1:{tcp_port}"
+        print(f"[APK] Device {serial} not in adb devices. Trying adb connect {tcp_serial}...")
+        subprocess.run(
+            [adb_path, "connect", tcp_serial],
+            capture_output=True, text=True, startupinfo=si, timeout=10,
+        )
+        # Verify connection
+        result = subprocess.run(
+            [adb_path, "devices"],
+            capture_output=True, text=True, startupinfo=si, timeout=10,
+        )
+        for line in result.stdout.splitlines():
+            if tcp_serial in line and "device" in line:
+                print(f"[APK] Connected via {tcp_serial}")
+                return tcp_serial
+            if serial in line and "device" in line:
+                return serial
+    except Exception as e:
+        print(f"[APK] ADB connect fallback failed: {e}")
+
+    # Return original serial as last resort
+    return serial
 
 
 def get_apk_list() -> list[dict]:
@@ -142,11 +220,76 @@ def download_apk(app_id: str, progress_callback=None) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def install_xapk(app_id: str, serial: str) -> dict:
+    """Install XAPK (split-APK bundle) on a single emulator via ADB."""
+    app = APK_REGISTRY.get(app_id)
+    if not app:
+        return {"success": False, "error": f"Unknown app: {app_id}"}
+
+    xapk_path = APK_DIR / app["filename"]
+    if not xapk_path.exists():
+        return {"success": False, "error": f"XAPK not found: {app['filename']}"}
+
+    serial = _ensure_adb_connected(serial)
+
+    adb_path = config.adb_path
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="xapk_") as tmp_dir:
+            print(f"[APK] Extracting {app['filename']} to temp dir...")
+            with zipfile.ZipFile(str(xapk_path), "r") as zf:
+                zf.extractall(tmp_dir)
+
+            # Find all .apk files inside extracted contents
+            apk_files = list(Path(tmp_dir).rglob("*.apk"))
+            if not apk_files:
+                return {"success": False, "error": "No .apk files found inside XAPK"}
+
+            print(
+                f"[APK] Found {len(apk_files)} split APK(s), "
+                f"installing on {serial}..."
+            )
+            cmd = (
+                [adb_path, "-s", serial, "install-multiple", "-r"]
+                + [str(f) for f in apk_files]
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                startupinfo=startupinfo,
+                timeout=300,
+            )
+
+            if "Success" in result.stdout:
+                print(f"[APK] {app['name']} installed on {serial}")
+                return {"success": True, "message": f"Installed on {serial}"}
+
+            error_msg = (
+                result.stdout.strip() or result.stderr.strip() or "Unknown error"
+            )
+            print(f"[APK] XAPK install failed on {serial}: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    except zipfile.BadZipFile:
+        return {"success": False, "error": f"{app['filename']} is not a valid ZIP/XAPK"}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Install timed out (300s)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def install_apk(app_id: str, serial: str) -> dict:
     """Install APK on a single emulator via ADB."""
     app = APK_REGISTRY.get(app_id)
     if not app:
         return {"success": False, "error": f"Unknown app: {app_id}"}
+
+    # Route XAPK to split-APK installer
+    if app.get("is_xapk"):
+        return install_xapk(app_id, serial)
 
     apk_path = APK_DIR / app["filename"]
     if not apk_path.exists():
@@ -155,6 +298,8 @@ def install_apk(app_id: str, serial: str) -> dict:
     adb_path = config.adb_path
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+    serial = _ensure_adb_connected(serial)
 
     try:
         # Install with -r (replace existing)

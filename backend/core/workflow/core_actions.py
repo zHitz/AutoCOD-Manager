@@ -16,7 +16,7 @@ import adb_helper
 from workflow import clipper_helper
 from workflow.state_detector import GameStateDetector
 from workflow.account_detector import AccountDetector
-from workflow.construction_data import CONSTRUCTION_TAPS
+from workflow.construction_data import CONSTRUCTION_TAPS, CONSTRUCTION_DATA
 
 import numpy as np
 import cv2
@@ -640,20 +640,29 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> dict:
     
     return _ok()
 
-def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> dict:
+def go_to_construction(serial: str, detector: GameStateDetector, name: str, feature: str | None = None) -> dict:
     """
     Generic navigation to any construction building.
-    Looks up tap coordinates from construction_data.py.
+
+    Two modes:
+      V1 (legacy): feature=None → tap sequence from CONSTRUCTION_TAPS (backward compat)
+      V2 (new):    feature="upgrade" → tap base, then tap feature (fixed or template-based)
+
     Must navigate to IN-GAME LOBBY (IN_CITY) first.
     """
     name_upper = name.upper()
-    
+
+    # ── V2 path: feature-based navigation ──
+    if feature is not None:
+        return _go_to_construction_v2(serial, detector, name_upper, feature)
+
+    # ── V1 path: legacy tap sequence (backward compat) ──
     if name_upper not in CONSTRUCTION_TAPS:
         print(f"[{serial}] [FAILED] Unknown construction '{name}'. Not found in construction_data.")
         return _fail(f"CONFIG_INVALID_PARAM: Unknown construction '{name}'")
-    
-    print(f"[{serial}] Navigating to construction: {name_upper}...")
-    
+
+    print(f"[{serial}] === GO TO CONSTRUCTION: {name_upper} ===")
+
     result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
     if not _is_ok(result):
         return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY")
@@ -661,31 +670,138 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str) -> d
     if current_state != "IN-GAME LOBBY (IN_CITY)":
         print(f"[{serial}] [FAILED] Must be IN_CITY. Current: {current_state}")
         return _fail(f"STATE_WRONG_SCREEN: Must be IN_CITY, current: {current_state}")
-    
+
     # Execute tap sequence from data
     taps = CONSTRUCTION_TAPS[name_upper]
     for i, (x, y) in enumerate(taps):
         adb_helper.tap(serial, x, y)
-        time.sleep(2)
-    time.sleep(3)
-    
-    result = detector.check_construction(serial, target=name_upper)
-    if result:
-        print(f"[{serial}] -> {name_upper} detected successfully.")
-        return _ok()
-    
+        _human_delay(2)
+    _human_delay(2)
+
+    # Verify construction opened (retry up to 3 times)
+    for attempt in range(3):
+        detector._screen_cache = None
+        result = detector.check_construction(serial, target=name_upper)
+        if result:
+            print(f"[{serial}] -> {name_upper} detected successfully.")
+            return _ok()
+        if attempt < 2:
+            print(f"[{serial}] {name_upper} not detected, retrying ({attempt + 1}/3)...")
+            _human_delay(1.5)
+
+    # Retry: re-tap last coordinate
     last_x, last_y = taps[-1]
     print(f"[{serial}] [RETRY] {name_upper} not detected. Re-tapping ({last_x}, {last_y})...")
     adb_helper.tap(serial, last_x, last_y)
-    time.sleep(3)
-    
-    result = detector.check_construction(serial, target=name_upper)
-    if result:
-        print(f"[{serial}] -> {name_upper} detected on retry.")
-        return _ok()
-    
+    _human_delay(2)
+
+    for attempt in range(3):
+        detector._screen_cache = None
+        result = detector.check_construction(serial, target=name_upper)
+        if result:
+            print(f"[{serial}] -> {name_upper} detected on retry.")
+            return _ok()
+        if attempt < 2:
+            print(f"[{serial}] {name_upper} still not detected, retrying ({attempt + 1}/3)...")
+            _human_delay(1.5)
+
     print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened after retry.")
     return _fail(f"NAV_TARGET_NOT_REACHED: Could not confirm {name_upper} opened")
+
+
+def _go_to_construction_v2(serial: str, detector: GameStateDetector, name_upper: str, feature: str) -> dict:
+    """
+    V2 feature-based construction navigation.
+    1. Navigate to IN_CITY
+    2. Tap base coordinate (building on city map)
+    3. Wait for building popup
+    4. Tap feature button (fixed coords or template detect)
+    5. Verify construction screen opened
+    """
+    if name_upper not in CONSTRUCTION_DATA:
+        print(f"[{serial}] [FAILED] Unknown construction '{name_upper}'. Not found in CONSTRUCTION_DATA.")
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown construction '{name_upper}' in V2 data")
+
+    data = CONSTRUCTION_DATA[name_upper]
+    feature_lower = feature.lower()
+
+    if feature_lower not in data["features"]:
+        available = list(data["features"].keys())
+        print(f"[{serial}] [FAILED] Unknown feature '{feature}' for {name_upper}. Available: {available}")
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown feature '{feature}' for {name_upper}")
+
+    print(f"[{serial}] === GO TO CONSTRUCTION V2: {name_upper} -> {feature_lower} ===")
+
+    # ── Step 1: Navigate to IN_CITY ──
+    result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(result):
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY")
+    current_state = detector.check_state(serial)
+    if current_state != "IN-GAME LOBBY (IN_CITY)":
+        print(f"[{serial}] [FAILED] Must be IN_CITY. Current: {current_state}")
+        return _fail(f"STATE_WRONG_SCREEN: Must be IN_CITY, current: {current_state}")
+
+    # ── Steps 2-4: Tap base → Tap feature → Verify (with retry) ──
+    # First tap on base may dismiss a reward/overlay instead of showing buttons.
+    # If feature detection fails, re-tap base and retry once.
+    base_x, base_y = data["base"]
+    feat_config = data["features"][feature_lower]
+    feat_type = feat_config["type"]
+
+    for base_attempt in range(2):
+        if base_attempt > 0:
+            print(f"[{serial}] [RETRY] Re-tapping base ({base_x}, {base_y}) — first tap may have dismissed overlay...")
+        else:
+            print(f"[{serial}] Tapping base building at ({base_x}, {base_y})...")
+        adb_helper.tap(serial, base_x, base_y)
+        _human_delay(2)
+
+        # ── Step 3: Tap feature button ──
+        if feat_type == "fixed":
+            fx, fy = feat_config["x"], feat_config["y"]
+            print(f"[{serial}] Tapping feature '{feature_lower}' at fixed ({fx}, {fy})...")
+            adb_helper.tap(serial, fx, fy)
+            _human_delay(2)
+
+        elif feat_type == "template":
+            template_name = feat_config["template"]
+            print(f"[{serial}] Detecting feature '{feature_lower}' via template '{template_name}'...")
+            match = _detect_with_retry(serial, detector, template_name, threshold=0.8, attempts=3, delay=1.5)
+            if not match:
+                if base_attempt == 0:
+                    print(f"[{serial}] Feature '{template_name}' not found. Will re-tap base...")
+                    continue
+                print(f"[{serial}] [FAILED] Feature button '{template_name}' not found after retry.")
+                adb_helper.press_back(serial)
+                return _fail(f"TEMPLATE_NO_MATCH: Feature button '{template_name}' not found for {name_upper}")
+            _, mx, my = match
+            print(f"[{serial}] Tapping feature '{feature_lower}' at detected ({mx}, {my})...")
+            adb_helper.tap(serial, mx, my)
+            _human_delay(2)
+
+        else:
+            print(f"[{serial}] [FAILED] Unknown feature type '{feat_type}' for {name_upper}.{feature_lower}")
+            return _fail(f"CONFIG_INVALID_PARAM: Unknown feature type '{feat_type}'")
+
+        # ── Step 4: Verify screen ──
+        verify_name = feat_config.get("verify", data["verify"])
+        print(f"[{serial}] Verifying screen with template '{verify_name}'...")
+        for attempt in range(3):
+            detector._screen_cache = None
+            result = detector.check_construction(serial, target=verify_name)
+            if result:
+                print(f"[{serial}] -> {name_upper} (feature={feature_lower}) detected successfully.")
+                return _ok()
+            if attempt < 2:
+                print(f"[{serial}] {verify_name} not detected, retrying ({attempt + 1}/3)...")
+                _human_delay(1.5)
+
+        # Verify failed — if first attempt, re-tap base
+        if base_attempt == 0:
+            print(f"[{serial}] Verify failed. Will re-tap base...")
+
+    print(f"[{serial}] [WARNING] Could not confirm {name_upper} opened via feature '{feature_lower}'.")
+    return _fail(f"NAV_TARGET_NOT_REACHED: Could not confirm {name_upper} via feature '{feature_lower}'")
 
 def go_to_capture_pet(serial: str, detector: GameStateDetector) -> dict:
     """
@@ -857,17 +973,42 @@ def _is_pet_slot_blank(
     return is_blank
 
 
-def _release_single_pet(serial: str, tap_point: tuple):
+def _release_single_pet(serial: str, detector: GameStateDetector, tap_point: tuple):
     """Execute the release UI sequence for one pet at the given grid position.
 
-    Sequence: Select pet → Release button → Confirm → OK
+    Captures skill pool (Phase 1) and skill obtained (Phase 2) for data analysis.
+    Both screenshots share the same release_id for pairing.
     """
+    release_id = time.strftime("%Y%m%d_%H%M%S")
+    save_dir = os.path.join("data", "pet_releases")
+    os.makedirs(save_dir, exist_ok=True)
+
     adb_helper.tap(serial, tap_point[0], tap_point[1])  # Select pet in grid
     time.sleep(1.5)
-    adb_helper.tap(serial, 352, 214)   # "Release" button
+    adb_helper.tap(serial, 352, 214)   # "Release" button → GHI CHÚ popup
     time.sleep(1.5)
-    adb_helper.tap(serial, 577, 365)   # Confirm dialog
+
+    # Phase 1: Capture skill pool available
+    detector._screen_cache = None
+    frame1 = detector.get_frame(serial)
+    if frame1 is not None:
+        crop1 = frame1[150:300, 250:700]
+        fname1 = f"available_{serial}_{release_id}.png"
+        cv2.imwrite(os.path.join(save_dir, fname1), crop1)
+        print(f"[{serial}] [PET] Phase 1 saved: {fname1}")
+
+    adb_helper.tap(serial, 577, 365)   # Confirm dialog (XÁC NHẬN)
     time.sleep(1.5)
+
+    # Phase 2: Capture skill obtained
+    detector._screen_cache = None
+    frame2 = detector.get_frame(serial)
+    if frame2 is not None:
+        crop2 = frame2[100:200, 400:560]
+        fname2 = f"get_{serial}_{release_id}.png"
+        cv2.imwrite(os.path.join(save_dir, fname2), crop2)
+        print(f"[{serial}] [PET] Phase 2 saved: {fname2}")
+
     adb_helper.tap(serial, 547, 414)   # OK / second confirm
     time.sleep(2)
 
@@ -904,7 +1045,7 @@ def release_pet(serial: str, detector: GameStateDetector) -> dict:
         # Step B: Release from slot 8 x5
         print(f"[{serial}] [PET] Releasing from slot 8 (up to {_RELEASE_COUNT})...")
         for i in range(_RELEASE_COUNT):
-            _release_single_pet(serial, _PET_SLOT_8["tap"])
+            _release_single_pet(serial, detector, _PET_SLOT_8["tap"])
             if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
                 released += (i + 1)
                 print(f"[{serial}] [PET] Slot 8 empty after {i + 1} release(s).")
@@ -914,13 +1055,13 @@ def release_pet(serial: str, detector: GameStateDetector) -> dict:
             # Edge case: sort put locked pet at slot 8, free pet at slot 7
             print(f"[{serial}] [PET] Slot 8 still occupied after {_RELEASE_COUNT}x → pet is LOCKED.")
             print(f"[{serial}] [PET] Trying slot 7 fallback (x1)...")
-            _release_single_pet(serial, _PET_SLOT_7["tap"])
+            _release_single_pet(serial, detector, _PET_SLOT_7["tap"])
 
             # After releasing slot 7, grid shifts: locked pet → slot 7, new pet → slot 8
             if not _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
                 print(f"[{serial}] [PET] Slot 8 has new pet after grid shift. Releasing slot 8 (up to {_RELEASE_COUNT})...")
                 for j in range(_RELEASE_COUNT):
-                    _release_single_pet(serial, _PET_SLOT_8["tap"])
+                    _release_single_pet(serial, detector, _PET_SLOT_8["tap"])
                     if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
                         released += (j + 1) + 1  # +1 for slot 7 release
                         print(f"[{serial}] [PET] Slot 8 empty after {j + 1} release(s).")
@@ -939,123 +1080,195 @@ def release_pet(serial: str, detector: GameStateDetector) -> dict:
     print(f"[{serial}] === RELEASE PET COMPLETE — released {released} pet(s) ===")
     return _ok()
 
+def _human_delay(base_sec: float, variance: float = 0.4):
+    """Sleep with ±variance randomization to avoid bot-like fixed timing."""
+    jitter = base_sec * variance
+    delay = base_sec + random.uniform(-jitter, jitter)
+    time.sleep(max(0.5, delay))
+
+
+def _detect_with_retry(serial, detector, target, threshold=0.8, attempts=3, delay=1.5):
+    """Try to detect a template with retries. Returns match tuple or None."""
+    for attempt in range(attempts):
+        detector._screen_cache = None
+        result = detector.check_activity(serial, target=target, threshold=threshold)
+        if result:
+            return result
+        if attempt < attempts - 1:
+            print(f"[{serial}] {target} not found, retrying ({attempt + 1}/{attempts})...")
+            _human_delay(delay)
+    return None
+
+
 def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> dict:
     """
-    Farming Workflow:
+    Farming Workflow (Hardened):
     1. Back to OUT_CITY
-    2. Open Search Menu
+    2. Open Search Menu → VERIFY panel opened
     3. Select Resource Type (Wood, Stone, Gold, Mana)
-    4. Start Search
-    5. Tap Gather
-    6. Check if Create Legion exists -> If so, dispatch available legions.
+    4. Start Search → VERIFY mine found (panel closed)
+    5. Tap Gather → VERIFY gather button detected
+    6. Check CREATE_LEGION → VERIFY legion setup screen
+    7. Select Preset & Dispatch → VERIFY returned to OUT_CITY
+
+    Anti-bot: All delays are randomized via _human_delay().
     """
     print(f"[{serial}] Starting Farming Workflow for: {resource_type.upper()}")
-    
+
     RESOURCE_TAPS = {
         "gold": (320, 485),
         "wood": (475, 485),
         "stone": (640, 485),
         "mana": (795, 485)
     }
-    
+
     SEARCH_TAPS = {
         "gold": (320, 400),
         "wood": (475, 400),
         "stone": (640, 400),
         "mana": (795, 400)
     }
-    
+
     LEGION_TAPS = [
         (695, 90), (735, 90), (780, 90), (825, 90), (865, 90)
     ]
-    
+
     r_type = resource_type.lower()
     if r_type not in RESOURCE_TAPS:
         print(f"[{serial}] [ERROR] Unknown resource type: {resource_type}")
         return _fail(f"CONFIG_INVALID_PARAM: Unknown resource type '{resource_type}'")
-        
+
     # 1. Back to lobby OUT_CITY
     result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
     if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY lobby")
-        
+
     # Loop over legions. Will break when we hit max/can't deploy
     for idx, legion_tap in enumerate(LEGION_TAPS):
         print(f"\n[{serial}] --- Attempting Dispatch #{idx+1} ---")
-        
-        # 2. Tap Menu search
+
+        # ── Step 2: Open Search Menu + VERIFY ──
         print(f"[{serial}] Opening Search Menu (42, 422)...")
         adb_helper.tap(serial, 42, 422)
-        time.sleep(4)
+        _human_delay(1.5)
 
-        # 3. Tap Resource Category
+        search_panel = _detect_with_retry(serial, detector, "FARM_SEARCH_BTN", threshold=0.8, attempts=3, delay=1)
+        if not search_panel:
+            print(f"[{serial}] [FAILED] Search panel did not open. Pressing BACK and retrying...")
+            adb_helper.press_back(serial)
+            _human_delay(1)
+            break
+
+        print(f"[{serial}] Search panel confirmed open.")
+
+        # ── Step 3: Select Resource Category ──
         res_x, res_y = RESOURCE_TAPS[r_type]
         print(f"[{serial}] Selecting Resource Category {r_type.upper()} ({res_x}, {res_y})...")
         adb_helper.tap(serial, res_x, res_y)
-        time.sleep(3)
+        _human_delay(1)
 
-        # 4. Tap Search — with "no mine nearby" detection
+        # ── Step 4: Tap Search + verify mine found ──
         search_x, search_y = SEARCH_TAPS[r_type]
         print(f"[{serial}] Tapping Search ({search_x}, {search_y})...")
         adb_helper.tap(serial, search_x, search_y)
-        time.sleep(6)  # Wait for map to pan
+        _human_delay(3)
 
         # Check if search panel is still open (FARM_SEARCH_BTN still visible)
-        # If mine found → panel closes, map pans to mine
-        # If no mine  → panel stays open, search button still visible
-        # NOTE: Requires activities/farm_search_btn.png template to be present
-        detector._screen_cache = None  # Fresh capture
+        detector._screen_cache = None
         search_btn = detector.check_activity(serial, target="FARM_SEARCH_BTN", threshold=0.8)
         if search_btn:
-            print(f"[{serial}] [NO MINE] Search button still visible. No {r_type} mine nearby!")
-            adb_helper.press_back(serial)
-            time.sleep(2)
-            break
-        
-        print(f"[{serial}] Mine found! Search panel closed. Proceeding to Gather...")
+            # No mine for current type — try other types on the same panel
+            print(f"[{serial}] [NO MINE] No {r_type} mine nearby. Trying other resource types...")
+            ALL_TYPES = ["gold", "wood", "stone", "mana"]
+            fallback_found = False
 
-        # 5. Tap Gather Button
-        print(f"[{serial}] Tapping Gather Button (665, 395)...")
-        adb_helper.tap(serial, 665, 395)
-        time.sleep(5)
-        
-        # 6. Check if we can create a legion with retries
-        print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
-        result = None
-        for attempt in range(3):
-            result = detector.check_activity(serial, target="CREATE_LEGION", threshold=0.8)
-            if result:
+            for alt_type in ALL_TYPES:
+                if alt_type == r_type:
+                    continue  # skip current (already failed)
+
+                alt_res_x, alt_res_y = RESOURCE_TAPS[alt_type]
+                alt_search_x, alt_search_y = SEARCH_TAPS[alt_type]
+
+                print(f"[{serial}]   Trying {alt_type.upper()}...")
+                adb_helper.tap(serial, alt_res_x, alt_res_y)
+                _human_delay(1)
+                adb_helper.tap(serial, alt_search_x, alt_search_y)
+                _human_delay(3)
+
+                detector._screen_cache = None
+                still_open = detector.check_activity(serial, target="FARM_SEARCH_BTN", threshold=0.8)
+                if not still_open:
+                    print(f"[{serial}]   ✅ {alt_type.upper()} mine found! Switching resource type.")
+                    r_type = alt_type
+                    fallback_found = True
+                    break
+                else:
+                    print(f"[{serial}]   ❌ No {alt_type.upper()} mine either.")
+
+            if not fallback_found:
+                print(f"[{serial}] [NO MINE] All resource types exhausted. No mines available!")
+                adb_helper.press_back(serial)
+                _human_delay(1)
                 break
-            print(f"[{serial}] CREATE_LEGION not found, retrying ({attempt + 1}/3)...")
-            time.sleep(2)
-            
-        if not result:
+
+        print(f"[{serial}] Mine found ({r_type.upper()})! Map panned to resource node.")
+
+        # ── Step 5: Detect & Tap Gather button ──
+        # First check if mine is already occupied (shows "View" instead of "Gather")
+        view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=2, delay=0.5)
+        if view_btn:
+            print(f"[{serial}] [OCCUPIED] Mine already has our legion (View detected). Tapping away to dismiss...")
+            adb_helper.tap(serial, 50, 500)
+            _human_delay(1.5)
+            continue  # Try next dispatch — search will find a different mine
+
+        gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=1)
+        if not gather_btn:
+            print(f"[{serial}] [WARNING] Gather button not visible. Mine popup may not have loaded.")
+            adb_helper.press_back(serial)
+            _human_delay(1)
+            break
+
+        _, gx, gy = gather_btn
+        print(f"[{serial}] Tapping Gather Button at detected ({gx}, {gy})...")
+        adb_helper.tap(serial, gx, gy)
+        _human_delay(2)
+
+        # ── Step 6: Check if we can create a legion ──
+        print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
+        create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
+
+        if not create_result:
             print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
             adb_helper.press_back(serial)
-            time.sleep(3)
-            # We are done farming.
+            _human_delay(2)
             break
-            
+
         print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
-        
-        # 7. Create legion & Dispatch
+
+        # ── Step 7: Create Legion ──
         print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
         adb_helper.tap(serial, 755, 115)
-        time.sleep(4)
-        
+        _human_delay(2)
+
+        # ── Step 8: Select Legion Preset ──
         print(f"[{serial}] Selecting Legion Preset #{idx+1} at {legion_tap}...")
         adb_helper.tap(serial, legion_tap[0], legion_tap[1])
-        time.sleep(3)
-        
-        dispatch_loc = (850, 480) 
+        _human_delay(1)
+
+        # ── Step 9: Dispatch + VERIFY return to world map ──
+        dispatch_loc = (850, 480)
         print(f"[{serial}] Tapping March/Dispatch {dispatch_loc}...")
         adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
-        
-        # Game puts us back to OUT_CITY after dispatching
-        # Sleep enough time to let the march animation start and UI settle
-        time.sleep(7)
-        
+        _human_delay(2)
+
+        state = wait_for_state(serial, detector,
+            ["IN-GAME LOBBY (OUT_CITY)"], timeout_sec=10)
+        if not state:
+            print(f"[{serial}] [WARNING] Did not return to OUT_CITY after dispatch. Recovering...")
+            back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+
     print(f"[{serial}] Farming Deployment Finished.")
     return _ok()
 
@@ -1092,13 +1305,17 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         print(f"[{serial}] [FAILED] Could not open Markers Menu.")
         return _fail("NAV_TARGET_NOT_REACHED: Could not open Markers Menu")
 
-    # Check for Resource Center marker
+    # Check for Resource Center marker (may need scroll if list is long)
     print(f"[{serial}] Searching for Resource Center marker...")
     rss_marker = None
-    for attempt in range(3):
+    for attempt in range(5):
+        detector._screen_cache = None  # Fresh capture each attempt
         rss_marker = detector.check_activity(serial, target="RSS_CENTER_MARKER", threshold=0.8)
         if rss_marker:
             break
+        # Scroll down to reveal hidden markers
+        print(f"[{serial}] Marker not visible, scrolling down... (attempt {attempt + 1}/5)")
+        adb_helper.swipe(serial, 480, 400, 480, 250, 300)
         time.sleep(2)
 
     if not rss_marker:
@@ -2234,43 +2451,48 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     MILITARY_TAB_TAP = (30, 320)
     BUFFER_SEC = 120  # 2 minutes buffer for research cooldown
 
-    # 1. Navigate to Research Center
-    result = go_to_construction(serial, detector, "RESEARCH_CENTER")
+    # 1. Navigate to Research Center (V2 — detects research icon on city popup)
+    result = go_to_construction(serial, detector, "RESEARCH_CENTER", feature="research")
     if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not navigate to Research Center.")
         return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not navigate to Research Center")
-
-    # Verify we're at Research Center
-    state = wait_for_state(serial, detector, ["RESEARCH_CENTER"], timeout_sec=10, check_mode="construction")
-    if state != "RESEARCH_CENTER":
-        print(f"[{serial}] [FAILED] Did not reach RESEARCH_CENTER screen.")
-        return _fail("NAV_TARGET_NOT_REACHED: Did not reach RESEARCH_CENTER screen")
 
     print(f"[{serial}] Research Center opened successfully.")
 
     # 1b. Dismiss any auto-popup (when research is active, the current node popup appears)
     print(f"[{serial}] Dismissing any auto-popup (415, 520)...")
     adb_helper.tap(serial, 415, 520)
-    time.sleep(1.5)
+    _human_delay(1.5)
 
-    # 2. Scan for Alliance Help buttons first (already researching, need help)
-    alliance_help_tpl = os.path.join(detector.templates_dir, "research", "research_alliance_help.png")
+    # 2. Scan for Alliance Help buttons (already researching, need help)
+    # ── DEBUG: save frame before scanning ──
+    _dbg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_debug_research")
+    os.makedirs(_dbg_dir, exist_ok=True)
+    detector._screen_cache = None
+    _dbg_frame = detector.get_frame(serial)
+    if _dbg_frame is not None:
+        import cv2 as _cv2
+        _dbg_path = os.path.join(_dbg_dir, f"alliance_help_scan_{serial}.png")
+        _cv2.imwrite(_dbg_path, _dbg_frame)
+        print(f"[{serial}] [DEBUG] Saved pre-scan frame: {_dbg_path}")
+    # ── END DEBUG ──
+
     alliance_help_count = 0
-    if os.path.exists(alliance_help_tpl):
-        for scan in range(2):
-            help_match = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
-            if help_match:
-                _, hx, hy = help_match
-                print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
-                adb_helper.tap(serial, hx, hy)
-                time.sleep(2)
-                alliance_help_count += 1
-            else:
-                break
-        if alliance_help_count > 0:
-            print(f"[{serial}] Tapped {alliance_help_count} Alliance Help button(s).")
-    else:
-        print(f"[{serial}] Alliance Help template not found, skipping help scan.")
+    for scan in range(2):
+        detector._screen_cache = None
+        print(f"[{serial}] [DEBUG] Alliance Help scan #{scan+1} (threshold=0.8)...")
+        help_match = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
+        print(f"[{serial}] [DEBUG] Alliance Help result: {help_match}")
+        if help_match:
+            _, hx, hy = help_match
+            print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
+            adb_helper.tap(serial, hx, hy)
+            _human_delay(2)
+            alliance_help_count += 1
+        else:
+            break
+    if alliance_help_count > 0:
+        print(f"[{serial}] Tapped {alliance_help_count} Alliance Help button(s).")
 
     # 3. Scan for empty research slots
     slots_researched = 0
@@ -2319,11 +2541,12 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
             expected_tab = "RESEARCH_ECONOMY_TECH" if research_type == "economy" else "RESEARCH_MILITARY_TECH"
             tab_match = detector.check_activity(serial, target=expected_tab, threshold=0.8)
             if not tab_match:
-                print(f"[{serial}] [WARNING] Tab switched away from {research_type}! "
-                      f"Expected {expected_tab} but not found. Dismissing popup...")
+                print(f"[{serial}] [INFO] Tab {research_type} maxed (auto-switched). Nothing to research.")
                 adb_helper.tap(serial, 415, 520)
                 time.sleep(2)
-                break  # stop — all techs in desired tab are maxed
+                adb_helper.press_back(serial)
+                time.sleep(2)
+                return _ok(dynamic_cooldown_sec=21600)  # 6h cooldown — tab maxed
 
         # 3c. Edge case: no tech to research (no confirm button visible)
         no_confirm = detector.check_special_state(serial, target="RESEARCH_NO_CONFIRM")
@@ -2371,14 +2594,25 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
                 continue
 
         # 3g. Handle Alliance Help popup after confirming
-        time.sleep(2)
-        if os.path.exists(alliance_help_tpl):
-            post_help = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
-            if post_help:
-                _, phx, phy = post_help
-                print(f"[{serial}] Alliance Help appeared at ({phx}, {phy}). Tapping...")
-                adb_helper.tap(serial, phx, phy)
-                time.sleep(2)
+        _human_delay(2)
+        # ── DEBUG: save post-confirm frame ──
+        detector._screen_cache = None
+        _dbg_post = detector.get_frame(serial)
+        if _dbg_post is not None:
+            import cv2 as _cv2
+            _dbg_post_path = os.path.join(_dbg_dir, f"post_confirm_slot{slot_idx+1}_{serial}.png")
+            _cv2.imwrite(_dbg_post_path, _dbg_post)
+            print(f"[{serial}] [DEBUG] Saved post-confirm frame: {_dbg_post_path}")
+        # ── END DEBUG ──
+        detector._screen_cache = None
+        print(f"[{serial}] [DEBUG] Post-confirm Alliance Help scan (threshold=0.8)...")
+        post_help = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
+        print(f"[{serial}] [DEBUG] Post-confirm Alliance Help result: {post_help}")
+        if post_help:
+            _, phx, phy = post_help
+            print(f"[{serial}] Alliance Help appeared at ({phx}, {phy}). Tapping...")
+            adb_helper.tap(serial, phx, phy)
+            _human_delay(2)
 
         slots_researched += 1
         print(f"[{serial}] Slot #{slot_idx + 1} research started successfully!")
@@ -2387,8 +2621,9 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     adb_helper.press_back(serial)
     time.sleep(2)
 
-    # TODO: dynamic cooldown via OCR timer (future feature)
-    return slots_researched > 0
+    if slots_researched > 0:
+        return _ok(dynamic_cooldown_sec=21600)  # 6h cooldown
+    return _ok(message="RESEARCH_NO_SLOT: No empty research slot available")
 
 
 def _parse_research_timer(timer_str: str) -> int:
@@ -3007,6 +3242,9 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
         elif result == "ALL_LOCKED":
             print(f"[{serial}] [POLICY] All locked — stopping.")
             break
+        elif result == "REPLENISH_LOCKED":
+            print(f"[{serial}] [POLICY] Not enough points — 24h cooldown.")
+            break
         else:
             print(f"[{serial}] [POLICY] Unexpected result: {result}")
             break
@@ -3014,6 +3252,9 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
     print(f"\n[{serial}] ═══════════════════════════════════════════")
     print(f"[{serial}]   SEASON POLICIES — COMPLETE ({enacted_count} enacted)")
     print(f"[{serial}] ═══════════════════════════════════════════\n")
+
+    if result == "REPLENISH_LOCKED":
+        return _ok(dynamic_cooldown_sec=86400)  # 24h — not enough points
 
     return _ok()
 
@@ -3251,8 +3492,61 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
 
     time.sleep(2)
 
-    # 4. Recursive upgrade
-    _try_upgrade_or_go(serial, detector, remaining_slots, depth=0, max_depth=max_depth, result=result)
+    # 3. Recursive upgrade from Hall
+    remaining_slots = _try_upgrade_or_go(serial, detector, remaining_slots, depth=0, max_depth=max_depth, result=result)
+
+    # 4. Fallback: if slots remain but Hall paths exhausted, try other constructions
+    FALLBACK_CONSTRUCTIONS = ["MARKET", "RESEARCH_CENTER"]
+
+    if remaining_slots > 0:
+        print(f"[{serial}] Hall paths exhausted but {remaining_slots} slot(s) remaining. Trying fallback constructions...")
+
+        for construction_name in FALLBACK_CONSTRUCTIONS:
+            if remaining_slots <= 0:
+                break
+
+            print(f"[{serial}] --- Fallback: {construction_name} ---")
+
+            # Navigate to IN_CITY first
+            lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+            if not _is_ok(lobby_result):
+                print(f"[{serial}] Could not reach IN_CITY for {construction_name}. Skipping.")
+                continue
+
+            # Tap ONLY first coordinate (building position on map)
+            # Second coordinate enters inside building — we don't want that
+            building_pos = CONSTRUCTION_TAPS[construction_name][0]
+            print(f"[{serial}] Tapping {construction_name} building at {building_pos}...")
+            adb_helper.tap(serial, building_pos[0], building_pos[1])
+            time.sleep(2)
+
+            # Look for upgrade icon on building popup
+            icon_found = False
+            for retry in range(3):
+                icon_match = detector.check_activity(serial, target="CONSTRUCTION_UPGRADE_ICON", threshold=0.80)
+                if icon_match:
+                    _, ix, iy = icon_match
+                    print(f"[{serial}] Upgrade icon found at ({ix}, {iy}). Entering upgrade screen...")
+                    adb_helper.tap(serial, ix, iy)
+                    time.sleep(2)
+                    icon_found = True
+                    break
+                print(f"[{serial}] Upgrade icon not found on {construction_name}. Retry {retry + 1}/3...")
+                time.sleep(1)
+
+            if not icon_found:
+                print(f"[{serial}] No upgrade icon on {construction_name}. Skipping.")
+                continue
+
+            # Try upgrade (reuse same recursive logic)
+            remaining_slots = _try_upgrade_or_go(
+                serial, detector, remaining_slots,
+                depth=0, max_depth=max_depth, result=result
+            )
+
+            if remaining_slots <= 0:
+                print(f"[{serial}] No more slots after {construction_name}.")
+                break
 
     print(f"[{serial}] === UPGRADE CONSTRUCTION COMPLETE ===")
     print(f"[{serial}]   Upgraded: {result['upgraded']}")
@@ -3391,4 +3685,131 @@ def _try_upgrade_or_go(
     return remaining_slots
 
 
+# ── Quest Reward Claim ─────────────────────────────────────────
 
+# Tab coordinates (fixed, vertical left side)
+QUEST_TAB_COORDS = {
+    "quest":       (80, 175),
+    "challenges":  (80, 265),
+    "dark_chests": (80, 360),
+}
+
+MAX_CLAIMS_PER_TAB = 20  # Safety cap to prevent infinite loop
+
+
+def _claim_all_in_tab(serial: str, detector: GameStateDetector, tab_name: str) -> int:
+    """
+    Claim all available rewards in the current tab.
+    Game pushes unclaimed quests up after each claim, so we loop:
+      detect first Claim btn → tap → re-check → repeat.
+    Returns number of claims made.
+    """
+    claimed = 0
+
+    for attempt in range(MAX_CLAIMS_PER_TAB):
+        detector._screen_cache = None
+        matches = detector.find_all_activity_matches(
+            serial, target="QUEST_CLAIM_BTN", threshold=0.8
+        )
+
+        if not matches:
+            print(f"[{serial}] [{tab_name}] No more Claim buttons found. Total claimed: {claimed}")
+            break
+
+        # Tap the first (topmost) Claim button
+        cx, cy = matches[0]
+        print(f"[{serial}] [{tab_name}] Claim #{claimed + 1} at ({cx}, {cy}) — {len(matches)} visible")
+        adb_helper.tap(serial, cx, cy)
+        _human_delay(1.5)
+        claimed += 1
+
+    return claimed
+
+
+def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
+    """
+    Claim Quest Reward Workflow:
+    1. Navigate to IN_CITY lobby
+    2. Tap Events icon (35, 100) → verify QUEST_MENU
+    3. Process Quest tab — claim all available rewards
+    4. Process Challenges tab — claim all available rewards
+    5. Dark Chests tab — #TODO (placeholder)
+    6. Press back → return
+    """
+    print(f"[{serial}] === CLAIM QUEST REWARD ===")
+
+    # ── Phase 1: Navigate to Lobby ──
+    result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(result):
+        return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY")
+
+    # ── Phase 2: Open Quest Menu ──
+    print(f"[{serial}] Opening Events menu (35, 100)...")
+    adb_helper.tap(serial, 35, 100)
+    _human_delay(2.0)
+
+    # Verify Quest Menu opened
+    detector._screen_cache = None
+    quest_screen = detector.check_special_state(serial, target="QUEST_MENU")
+    if not quest_screen:
+        # Retry once — tap may have missed or overlay dismissed
+        print(f"[{serial}] QUEST_MENU not detected. Retrying tap (35, 100)...")
+        adb_helper.tap(serial, 35, 100)
+        _human_delay(2.0)
+        detector._screen_cache = None
+        quest_screen = detector.check_special_state(serial, target="QUEST_MENU")
+        if not quest_screen:
+            print(f"[{serial}] [FAILED] Could not open Quest Menu.")
+            return _fail("NAV_TARGET_NOT_REACHED: Could not open Quest Menu")
+
+    print(f"[{serial}] Quest Menu confirmed.")
+    total_claimed = 0
+
+    # ── Phase 3: Quest Tab ──
+    qx, qy = QUEST_TAB_COORDS["quest"]
+    print(f"[{serial}] Switching to Quest tab ({qx}, {qy})...")
+    adb_helper.tap(serial, qx, qy)
+    _human_delay(1.0)
+
+    quest_claimed = _claim_all_in_tab(serial, detector, "Quest")
+    total_claimed += quest_claimed
+    print(f"[{serial}] Quest tab done — claimed {quest_claimed} reward(s).")
+
+    # ── Phase 4: Challenges Tab (has 3 sub-tabs) ──
+    cx, cy = QUEST_TAB_COORDS["challenges"]
+    print(f"[{serial}] Switching to Challenges tab ({cx}, {cy})...")
+    adb_helper.tap(serial, cx, cy)
+    _human_delay(1.0)
+
+    # Sub-tab coordinates: tab 1 is already open, only need to click tab 2 & 3
+    CHALLENGES_SUB_TABS = [
+        ("Challenges-1", None),           # Already open by default
+        ("Challenges-2", (510, 210)),
+        ("Challenges-3", (685, 210)),
+    ]
+
+    challenges_claimed = 0
+    for sub_name, sub_coord in CHALLENGES_SUB_TABS:
+        if sub_coord:
+            sx, sy = sub_coord
+            print(f"[{serial}] Switching to {sub_name} ({sx}, {sy})...")
+            adb_helper.tap(serial, sx, sy)
+            _human_delay(1.0)
+
+        sub_claimed = _claim_all_in_tab(serial, detector, sub_name)
+        challenges_claimed += sub_claimed
+
+    total_claimed += challenges_claimed
+    print(f"[{serial}] Challenges tab done — claimed {challenges_claimed} reward(s) across 3 sub-tabs.")
+
+    # ── Phase 5: Dark Chests Tab (#TODO) ──
+    # dcx, dcy = QUEST_TAB_COORDS["dark_chests"]
+    # adb_helper.tap(serial, dcx, dcy)
+    # _human_delay(1.0)
+    # TODO: Implement Dark Chests logic
+
+    # ── Phase 6: Cleanup ──
+    print(f"[{serial}] === CLAIM QUEST REWARD COMPLETE — total {total_claimed} reward(s) claimed ===")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+    return _ok()

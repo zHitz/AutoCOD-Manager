@@ -62,6 +62,7 @@ export class ActivitySelectionPolicy {
             ...userPayload,
             cooldown_enabled: actConf.cooldown_enabled ?? defaults.cooldown_enabled,
             cooldown_minutes: actConf.cooldown_minutes ?? defaults.cooldown_minutes,
+            cooldown_minutes_max: actConf.cooldown_minutes_max ?? defaults.cooldown_minutes_max ?? 0,
             last_run: actConf.last_run || null
         };
     }

@@ -522,6 +522,15 @@ FUNCTION_REGISTRY = [
             },
         ],
     },
+    {
+        "id": "nav_to_claim_quest_reward",
+        "label": "Claim Quest Reward",
+        "category": "Core Actions",
+        "icon": "📋",
+        "color": "#6366f1",
+        "description": "Claim available quest and challenge rewards",
+        "params": [],
+    },
 ]
 
 
@@ -611,7 +620,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_rss_center_farm", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "gather_resource",
@@ -632,7 +641,7 @@ ACTIVITY_REGISTRY = [
                 "default": "wood",
             },
         ],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "full_scan",
@@ -645,7 +654,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "scan_full", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "catch_pet",
@@ -658,7 +667,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_capture_pet", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "claim_mail_reward",
@@ -679,7 +688,7 @@ ACTIVITY_REGISTRY = [
                 "default": "all",
             },
         ],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "claim_resources",
@@ -692,7 +701,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "claim_city_resources", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "train_troops",
@@ -741,7 +750,7 @@ ACTIVITY_REGISTRY = [
                 "default": "default"
             }
         ],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "claim_alliance_resource",
@@ -754,7 +763,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "claim_alliance_resource", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     # ── Merged Workflow Activities ──
     {
@@ -768,7 +777,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_alliance_help", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 15},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 15, "cooldown_minutes_max": 0},
     },
     {
         "id": "tavern_chest_draw",
@@ -803,7 +812,7 @@ ACTIVITY_REGISTRY = [
                 "default": "false",
             },
         ],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720, "cooldown_minutes_max": 0},
     },
     {
         "id": "heal_troops_task",
@@ -816,7 +825,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_heal_troops", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "attack_darkling_legions",
@@ -829,7 +838,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_darkling_legions", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "chat_with_hero_task",
@@ -842,7 +851,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_chat_hero", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 180},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 180, "cooldown_minutes_max": 0},
     },
     {
         "id": "research_technology_task",
@@ -870,7 +879,7 @@ ACTIVITY_REGISTRY = [
                 "min": 0,
             },
         ],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "buy_merchant_items_task",
@@ -892,7 +901,7 @@ ACTIVITY_REGISTRY = [
                 "max": 20,
             },
         ],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 720, "cooldown_minutes_max": 0},
     },
     {
         "id": "claim_daily_vip_gift_task",
@@ -905,7 +914,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_claim_vip_gift", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 1440},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 1440, "cooldown_minutes_max": 0},
     },
     {
         "id": "rotating_event",
@@ -924,12 +933,12 @@ ACTIVITY_REGISTRY = [
                     {"function_id": "nav_to_festival_of_fortitude", "config": {}},
                 ],
                 "config_fields": [],
-                "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360},
+                "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},
             },
         ],
         "steps": [],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "clean_trash_pet_sanctuary_task",
@@ -957,7 +966,7 @@ ACTIVITY_REGISTRY = [
                 "default": 0.30,
             },
         ],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 120},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 120, "cooldown_minutes_max": 0},
     },
     {
         "id": "season_policies_task",
@@ -970,7 +979,7 @@ ACTIVITY_REGISTRY = [
             {"function_id": "nav_to_season_policies", "config": {}},
         ],
         "config_fields": [],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
     {
         "id": "upgrade_construction_task",
@@ -992,7 +1001,20 @@ ACTIVITY_REGISTRY = [
                 "max": 10,
             },
         ],
-        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60},
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
+    },
+    {
+        "id": "claim_quest_reward_task",
+        "name": "Claim Quest Reward",
+        "icon": "📋",
+        "description": "Claim available quest and challenge rewards (Quest tab + Challenges tab)",
+        "weight": "light",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_claim_quest_reward", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},
     },
 ]
 

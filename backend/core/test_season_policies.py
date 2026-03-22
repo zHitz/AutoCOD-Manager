@@ -16,8 +16,7 @@ from backend.core.workflow.state_detector import GameStateDetector
 from backend.core.workflow import core_actions
 
 
-def test_season_policies(emulator_index=4, account_id="default", last_col=None):
-    serial = f"emulator-{5554 + emulator_index * 2}"
+def test_season_policies(serial="emulator-5572", account_id="default", last_col=None):
     print(f"\n[TEST] Starting Season Policies test on {serial} (account={account_id})...")
 
     # Init Detector
@@ -54,8 +53,8 @@ def test_season_policies(emulator_index=4, account_id="default", last_col=None):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Test Season Policies workflow")
-    parser.add_argument("emulator_index", type=int, nargs="?", default=4,
-                        help="Index of emulator (default: 4)")
+    parser.add_argument("serial", type=str, nargs="?", default="emulator-5572",
+                        help="Emulator serial (default: emulator-5572)")
     parser.add_argument("--account-id", type=str, default="default",
                         help="Account ID for per-account progress (default: 'default')")
     parser.add_argument("--last-col", type=int, default=None,
@@ -67,4 +66,4 @@ if __name__ == "__main__":
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-    test_season_policies(args.emulator_index, args.account_id, args.last_col)
+    test_season_policies(args.serial, args.account_id, args.last_col)

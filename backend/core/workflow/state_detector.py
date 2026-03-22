@@ -71,6 +71,7 @@ class GameStateDetector:
             "contructions/con_scout_sentry_post.png": "SCOUT_SENTRY_POST",
             "contructions/con_tavern.png": "TAVERN",
             "contructions/con_halfling_house.png": "HALFLING_HOUSE",
+            "contructions/buiding_upgrade.png": "BUILDING_UPGRADE",
             # Research Center — detect via tab headers (economy/military)
             "research/research_economy_tech.png": "RESEARCH_CENTER",
             "research/research_military_tech.png": "RESEARCH_CENTER",
@@ -96,6 +97,8 @@ class GameStateDetector:
             # Research Technology
             "research/research_no_resource.png": "RESEARCH_NO_RESOURCE",
             "research/research_no_confirm.png": "RESEARCH_NO_CONFIRM",
+            # Quest reward screen
+            "quests/quests_menu.png": "QUEST_MENU",
         }
         
         # Activity templates — returns name + center coordinates when matched
@@ -120,6 +123,7 @@ class GameStateDetector:
             "policy/enact_btn.png": "POLICY_ENACT_BTN",
             "policy/go_btn.png": "POLICY_GO_BTN",
             "policy/go_btn_uppercase.png": "POLICY_GO_BTN",
+            "policy/go_btn_governance.png": "POLICY_GO_BTN",
             "policy/select_btn.png": "POLICY_SELECT_BTN",
             "policy/target_default.png": "POLICY_TARGET_DEFAULT",
             "policy/replenish_resources.png": "POLICY_REPLENISH",
@@ -127,18 +131,21 @@ class GameStateDetector:
             # Research Technology
             "research/research_empty_slot.png": "RESEARCH_EMPTY_SLOT",
             "research/research_confirm.png": "RESEARCH_CONFIRM",
-            "research/research_alliance_help.png": "RESEARCH_ALLIANCE_HELP",
+            "research/research_allaince_help_btn.png": "RESEARCH_ALLIANCE_HELP",
             "research/research_use_bag.png": "RESEARCH_USE_BAG",
             "research/research_economy_tech.png": "RESEARCH_ECONOMY_TECH",
             "research/research_military_tech.png": "RESEARCH_MILITARY_TECH",
             # Construction Upgrade
             "contructions/upgrade_btn.png": "CONSTRUCTION_UPGRADE_BTN",
             "contructions/upgrade_icon.png": "CONSTRUCTION_UPGRADE_ICON",
+            "contructions/research_icon.png": "CONSTRUCTION_RESEARCH_ICON",
             "contructions/build_btn.png": "CONSTRUCTION_BUILD_BTN",
             "contructions/unlock_permanently_btn.png": "CONSTRUCTION_UNLOCK_PERMANENTLY_BTN",
             "contructions/hire_btn.png": "CONSTRUCTION_HIRE_BTN",
             "contructions/confirm_btn_gold_color.png": "CONSTRUCTION_CONFIRM_BTN",
             "contructions/building_go_btn.png": "CONSTRUCTION_GO_BTN",
+            # Quest claim button
+            "quests/claim_btn.png": "QUEST_CLAIM_BTN",
         }
 
         # Alliance templates
@@ -189,11 +196,6 @@ class GameStateDetector:
             # Pet capture — bottom button area only
             "pets/Auto-capture_in_progress.png": (305, 411, 761, 509),
             "pets/Auto-capture_start_icon.png": (305, 411, 761, 509),
-            # Policy popup buttons — center popup area only
-            "policy/go_btn.png": (250, 200, 710, 480),
-            "policy/enact_btn.png": (250, 200, 710, 480),
-            "policy/select_btn.png": (250, 200, 710, 480),
-            "policy/replenish_resources.png": (250, 200, 710, 480),
         }
 
         self._load_templates()

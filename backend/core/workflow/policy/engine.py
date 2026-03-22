@@ -231,6 +231,7 @@ class PolicyV3Engine:
         self.adb_path = adb_path
         self.account_id = account_id
         self.debug_dir = debug_dir
+        self._replenish_hit = False
 
     def _screencap(self):
         cmd = [self.adb_path, "-s", self.serial, "exec-out", "screencap", "-p"]
@@ -462,12 +463,19 @@ class PolicyV3Engine:
         # and would always return SELECT, masking the GO button)
         go_match = self.detector.check_activity(
             self.serial, target="POLICY_GO_BTN", threshold=0.92)
+        # Debug: also check with low threshold to see raw confidence
+        go_dbg = self.detector.check_activity(
+            self.serial, target="POLICY_GO_BTN", threshold=0.5)
+        _log(f"  [DEBUG] GO: real={go_match}, raw={go_dbg}")
         if go_match:
             _log(f"  Card {card_idx} has GO — prerequisites not met!")
             return "GO"
 
         enact_match = self.detector.check_activity(
             self.serial, target="POLICY_ENACT_BTN", threshold=0.85)
+        enact_dbg = self.detector.check_activity(
+            self.serial, target="POLICY_ENACT_BTN", threshold=0.5)
+        _log(f"  [DEBUG] ENACT: real={enact_match}, raw={enact_dbg}")
         if enact_match:
             _log(f"  Card {card_idx} has ENACT — enacting directly")
             success = _tap_policy_enact(self.serial, self.detector)
@@ -475,6 +483,10 @@ class PolicyV3Engine:
                 return True
             self._close_popup()
             return False
+
+        select_match = self.detector.check_activity(
+            self.serial, target="POLICY_SELECT_BTN", threshold=0.5)
+        _log(f"  [DEBUG] SELECT: raw={select_match}")
 
         _log(f"  No GO or ENACT after card tap — proceeding with SELECT")
 
@@ -509,6 +521,7 @@ class PolicyV3Engine:
         )
         if replenish:
             _log("  ⚠ REPLENISH RESOURCES popup — not enough points!")
+            self._replenish_hit = True
             self._close_popup()
             time.sleep(1)
             return False
@@ -617,7 +630,7 @@ class PolicyV3Engine:
                 _log(f"  >>> Found ENACT at ({ex}, {ey}) via GO chain!")
                 adb_helper.tap(self.serial, ex, ey)
                 if not self._post_enact_check():
-                    return "ALL_LOCKED"  # REPLENISH — not enough points
+                    return "REPLENISH_LOCKED"
                 self._close_popup()
                 return "ENACT_SUCCESS"
 
@@ -644,7 +657,7 @@ class PolicyV3Engine:
                 _log("  >>> Found ENACT via GO chain!")
                 success = _tap_policy_enact(self.serial, self.detector)
                 if success and not self._post_enact_check():
-                    return "ALL_LOCKED"  # REPLENISH — not enough points
+                    return "REPLENISH_LOCKED"
                 self._close_popup()
                 return "ENACT_SUCCESS" if success else "LOCKED"
 
@@ -667,7 +680,7 @@ class PolicyV3Engine:
                     _log("  >>> Found ENACT on retry!")
                     success = _tap_policy_enact(self.serial, self.detector)
                     if success and not self._post_enact_check():
-                        return "ALL_LOCKED"  # REPLENISH
+                        return "REPLENISH_LOCKED"
                     self._close_popup()
                     return "ENACT_SUCCESS" if success else "LOCKED"
                 elif popup2 == "REQUIREMENTS_GO":
@@ -768,7 +781,7 @@ class PolicyV3Engine:
                 success = _tap_policy_enact(self.serial, self.detector)
                 if not success or not self._post_enact_check():
                     self._close_popup()
-                    return "ALL_LOCKED"  # REPLENISH or ENACT failed
+                    return "REPLENISH_LOCKED"
                 self._close_popup()
                 save_progress(col_idx, self.account_id)
                 return "TARGET_ENACTED"
@@ -815,7 +828,7 @@ class PolicyV3Engine:
                 success = _tap_policy_enact(self.serial, self.detector)
                 if not success or not self._post_enact_check():
                     self._close_popup()
-                    return "ALL_LOCKED"  # REPLENISH or ENACT failed
+                    return "REPLENISH_LOCKED"
                 self._close_popup()
                 save_progress(col_idx, self.account_id)
                 return "TARGET_ENACTED"
