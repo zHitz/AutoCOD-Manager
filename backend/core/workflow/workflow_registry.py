@@ -531,6 +531,24 @@ FUNCTION_REGISTRY = [
         "description": "Claim available quest and challenge rewards",
         "params": [],
     },
+    {
+        "id": "nav_to_donate_alliance_tech",
+        "label": "Donate Alliance Technology",
+        "category": "Core Actions",
+        "icon": "🔬",
+        "color": "#6366f1",
+        "description": "Navigate to Alliance Technology tab and donate",
+        "params": [],
+    },
+    {
+        "id": "nav_to_claim_scout_sentry",
+        "label": "Claim Scout Sentry Post",
+        "category": "Core Actions",
+        "icon": "🔭",
+        "color": "#6366f1",
+        "description": "Claim rewards from Scout Sentry Post (Quick Help + Claim All)",
+        "params": [],
+    },
 ]
 
 
@@ -1012,6 +1030,32 @@ ACTIVITY_REGISTRY = [
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_claim_quest_reward", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},
+    },
+    {
+        "id": "donate_alliance_tech_task",
+        "name": "Donate Alliance Technology",
+        "icon": "🔬",
+        "description": "Donate to Alliance Technology research (free donate only)",
+        "weight": "light",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_donate_alliance_tech", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},
+    },
+    {
+        "id": "claim_scout_sentry_task",
+        "name": "Claim Scout Sentry Post",
+        "icon": "🔭",
+        "description": "Quick Help scouts and claim all rewards from Sentry Post",
+        "weight": "light",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_claim_scout_sentry", "config": {}},
         ],
         "config_fields": [],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},

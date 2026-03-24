@@ -160,7 +160,7 @@ async def execute_recipe(
 
             # App/System Controls
             elif fn_id == "sys_start_app":
-                pkg = config.get("package", "com.farlightgames.samo.gp.vn")
+                pkg = config.get("package", core_actions.get_package_for_provider())
                 was_running = await asyncio.to_thread(
                     core_actions.ensure_app_running, serial, pkg
                 )
@@ -170,7 +170,7 @@ async def execute_recipe(
                     await asyncio.sleep(10)  # Give it time to boot up
 
             elif fn_id == "sys_close_app":
-                pkg = config.get("package", "com.farlightgames.samo.gp.vn")
+                pkg = config.get("package", core_actions.get_package_for_provider())
                 await asyncio.to_thread(adb_helper.kill_app, serial, pkg)
                 await asyncio.sleep(2)
 
@@ -185,7 +185,7 @@ async def execute_recipe(
                     core_actions.startup_to_lobby,
                     serial,
                     detector,
-                    package_name="com.farlightgames.samo.gp.vn",
+                    package_name=core_actions.get_package_for_provider(),
                     load_timeout=timeout,
                 )
 
@@ -640,6 +640,16 @@ async def execute_recipe(
             elif fn_id == "nav_to_claim_quest_reward":
                 ok = await asyncio.to_thread(
                     core_actions.claim_quest_reward, serial, detector
+                )
+
+            elif fn_id == "nav_to_donate_alliance_tech":
+                ok = await asyncio.to_thread(
+                    core_actions.donate_alliance_technology, serial, detector
+                )
+
+            elif fn_id == "nav_to_claim_scout_sentry":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_scout_sentry_post, serial, detector
                 )
 
             else:

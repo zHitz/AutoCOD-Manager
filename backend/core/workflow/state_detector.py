@@ -144,8 +144,13 @@ class GameStateDetector:
             "contructions/hire_btn.png": "CONSTRUCTION_HIRE_BTN",
             "contructions/confirm_btn_gold_color.png": "CONSTRUCTION_CONFIRM_BTN",
             "contructions/building_go_btn.png": "CONSTRUCTION_GO_BTN",
+            "contructions/con_info_btn.png": "CONSTRUCTION_INFO_BTN",
             # Quest claim button
             "quests/claim_btn.png": "QUEST_CLAIM_BTN",
+            # Scout Sentry Post buttons
+            "contructions/scout_sentry_post_btn.png": "SCOUT_SENTRY_POST_BTN",
+            "contructions/scout_quick_help_btn.png": "SCOUT_QUICK_HELP_BTN",
+            "contructions/scout_claim_all.btn.png": "SCOUT_CLAIM_ALL_BTN",
         }
 
         # Alliance templates
@@ -154,6 +159,7 @@ class GameStateDetector:
             "alliance/no_rally.png": "NO_RALLY",
             "alliance/already_join_rally.png": "ALREADY_JOIN_RALLY",
             "alliance/alliance_help_btn.png": "ALLIANCE_HELP",
+            "alliance/alliance_donate_btn.png": "ALLIANCE_DONATE_BTN",
         }
         
         # Icon templates — dedicated detector for locating items/markers with coordinates

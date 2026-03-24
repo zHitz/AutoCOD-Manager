@@ -50,7 +50,7 @@ CONSTRUCTION_DATA = {
         "base": (456, 111),
         "verify": "HALL",
         "features": {
-            "info":    {"type": "fixed", "x": 380, "y": 116},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 380, "y": 116}},
             "upgrade": {"type": "template", "template": "CONSTRUCTION_UPGRADE_ICON", "verify": "BUILDING_UPGRADE"},
         },
     },
@@ -58,7 +58,7 @@ CONSTRUCTION_DATA = {
         "base": (639, 232),
         "verify": "MARKET",
         "features": {
-            "info":    {"type": "fixed", "x": 545, "y": 267},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 545, "y": 267}},
             "upgrade": {"type": "template", "template": "CONSTRUCTION_UPGRADE_ICON", "verify": "BUILDING_UPGRADE"},
         },
     },
@@ -66,7 +66,7 @@ CONSTRUCTION_DATA = {
         "base": (705, 380),
         "verify": "ELIXIR_HEALING",
         "features": {
-            "info":    {"type": "fixed", "x": 793, "y": 405},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 793, "y": 405}},
             "upgrade": {"type": "template", "template": "CONSTRUCTION_UPGRADE_ICON", "verify": "BUILDING_UPGRADE"},
         },
     },
@@ -74,31 +74,39 @@ CONSTRUCTION_DATA = {
         "base": (702, 279),
         "verify": "SHOP",
         "features": {
-            "info":    {"type": "fixed", "x": 693, "y": 351},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 693, "y": 351}},
         },
     },
     "RESEARCH_CENTER": {
         "base": (535, 210),
         "verify": "RESEARCH_CENTER",
         "features": {
-            "info":     {"type": "fixed", "x": 615, "y": 230},
+            "info":     {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 615, "y": 230}},
             "upgrade":  {"type": "template", "template": "CONSTRUCTION_UPGRADE_ICON", "verify": "BUILDING_UPGRADE"},
-            "research": {"type": "template", "template": "CONSTRUCTION_RESEARCH_ICON", "verify": "RESEARCH_CENTER"},
+            "research": {"type": "template", "template": "CONSTRUCTION_RESEARCH_ICON", "verify": "RESEARCH_CENTER", "fallback": {"x": 615, "y": 230}},
         },
     },
     "TAVERN": {
         "base": (610, 365),
         "verify": "TAVERN",
         "features": {
-            "info":    {"type": "fixed", "x": 523, "y": 327},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 523, "y": 327}},
         },
     },
     "HALFLING_HOUSE": {
         "base": (715, 210),
         "verify": "HALFLING_HOUSE",
         "features": {
-            "info":    {"type": "fixed", "x": 760, "y": 260},
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 760, "y": 260}},
             "upgrade": {"type": "template", "template": "CONSTRUCTION_UPGRADE_ICON", "verify": "BUILDING_UPGRADE"},
+        },
+    },
+    "SCOUT_SENTRY_POST": {
+        "base": (755, 235),
+        "verify": "SCOUT_SENTRY_POST",
+        "features": {
+            "info":    {"type": "template", "template": "CONSTRUCTION_INFO_BTN", "fallback": {"x": 715, "y": 300}},
+            "scout":   {"type": "template", "template": "SCOUT_SENTRY_POST_BTN", "verify": "SCOUT_SENTRY_POST"},
         },
     },
 }

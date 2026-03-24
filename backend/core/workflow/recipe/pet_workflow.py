@@ -19,7 +19,7 @@ from workflow import core_actions
 
 # Configuration
 SERIAL = "emulator-5556"
-APP_PACKAGE = "com.farlightgames.samo.gp.vn"
+APP_PACKAGE = core_actions.get_package_for_provider()
 
 
 def main():

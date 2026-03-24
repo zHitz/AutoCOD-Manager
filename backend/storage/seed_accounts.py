@@ -110,7 +110,7 @@ MOCK_ACCOUNTS = [
         "petToken": 60,
         "login_method": "Google",
         "email": "miner@gmail.com",
-        "provider": "Asia",
+        "provider": "Funtap",
         "alliance": "[KOR] Warriors",
         "note": "Supply main",
         "status": "ONLINE",

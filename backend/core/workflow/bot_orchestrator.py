@@ -60,7 +60,7 @@ class BotOrchestrator:
         self.misc_config = misc_config or {}
         self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
         self.continue_on_error = self.misc_config.get("continue_on_error", False)
-        self.package_name = "com.farlightgames.samo.gp.vn"
+        self.package_name = core_actions.get_package_for_provider()  # default, updated per-account
 
         self.main_task: asyncio.Task = None
 
@@ -885,6 +885,8 @@ class BotOrchestrator:
                 consecutive_skips = 0
 
                 self.account_statuses[acc_id] = "running"
+                # Resolve package per-account provider (Global → .gp, Asia → .gp.vn)
+                self.package_name = core_actions.get_package_for_provider(acc.get("provider"))
                 await self.broadcast_state()
 
                 print(
@@ -1097,11 +1099,15 @@ class BotOrchestrator:
 
                 # Shuffle activity order per-account for anti-detection
                 # Then fix relative order of troop-dependent activities:
-                #   attack_darkling_legions → catch_pet/gather_rss_center (random) → gather_resource (last)
+                #   claim_scout_sentry → attack_darkling → catch_pet/gather_rss_center (random) → gather_resource (last)
                 # because gather_resource uses ALL troops and would block the others.
-                TROOP_FIRST = "attack_darkling_legions"
-                TROOP_MIDDLE = {"catch_pet", "gather_rss_center"}
-                TROOP_LAST = "gather_resource"
+                TROOP_ORDER = {
+                    "claim_scout_sentry_task": 0,   # scouts needed before combat
+                    "attack_darkling_legions": 1,    # uses combat troops
+                    "catch_pet": 2,                  # uses troops (random with rss_center)
+                    "gather_rss_center": 2,          # uses troops (random with catch_pet)
+                    "gather_resource": 99,           # LAST — uses ALL remaining troops
+                }
 
                 run_order = list(range(len(self.activities)))
                 random.shuffle(run_order)
@@ -1110,26 +1116,16 @@ class BotOrchestrator:
                 troop_positions = []  # (position_in_run_order, original_index)
                 for pos, orig_idx in enumerate(run_order):
                     aid = act_keys[orig_idx]
-                    if aid in (TROOP_FIRST, TROOP_LAST) or aid in TROOP_MIDDLE:
+                    if aid in TROOP_ORDER:
                         troop_positions.append((pos, orig_idx))
 
                 if len(troop_positions) >= 2:
-                    # Separate troop activities by role
-                    first_items, middle_items, last_items = [], [], []
-                    for pos, orig_idx in troop_positions:
-                        aid = act_keys[orig_idx]
-                        if aid == TROOP_FIRST:
-                            first_items.append(orig_idx)
-                        elif aid in TROOP_MIDDLE:
-                            middle_items.append(orig_idx)
-                        elif aid == TROOP_LAST:
-                            last_items.append(orig_idx)
+                    # Sort troop items by their priority, with same-priority items shuffled
+                    troop_items = [(TROOP_ORDER[act_keys[oi]], random.random(), oi) for _, oi in troop_positions]
+                    troop_items.sort()
+                    desired_troop_order = [oi for _, _, oi in troop_items]
 
-                    # Build desired troop order: first → middle (random) → last
-                    random.shuffle(middle_items)
-                    desired_troop_order = first_items + middle_items + last_items
-
-                    # Extract just the positions (sorted) and assign desired order to them
+                    # Assign desired order into the sorted positions
                     sorted_positions = sorted(p for p, _ in troop_positions)
                     for slot_pos, orig_idx in zip(sorted_positions, desired_troop_order):
                         run_order[slot_pos] = orig_idx

@@ -17,7 +17,7 @@ from workflow import core_actions
 
 # Configuration
 SERIAL = "emulator-5558"
-APP_PACKAGE = "com.farlightgames.samo.gp.vn"
+APP_PACKAGE = core_actions.get_package_for_provider()
 
 def parse_training_args(args):
     """Parses list of arguments like ['cavalry,3', 'infantry,default', 'archer'] into tuples"""

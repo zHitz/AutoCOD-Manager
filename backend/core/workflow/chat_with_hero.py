@@ -8,7 +8,7 @@ from backend.config import config
 from backend.core.workflow import adb_helper, core_actions
 from backend.core.workflow.state_detector import GameStateDetector
 
-APP_PACKAGE = "com.farlightgames.samo.gp.vn"
+APP_PACKAGE = core_actions.get_package_for_provider()
 HERO_TEMPLATE_NAMES = ["hero_chat_1.png", "hero_chat_2.png", "hero_chat_3.png"]
 MATCH_THRESHOLD = 0.82
 CHAT_BUTTON_Y_OFFSET = 100

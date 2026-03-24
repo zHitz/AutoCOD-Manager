@@ -102,7 +102,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
         templates_dir = os.path.join(os.path.dirname(__file__), "workflow", "templates")
         detector = GameStateDetector(app_config.adb_path, templates_dir)
 
-        APP_PACKAGE = "com.farlightgames.samo.gp.vn"
+        APP_PACKAGE = core_actions.get_package_for_provider()
         game_id = ""
         try:
             _log_scan(
