@@ -110,6 +110,7 @@ class GameStateDetector:
             "activities/legion_5.png": "LEGION_5",
             "activities/legion_idle.png": "LEGION_IDLE",
             "activities/create_legion.png": "CREATE_LEGION",
+            "activities/create_legion_in_rss_center.png": "CREATE_LEGION_RSS",
             "icon_markers/rss_center.png": "RSS_CENTER_MARKER",
             "activities/legion_view.png": "RSS_VIEW",
             "activities/legion_gather.png": "RSS_GATHER",
@@ -151,6 +152,13 @@ class GameStateDetector:
             "contructions/scout_sentry_post_btn.png": "SCOUT_SENTRY_POST_BTN",
             "contructions/scout_quick_help_btn.png": "SCOUT_QUICK_HELP_BTN",
             "contructions/scout_claim_all.btn.png": "SCOUT_CLAIM_ALL_BTN",
+            # Merchant Store (Goblin Merchant)
+            "alliance/goblin_merchant.png": "GOBLIN_MERCHANT_ICON",
+            "alliance/merchant_rss_1.png": "MERCHANT_RSS_ITEM_1",
+            "alliance/merchant_rss_2.png": "MERCHANT_RSS_ITEM_2",
+            "alliance/merchant_rss_3.png": "MERCHANT_RSS_ITEM_3",
+            # VIP Store (Alliance)
+            "alliance/vip_store_icon.png": "VIP_STORE_ICON",
         }
 
         # Alliance templates
@@ -287,30 +295,37 @@ class GameStateDetector:
 
     # ── Core matching engine (OPT-1 ROI + OPT-2 Grayscale) ──
 
-    def _match_single(self, screen_gray: np.ndarray, entry: dict, threshold: float):
+    def _match_single(self, screen_gray: np.ndarray, entry: dict, threshold: float, use_color: bool = False, screen_color: np.ndarray = None):
         """
-        Match one template entry against screen. Uses grayscale + ROI.
+        Match one template entry against screen. Uses grayscale + ROI by default.
+        If use_color=True, uses COLOR (BGR) matching instead (requires screen_color).
         Returns (max_val, max_loc_on_screen).
         max_loc is adjusted to absolute screen coordinates if ROI was used.
         """
-        tmpl_gray = entry["gray"]
+        if use_color and screen_color is not None:
+            tmpl = entry["color"]
+            screen_src = screen_color
+        else:
+            tmpl = entry["gray"]
+            screen_src = screen_gray
+
         roi = entry.get("roi")
 
         if roi:
             x1, y1, x2, y2 = roi
-            region = screen_gray[y1:y2, x1:x2]
+            region = screen_src[y1:y2, x1:x2]
             # Safety: ROI must be larger than template
-            if region.shape[0] < tmpl_gray.shape[0] or region.shape[1] < tmpl_gray.shape[1]:
-                region = screen_gray
+            if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
+                region = screen_src
                 roi = None  # Fallback to full screen
         else:
-            region = screen_gray
+            region = screen_src
 
         # Safety: region must be larger than template for matchTemplate
-        if region.shape[0] < tmpl_gray.shape[0] or region.shape[1] < tmpl_gray.shape[1]:
+        if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
             return 0.0, (0, 0)
 
-        res = cv2.matchTemplate(region, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+        res = cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
         # Adjust coordinates to absolute screen position
@@ -483,9 +498,9 @@ class GameStateDetector:
         
         for name, entries in checks.items():
             for entry in entries:
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold)
+                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
                 if max_val >= threshold:
-                    h, w = entry["gray"].shape[:2]
+                    h, w = entry["color"].shape[:2]
                     center_x = max_loc[0] + w // 2
                     center_y = max_loc[1] + h // 2
                     print(f"[ACTIVITY] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
@@ -563,7 +578,6 @@ class GameStateDetector:
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-        screen_gray = self._get_gray(screen)
 
         if target:
             if target not in self.alliance_templates:
@@ -574,9 +588,10 @@ class GameStateDetector:
         
         for name, entries in checks.items():
             for entry in entries:
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold)
+                screen_gray = self._get_gray(screen)
+                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
                 if max_val >= threshold:
-                    h, w = entry["gray"].shape[:2]
+                    h, w = entry["color"].shape[:2]
                     center_x = max_loc[0] + w // 2
                     center_y = max_loc[1] + h // 2
                     print(f"[ALLIANCE] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
@@ -592,7 +607,6 @@ class GameStateDetector:
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-        screen_gray = self._get_gray(screen)
 
         if target:
             if target not in self.icon_templates:
@@ -603,9 +617,10 @@ class GameStateDetector:
         
         for name, entries in checks.items():
             for entry in entries:
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold)
+                screen_gray = self._get_gray(screen)
+                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
                 if max_val >= threshold:
-                    h, w = entry["gray"].shape[:2]
+                    h, w = entry["color"].shape[:2]
                     center_x = max_loc[0] + w // 2
                     center_y = max_loc[1] + h // 2
                     print(f"[ICON] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
@@ -621,7 +636,6 @@ class GameStateDetector:
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-        screen_gray = self._get_gray(screen)
 
         if target:
             if target not in self.account_templates:
@@ -632,9 +646,10 @@ class GameStateDetector:
         
         for name, entries in checks.items():
             for entry in entries:
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold)
+                screen_gray = self._get_gray(screen)
+                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
                 if max_val >= threshold:
-                    h, w = entry["gray"].shape[:2]
+                    h, w = entry["color"].shape[:2]
                     center_x = max_loc[0] + w // 2
                     center_y = max_loc[1] + h // 2
                     return (name, center_x, center_y)

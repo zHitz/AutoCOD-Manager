@@ -1621,6 +1621,7 @@ class Database:
         game_id: str,
         lord_name: str = "",
         snapshot_id: int = 0,
+        provider: str = "Global",
     ) -> dict:
         """After a scan, link game_id to accounts or create pending.
         Returns {"action": "linked"|"pending", "account_id"|"pending_id": int}"""
@@ -1641,9 +1642,10 @@ class Database:
                     """UPDATE accounts SET
                         emulator_id = ?, is_active = 1,
                         lord_name = CASE WHEN ? != '' THEN ? ELSE lord_name END,
+                        provider = ?,
                         updated_at = ?
                        WHERE game_id = ?""",
-                    (emulator_id, lord_name, lord_name, now, game_id),
+                    (emulator_id, lord_name, lord_name, provider, now, game_id),
                 )
                 # Deactivate other accounts on same emulator
                 await db.execute(

@@ -160,7 +160,9 @@ async def execute_recipe(
 
             # App/System Controls
             elif fn_id == "sys_start_app":
-                pkg = config.get("package", core_actions.get_package_for_provider())
+                pkg = config.get("package") or core_actions.get_package_for_provider(
+                    core_actions.detect_provider_from_emulator(serial)
+                )
                 was_running = await asyncio.to_thread(
                     core_actions.ensure_app_running, serial, pkg
                 )
@@ -170,7 +172,9 @@ async def execute_recipe(
                     await asyncio.sleep(10)  # Give it time to boot up
 
             elif fn_id == "sys_close_app":
-                pkg = config.get("package", core_actions.get_package_for_provider())
+                pkg = config.get("package") or core_actions.get_package_for_provider(
+                    core_actions.detect_provider_from_emulator(serial)
+                )
                 await asyncio.to_thread(adb_helper.kill_app, serial, pkg)
                 await asyncio.sleep(2)
 
@@ -181,11 +185,14 @@ async def execute_recipe(
             # ── Startup / Boot ──
             elif fn_id == "startup_to_lobby":
                 timeout = int(config.get("timeout", 120))
+                detected_pkg = config.get("package") or core_actions.get_package_for_provider(
+                    core_actions.detect_provider_from_emulator(serial)
+                )
                 ok = await asyncio.to_thread(
                     core_actions.startup_to_lobby,
                     serial,
                     detector,
-                    package_name=core_actions.get_package_for_provider(),
+                    package_name=detected_pkg,
                     load_timeout=timeout,
                 )
 
@@ -650,6 +657,11 @@ async def execute_recipe(
             elif fn_id == "nav_to_claim_scout_sentry":
                 ok = await asyncio.to_thread(
                     core_actions.claim_scout_sentry_post, serial, detector
+                )
+
+            elif fn_id == "nav_to_claim_vip_reward":
+                ok = await asyncio.to_thread(
+                    core_actions.claim_daily_vip_reward, serial, detector
                 )
 
             else:

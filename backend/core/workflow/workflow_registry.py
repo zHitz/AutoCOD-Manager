@@ -549,6 +549,15 @@ FUNCTION_REGISTRY = [
         "description": "Claim rewards from Scout Sentry Post (Quick Help + Claim All)",
         "params": [],
     },
+    {
+        "id": "nav_to_claim_vip_reward",
+        "label": "Claim Daily VIP Reward",
+        "category": "Core Actions",
+        "icon": "👑",
+        "color": "#6366f1",
+        "description": "Claim daily VIP reward from Alliance Store Honorary Membership",
+        "params": [],
+    },
 ]
 
 
@@ -930,6 +939,19 @@ ACTIVITY_REGISTRY = [
         "steps": [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "nav_to_claim_vip_gift", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 1440, "cooldown_minutes_max": 0},
+    },
+    {
+        "id": "claim_daily_vip_reward_task",
+        "name": "Claim Daily VIP Reward",
+        "icon": "👑",
+        "description": "Claim daily VIP reward from Alliance Store Honorary Membership",
+        "weight": "light",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_claim_vip_reward", "config": {}},
         ],
         "config_fields": [],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 1440, "cooldown_minutes_max": 0},

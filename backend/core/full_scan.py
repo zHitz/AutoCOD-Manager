@@ -102,7 +102,14 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
         templates_dir = os.path.join(os.path.dirname(__file__), "workflow", "templates")
         detector = GameStateDetector(app_config.adb_path, templates_dir)
 
-        APP_PACKAGE = core_actions.get_package_for_provider()
+        # Auto-detect which game provider is on this emulator
+        detected_provider = core_actions.detect_provider_from_emulator(serial, app_config.adb_path)
+        APP_PACKAGE = core_actions.get_package_for_provider(detected_provider)
+        _log_scan(
+            serial, "INFO",
+            f"Detected provider: {detected_provider} → package: {APP_PACKAGE}",
+            step="extracting_id", emulator_index=emulator_index, emulator_name=emulator_name,
+        )
         game_id = ""
         try:
             _log_scan(
@@ -385,6 +392,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
                         game_id=game_id,
                         lord_name=lord_name,
                         snapshot_id=snap_id,
+                        provider=detected_provider,
                     )
             return snap_id, link_result
 

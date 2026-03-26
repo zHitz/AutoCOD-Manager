@@ -259,6 +259,10 @@ const HistoryPage = {
                 ${imgUrl ? `
                     <div class="debug-card__image" onclick="HistoryPage.openLightbox('${imgUrl}')">
                         <img src="${imgUrl}" onerror="this.parentElement.style.display='none'" />
+                        <button class="debug-card__copy-btn" onclick="event.stopPropagation(); HistoryPage.copyDebugImage('${imgUrl}', this)" title="Copy image to clipboard">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            <span>Copy</span>
+                        </button>
                     </div>
                 ` : `
                     <div class="debug-card__no-image">
@@ -279,6 +283,46 @@ const HistoryPage = {
                 </div>
             </div>
         `;
+    },
+
+    async copyDebugImage(imgUrl, btnEl) {
+        try {
+            const response = await fetch(imgUrl);
+            const blob = await response.blob();
+            const pngBlob = await this._convertToPng(blob);
+            await navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': pngBlob })
+            ]);
+            if (btnEl) {
+                const label = btnEl.querySelector('span');
+                if (label) {
+                    label.textContent = 'Copied';
+                    setTimeout(() => { label.textContent = 'Copy'; }, 1200);
+                }
+            }
+        } catch (err) {
+            console.warn('[Debug] Failed to copy image:', err);
+            Toast.error('Copy failed', 'Could not copy image to clipboard');
+        }
+    },
+
+    _convertToPng(blob) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                canvas.toBlob((pngBlob) => {
+                    if (pngBlob) resolve(pngBlob);
+                    else reject(new Error('Canvas toBlob returned null'));
+                }, 'image/png');
+            };
+            img.onerror = () => reject(new Error('Failed to load image'));
+            img.src = URL.createObjectURL(blob);
+        });
     },
 
     openLightbox(src) {

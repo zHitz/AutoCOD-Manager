@@ -20,6 +20,10 @@ tests/
 debug/
 merge/
 
+# Prevent test/debug files from being re-added under backend/core
+backend/core/test_*.py
+backend/core/debug_*/
+
 # IDE and Editor files
 .vscode/
 .idea/
@@ -38,6 +42,10 @@ scan_captures/
 RAW_SCREENS/
 backend/core/workflow/templates/_unknown_captures/
 
+# Cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 
 # Agent
 .agent/

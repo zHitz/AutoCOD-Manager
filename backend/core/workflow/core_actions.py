@@ -41,6 +41,44 @@ def get_package_for_provider(provider: str = None) -> str:
     return PROVIDER_PACKAGES.get(provider, PROVIDER_PACKAGES[DEFAULT_PROVIDER])
 
 
+# Reverse map: package → provider
+PACKAGE_PROVIDERS = {pkg: prov for prov, pkg in PROVIDER_PACKAGES.items()}
+
+
+def detect_provider_from_emulator(serial: str, adb_path: str = None) -> str:
+    """Auto-detect provider by checking which game package is on the emulator.
+    Checks running foreground app first, then falls back to installed packages.
+    Returns provider string ('Global' or 'Funtap'), defaults to DEFAULT_PROVIDER.
+    """
+    if adb_path is None:
+        adb_path = config.adb_path
+    import subprocess
+    # 1. Check foreground app
+    try:
+        out = subprocess.check_output(
+            [adb_path, "-s", serial, "shell", "dumpsys", "activity", "recents"],
+            timeout=5, text=True, stderr=subprocess.DEVNULL,
+        )
+        for pkg, prov in PACKAGE_PROVIDERS.items():
+            if pkg in out:
+                return prov
+    except Exception:
+        pass
+    # 2. Fallback: check installed packages
+    try:
+        out = subprocess.check_output(
+            [adb_path, "-s", serial, "shell", "pm", "list", "packages"],
+            timeout=5, text=True, stderr=subprocess.DEVNULL,
+        )
+        # Check Global first (more specific, .gp won't match .gp.vn substring)
+        for pkg in sorted(PACKAGE_PROVIDERS.keys(), key=len):
+            if f"package:{pkg}" in out:
+                return PACKAGE_PROVIDERS[pkg]
+    except Exception:
+        pass
+    return DEFAULT_PROVIDER
+
+
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
 
@@ -1572,6 +1610,14 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         # Not full — send troops to build (Create Legion -> Dispatch)
         print(f"[{serial}] [TH1] Sending troops to build RSS Center...")
 
+        # RSS Center panel may show a list-style "Create Legion" button first
+        rss_create = _detect_with_retry(serial, detector, "CREATE_LEGION_RSS", threshold=0.8, attempts=2, delay=1)
+        if rss_create:
+            _, rx, ry = rss_create
+            print(f"[{serial}] [TH1] RSS Create Legion found at ({rx}, {ry}). Tapping...")
+            adb_helper.tap(serial, rx, ry)
+            _human_delay(2.0)
+
         create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
         if not create_result:
             print(f"[{serial}] [TH1] CREATE_LEGION not found. Aborting.")
@@ -1604,6 +1650,14 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     else:
         # ========== TH2: Gather State (already built) ==========
         print(f"[{serial}] [TH2] Dispatching gather legion...")
+
+        # RSS Center panel may show a list-style "Create Legion" button first
+        rss_create = _detect_with_retry(serial, detector, "CREATE_LEGION_RSS", threshold=0.8, attempts=2, delay=1)
+        if rss_create:
+            _, rx, ry = rss_create
+            print(f"[{serial}] [TH2] RSS Create Legion found at ({rx}, {ry}). Tapping...")
+            adb_helper.tap(serial, rx, ry)
+            _human_delay(2.0)
 
         create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
         if not create_result:
@@ -3020,123 +3074,6 @@ def _parse_research_timer(timer_str: str) -> int:
 
     return total_sec
 
-def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: int = 5) -> dict:
-    """
-    Buys all resource-priced items from the Goblin Merchant.
-    Skips gem-priced items. Scrolls down for more items. Refreshes up to max_refreshes times.
-    Assumes we are already at the GOBLIN_MERCHANT screen (call go_to_goblin_merchant first).
-    """
-    print(f"[{serial}] Starting Goblin Merchant buy workflow (Refreshes: {max_refreshes})...")
-    
-    # Load resource icon template for price checking
-    templates_dir = detector.templates_dir
-    resource_icon_path = os.path.join(templates_dir, "icon_markers", "merchant_resource_icon.png")
-    resource_icon = cv2.imread(resource_icon_path, cv2.IMREAD_COLOR)
-    if resource_icon is None:
-        print(f"[{serial}] [FAILED] Could not load merchant_resource_icon.png from {resource_icon_path}")
-        return _fail("TEMPLATE_NO_MATCH: Could not load merchant_resource_icon.png")
-    
-    # Grid layout: 4 columns x 2 rows of buy buttons (center coordinates)
-    SLOT_BUY_BUTTONS = [
-        # Row 1 (Speedups)
-        (258, 295), (412, 295), (567, 295), (720, 295),
-        # Row 2 (Boosts)
-        (258, 462), (412, 462), (567, 462), (720, 462),
-    ]
-    
-    # Offset from buy button center to the resource/gem icon region
-    ICON_OFFSET_X = -55   # icon is to the left of price text
-    ICON_OFFSET_Y = -12   # slightly above center
-    ICON_CROP_W = 28
-    ICON_CROP_H = 28
-    
-    REFRESH_BTN = (728, 130)
-    
-    def _scan_and_buy_visible(screenshot):
-        """Scan all visible slots and buy resource-priced items. Returns count of items bought."""
-        bought = 0
-        for idx, (bx, by) in enumerate(SLOT_BUY_BUTTONS):
-            # Crop the small region where the price icon lives
-            ix = bx + ICON_OFFSET_X
-            iy = by + ICON_OFFSET_Y
-            
-            # Bounds check
-            if iy < 0 or ix < 0:
-                continue
-            if iy + ICON_CROP_H > screenshot.shape[0] or ix + ICON_CROP_W > screenshot.shape[1]:
-                continue
-                
-            crop = screenshot[iy:iy + ICON_CROP_H, ix:ix + ICON_CROP_W]
-            
-            # Template match against resource icon
-            if crop.shape[0] < resource_icon.shape[0] or crop.shape[1] < resource_icon.shape[1]:
-                continue
-            
-            res = cv2.matchTemplate(crop, resource_icon, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            
-            if max_val >= 0.8:
-                print(f"[{serial}] Slot {idx+1} ({bx},{by}): RESOURCE price (conf: {max_val:.3f}) -> BUYING")
-                adb_helper.tap(serial, bx, by)
-                time.sleep(2)
-                bought += 1
-            else:
-                print(f"[{serial}] Slot {idx+1} ({bx},{by}): GEM price (conf: {max_val:.3f}) -> SKIP")
-        
-        return bought
-    
-    total_bought = 0
-    
-    for refresh_round in range(max_refreshes + 1):
-        print(f"\n[{serial}] --- Merchant Round {refresh_round + 1}/{max_refreshes + 1} ---")
-        
-        # Verify still on merchant screen
-        state = detector.check_construction(serial, target="GOBLIN_MERCHANT")
-        if state != "GOBLIN_MERCHANT":
-            print(f"[{serial}] [WARNING] Not on GOBLIN_MERCHANT screen. Attempting recovery...")
-            time.sleep(2)
-            state = detector.check_construction(serial, target="GOBLIN_MERCHANT")
-            if state != "GOBLIN_MERCHANT":
-                print(f"[{serial}] [FAILED] Lost merchant screen. Aborting.")
-                break
-        
-        # Take screenshot and scan visible slots
-        screenshot = detector.screencap_memory(serial)
-        if screenshot is None:
-            print(f"[{serial}] [FAILED] Could not capture screen.")
-            break
-            
-        bought = _scan_and_buy_visible(screenshot)
-        total_bought += bought
-        
-        # Scroll down to reveal "Other" section
-        print(f"[{serial}] Scrolling down for more items...")
-        adb_helper.swipe(serial, 480, 450, 480, 200, duration=500)
-        time.sleep(3)
-        
-        # Take new screenshot and scan again
-        screenshot = detector.screencap_memory(serial)
-        if screenshot is not None:
-            bought = _scan_and_buy_visible(screenshot)
-            total_bought += bought
-        
-        # Scroll back up to reset view
-        adb_helper.swipe(serial, 480, 200, 480, 450, duration=500)
-        time.sleep(2)
-        
-        # Refresh if not the last round
-        if refresh_round < max_refreshes:
-            print(f"[{serial}] Tapping Refresh button ({REFRESH_BTN})...")
-            adb_helper.tap(serial, REFRESH_BTN[0], REFRESH_BTN[1])
-            time.sleep(3)
-    
-    print(f"\n[{serial}] Goblin Merchant complete! Total items bought: {total_bought}")
-    
-    # Return to lobby
-    adb_helper.press_back(serial)
-    time.sleep(2)
-    
-    return _ok()
 
 def claim_daily_vip_gift(serial: str, detector: GameStateDetector) -> dict:
     """
@@ -4105,6 +4042,342 @@ def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
 
     # ── Phase 6: Cleanup ──
     print(f"[{serial}] === CLAIM QUEST REWARD COMPLETE — total {total_claimed} reward(s) claimed ===")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+    return _ok()
+
+
+def claim_daily_gift_and_buy_vip_store(serial: str, detector: GameStateDetector) -> dict:
+    """
+    Claim Daily Gift + Buy VIP Store Items (weekly):
+    1. Navigate to Alliance Menu (go_to_alliance)
+    2. Tap Store tab (fixed x,y)
+    3. Detect VIP Store icon (template) → tap to claim daily reward
+    4. Switch to Store tab → buy 4 VIP Store items (fixed x,y per item)
+
+    Coordinates marked with TODO are placeholders — fill in after capturing actual values.
+    """
+    print(f"[{serial}] === CLAIM DAILY GIFT + BUY VIP STORE ===")
+
+    # ── Coordinate config (TODO: fill real values) ──
+    STORE_TAB_TAP = (0, 0)              # TODO: fill x,y — Store tab inside Alliance Menu
+    VIP_CLAIM_REWARD_TAP = (0, 0)       # TODO: fill x,y — Claim reward button position
+    VIP_STORE_TAB_TAP = (0, 0)          # TODO: fill x,y — VIP Store sub-tab inside Store
+
+    # 4 VIP Store items to buy (item tap → then confirm buy)
+    VIP_ITEMS = [
+        {"name": "Item 1", "tap": (0, 0)},  # TODO: fill x,y
+        {"name": "Item 2", "tap": (0, 0)},  # TODO: fill x,y
+        {"name": "Item 3", "tap": (0, 0)},  # TODO: fill x,y
+        {"name": "Item 4", "tap": (0, 0)},  # TODO: fill x,y
+    ]
+    CONFIRM_BUY_TAP = (0, 0)            # TODO: fill x,y — Confirm buy button after selecting item
+
+    # ── Phase 1: Navigate to Alliance Menu ──
+    result = go_to_alliance(serial, detector)
+    if not _is_ok(result):
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not open Alliance Menu")
+
+    # ── Phase 2: Tap Store tab ──
+    print(f"[{serial}] Tapping Store tab {STORE_TAB_TAP}...")
+    adb_helper.tap(serial, STORE_TAB_TAP[0], STORE_TAB_TAP[1])
+    _human_delay(2.0)
+
+    # ── Phase 3: Detect VIP Store icon & Claim daily reward ──
+    print(f"[{serial}] Detecting VIP Store icon...")
+    vip_icon = _detect_with_retry(serial, detector, "VIP_STORE_ICON", threshold=0.8, attempts=3, delay=1)
+
+    if not vip_icon:
+        print(f"[{serial}] [WARNING] VIP_STORE_ICON not detected. Skipping claim, proceeding to buy.")
+    else:
+        _, vx, vy = vip_icon
+        print(f"[{serial}] VIP Store icon found at ({vx}, {vy}). Tapping to enter...")
+        adb_helper.tap(serial, vx, vy)
+        _human_delay(2.0)
+
+        # Claim daily reward
+        print(f"[{serial}] Claiming daily reward at {VIP_CLAIM_REWARD_TAP}...")
+        adb_helper.tap(serial, VIP_CLAIM_REWARD_TAP[0], VIP_CLAIM_REWARD_TAP[1])
+        _human_delay(2.0)
+
+        # Dismiss any reward popup
+        print(f"[{serial}] Dismissing reward popup (50, 500)...")
+        adb_helper.tap(serial, 50, 500)
+        _human_delay(1.5)
+
+        print(f"[{serial}] Daily gift claimed.")
+
+    # ── Phase 4: Buy VIP Store items (4 items) ──
+    print(f"[{serial}] Switching to VIP Store tab {VIP_STORE_TAB_TAP}...")
+    adb_helper.tap(serial, VIP_STORE_TAB_TAP[0], VIP_STORE_TAB_TAP[1])
+    _human_delay(2.0)
+
+    items_bought = 0
+    for idx, item in enumerate(VIP_ITEMS):
+        item_name = item["name"]
+        ix, iy = item["tap"]
+        print(f"[{serial}] --- Buying {item_name} ({idx+1}/{len(VIP_ITEMS)}) at ({ix}, {iy}) ---")
+
+        # Tap item
+        adb_helper.tap(serial, ix, iy)
+        _human_delay(1.5)
+
+        # Confirm purchase
+        print(f"[{serial}] Confirming purchase at {CONFIRM_BUY_TAP}...")
+        adb_helper.tap(serial, CONFIRM_BUY_TAP[0], CONFIRM_BUY_TAP[1])
+        _human_delay(2.0)
+
+        # Dismiss result popup
+        adb_helper.tap(serial, 50, 500)
+        _human_delay(1.0)
+
+        items_bought += 1
+        print(f"[{serial}] {item_name} purchased ({items_bought}/{len(VIP_ITEMS)}).")
+
+    # ── Phase 5: Cleanup ──
+    print(f"[{serial}] VIP Store done — claimed gift + bought {items_bought} item(s).")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+    return _ok()
+
+
+
+def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: int = 2) -> dict:
+    """
+    Buy Merchant Items Workflow:
+    1. Navigate to Alliance Menu (go_to_alliance)
+    2. Tap Store button (fixed coordinates)
+    3. Verify Goblin Merchant icon
+    4. Scan visible 2x4 grid → detect RSS-priced items → tap to buy
+    5. Scroll down → scan remaining 2x4 grid → buy
+    6. Reroll → repeat steps 4-5 once more
+    7. Cleanup & return
+
+    Grid layout: 4 columns x 4 rows. Screen shows 2 rows at a time.
+    Only buys items priced with RSS (3 template variants).
+
+    Args:
+        max_refreshes: Number of reroll rounds (default 2 = 1 initial + 1 reroll).
+    """
+    # ── Fixed Coordinates ──
+    STORE_TAP = (735, 458)              # Store button inside Alliance Menu
+    REROLL_TAP = (725, 130)             # Reroll button at top of merchant store
+    RSS_TARGETS = [
+        "MERCHANT_RSS_ITEM_1",
+        "MERCHANT_RSS_ITEM_2",
+        "MERCHANT_RSS_ITEM_3",
+    ]
+    # Shift tap slightly right from detected RSS icon to trigger buy action.
+    CARD_TAP_X_OFFSET = 20
+    MAX_ROUNDS = max(1, max_refreshes)  # At least 1 initial scan
+
+    print(f"[{serial}] === BUY MERCHANT ITEMS ===")
+
+    # ── Phase 1: Navigate to Alliance ──
+    result = go_to_alliance(serial, detector)
+    if not _is_ok(result):
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not open Alliance Menu")
+
+    # ── Phase 2: Tap Store ──
+    sx, sy = STORE_TAP
+    print(f"[{serial}] Tapping Store ({sx}, {sy})...")
+    adb_helper.tap(serial, sx, sy)
+    _human_delay(2.0)
+
+    # ── Phase 3: Verify Goblin Merchant ──
+    merchant = _detect_with_retry(
+        serial, detector, "GOBLIN_MERCHANT_ICON",
+        threshold=0.8, attempts=3, delay=1.5,
+    )
+    if not merchant:
+        print(f"[{serial}] [FAILED] Goblin Merchant icon not detected.")
+        adb_helper.press_back(serial)
+        _human_delay(1.0)
+        return _fail("TEMPLATE_NO_MATCH: Goblin Merchant not found in Alliance Store")
+
+    _, mx, my = merchant
+    print(f"[{serial}] Goblin Merchant found at ({mx}, {my}). Tapping to enter shop...")
+    adb_helper.tap(serial, mx, my)
+    _human_delay(2.0)
+
+    # ── Phase 4: Buy loop (initial + reroll) ──
+    total_bought = 0
+
+    for round_idx in range(MAX_ROUNDS):
+        round_label = "Initial" if round_idx == 0 else f"Reroll #{round_idx}"
+        print(f"[{serial}] --- {round_label} Round ---")
+
+        # ── Scan top 2x4 (visible grid) ──
+        half_bought = _scan_and_buy_rss_items(serial, detector, RSS_TARGETS, "top", CARD_TAP_X_OFFSET)
+        total_bought += half_bought
+
+        # ── Scroll down to reveal bottom 2x4 ──
+        print(f"[{serial}] Scrolling down to reveal bottom rows...")
+        adb_helper.swipe(serial, 480, 400, 480, 100, 600)
+        _human_delay(2.0)
+
+        # ── Scan bottom 2x4 ──
+        half_bought = _scan_and_buy_rss_items(serial, detector, RSS_TARGETS, "bottom", CARD_TAP_X_OFFSET)
+        total_bought += half_bought
+
+        # ── Scroll back up + Reroll (skip on last round) ──
+        if round_idx < MAX_ROUNDS - 1:
+            # Scroll back up — bottom scan left the store scrolled down
+            print(f"[{serial}] Scrolling up to restore store position...")
+            adb_helper.swipe(serial, 480, 200, 480, 400, 600)
+            _human_delay(1.5)
+
+            rx, ry = REROLL_TAP
+            print(f"[{serial}] Tapping Reroll ({rx}, {ry})...")
+            adb_helper.tap(serial, rx, ry)
+            _human_delay(1.5)
+
+            # Confirm reroll popup
+            print(f"[{serial}] Confirming reroll...")
+            adb_helper.tap(serial, 380, 370)
+            _human_delay(2.0)
+
+    # ── Phase 5: Cleanup ──
+    print(f"[{serial}] === BUY MERCHANT ITEMS COMPLETE — bought {total_bought} item(s) ===")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+    return _ok()
+
+
+def _scan_and_buy_rss_items(
+    serial: str,
+    detector: GameStateDetector,
+    rss_targets: list,
+    grid_half: str,
+    x_offset: int = 0,
+) -> int:
+    """
+    Helper: scan current visible grid for RSS-priced items and buy them one by one.
+    Re-detects after each purchase. Saves debug screenshots with annotations.
+    """
+    # Debug output dir
+    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_merchant_debug")
+    os.makedirs(debug_dir, exist_ok=True)
+
+    bought = 0
+    MAX_BUYS_PER_HALF = 8  # Safety cap
+    scan_idx = 0
+
+    for _ in range(MAX_BUYS_PER_HALF):
+        scan_idx += 1
+        # Re-detect every iteration (grid shifts after each buy)
+        detector._screen_cache = None
+        frame = detector.screencap_memory(serial)
+        if frame is None:
+            print(f"[{serial}] [{grid_half}] [DEBUG] Screencap failed. Stopping.")
+            break
+
+        # ── Debug: annotate frame with ALL matches for ALL targets ──
+        annotated = frame.copy()
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        all_debug_matches = []
+
+        for target in rss_targets:
+            if target not in detector.activity_templates:
+                continue
+            for entry in detector.activity_templates[target]:
+                tmpl_gray = entry["gray"]
+                if (frame_gray.shape[0] < tmpl_gray.shape[0] or
+                        frame_gray.shape[1] < tmpl_gray.shape[1]):
+                    continue
+                res = cv2.matchTemplate(frame_gray, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                h, w = tmpl_gray.shape[:2]
+                if max_val >= 0.5:  # Low threshold for debug visibility
+                    cx, cy = max_loc[0] + w // 2, max_loc[1] + h // 2
+                    all_debug_matches.append((target, max_loc[0], max_loc[1], w, h, max_val, cx, cy))
+
+        # Draw all detections on annotated frame
+        for tname, tx, ty, tw, th, conf, cx, cy in all_debug_matches:
+            color = (0, 255, 0) if conf >= 0.8 else (0, 165, 255) if conf >= 0.6 else (0, 0, 255)
+            cv2.rectangle(annotated, (tx, ty), (tx + tw, ty + th), color, 2)
+            cv2.drawMarker(annotated, (cx, cy), color, cv2.MARKER_CROSS, 10, 2)
+            label = f"{tname} {conf:.3f}"
+            cv2.putText(annotated, label, (tx, max(ty - 4, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
+
+        ts = time.strftime("%H%M%S")
+        dbg_path = os.path.join(debug_dir, f"{serial}_{grid_half}_{scan_idx:02d}_{ts}.png")
+        cv2.imwrite(dbg_path, annotated)
+        print(f"[{serial}] [{grid_half}] [DEBUG] Scan #{scan_idx} saved: {dbg_path}")
+        for tname, tx, ty, tw, th, conf, cx, cy in all_debug_matches:
+            status = "PASS" if conf >= 0.8 else "BELOW"
+            print(f"[{serial}] [{grid_half}] [DEBUG]   {tname}: conf={conf:.4f} center=({cx},{cy}) [{status}]")
+
+        # ── Actual detection with threshold ──
+        match = None
+        for target in rss_targets:
+            result = detector.check_activity(serial, target=target, threshold=0.8, frame=frame)
+            if result:
+                match = result
+                break
+
+        if not match:
+            print(f"[{serial}] [{grid_half}] No more RSS items above threshold.")
+            break
+
+        _, mx, my = match
+        tap_x = mx + x_offset
+        print(f"[{serial}] [{grid_half}] Tapping RSS item '{match[0]}' at ({tap_x}, {my})...")
+        adb_helper.tap(serial, tap_x, my)
+        _human_delay(1.0)
+
+        bought += 1
+        print(f"[{serial}] [{grid_half}] Bought {bought} item(s) so far.")
+
+    if bought == 0:
+        print(f"[{serial}] [{grid_half}] No RSS items found in this half.")
+
+    return bought
+
+
+def claim_daily_vip_reward(serial: str, detector: GameStateDetector) -> dict:
+    """
+    Claim Daily VIP Reward from Alliance Store → Honorary Membership.
+
+    Flow:
+      1. Navigate to Alliance Menu (go_to_alliance)
+      2. Tap Store button (735, 458)
+      3. Tap Honorary Membership (320, 500)
+      4. Tap Claim reward (715, 425)
+      5. Cleanup & return
+    """
+    STORE_TAP = (735, 458)
+    HONORARY_MEMBERSHIP_TAP = (320, 500)
+    CLAIM_TAP = (715, 425)
+
+    print(f"[{serial}] === CLAIM DAILY VIP REWARD ===")
+
+    # Phase 1: Navigate to Alliance
+    result = go_to_alliance(serial, detector)
+    if not _is_ok(result):
+        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not open Alliance Menu")
+
+    # Phase 2: Tap Store
+    sx, sy = STORE_TAP
+    print(f"[{serial}] Tapping Store ({sx}, {sy})...")
+    adb_helper.tap(serial, sx, sy)
+    _human_delay(2.0)
+
+    # Phase 3: Tap Honorary Membership
+    hx, hy = HONORARY_MEMBERSHIP_TAP
+    print(f"[{serial}] Tapping Honorary Membership ({hx}, {hy})...")
+    adb_helper.tap(serial, hx, hy)
+    _human_delay(2.0)
+
+    # Phase 4: Tap Claim
+    cx, cy = CLAIM_TAP
+    print(f"[{serial}] Tapping Claim reward ({cx}, {cy})...")
+    adb_helper.tap(serial, cx, cy)
+    _human_delay(2.0)
+
+    # Phase 5: Cleanup
+    print(f"[{serial}] === CLAIM DAILY VIP REWARD COMPLETE ===")
     adb_helper.press_back(serial)
     _human_delay(1.0)
     return _ok()
