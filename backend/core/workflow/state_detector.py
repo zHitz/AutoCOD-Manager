@@ -1,233 +1,239 @@
+"""
+Game State Detector — Production-grade template matching engine.
+
+Loads templates into RAM once and uses ADB screencap-to-memory for zero disk I/O.
+
+Optimizations:
+- Grayscale matching: 3x faster than color (1 channel vs 3)
+- ROI cropping: scan only relevant screen region per template
+- Early exit cache: check last matched state first (~90% hit rate)
+- Screenshot cache: skip ADB if last capture < max_age_ms
+- Unified template loader + single _find_template engine (DRY)
+"""
+
+import logging
 import os
-import cv2
-import numpy as np
 import subprocess
 import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+import cv2
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# ── Module Constants ──────────────────────────────────────────────
+
+SCREEN_RESOLUTION = (960, 540)
+SCREENCAP_TIMEOUT_SEC = 5
+SCREEN_CACHE_MAX_AGE_MS = 100
+
+UNKNOWN_STATE = "UNKNOWN / TRANSITION"
+ERROR_CAPTURE = "ERROR_CAPTURE"
+
+# Default thresholds per category (can be overridden per-call)
+DEFAULT_THRESHOLDS = {
+    "state": 0.80,
+    "construction": 0.80,
+    "special": 0.80,
+    "activity": 0.98,
+    "alliance": 0.98,
+    "icon": 0.80,
+    "account": 0.95,
+}
+
+# ── Type Aliases ──────────────────────────────────────────────────
+
+TemplateEntry = dict          # {"color": np.ndarray, "gray": np.ndarray, "roi": tuple|None}
+TemplateDict = dict           # {name: list[TemplateEntry]}
+MatchResult = tuple           # (name, center_x, center_y)
+
+# ── Template Configs & ROI (imported from detector_configs.py) ────
+from backend.core.workflow.detector_configs import (  # noqa: E402
+    STATE_CONFIGS,
+    CONSTRUCTION_CONFIGS,
+    SPECIAL_CONFIGS,
+    ACTIVITY_CONFIGS,
+    ALLIANCE_CONFIGS,
+    ICON_CONFIGS,
+    ACCOUNT_CONFIGS,
+    ROI_HINTS,
+    CATEGORY_REGISTRY as _CATEGORY_REGISTRY,
+    STATE_PRIORITY as _STATE_PRIORITY,
+    STATE_BASE as _STATE_BASE,
+)
+
+
+# ── Screen Cache ──────────────────────────────────────────────────
+
+NEAR_MISS_MARGIN = 0.15  # Warn when confidence is within this margin below threshold
+
+
+@dataclass
+class _ScreenCache:
+    """Cached ADB screenshot with grayscale pre-computation."""
+    frame: Optional[np.ndarray] = None
+    gray: Optional[np.ndarray] = None
+    timestamp_ms: float = 0.0
+    max_age_ms: float = SCREEN_CACHE_MAX_AGE_MS
+
+    @property
+    def is_fresh(self) -> bool:
+        return self.frame is not None and (time.time() * 1000 - self.timestamp_ms) < self.max_age_ms
+
+    def update(self, frame: np.ndarray) -> None:
+        self.frame = frame
+        self.gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame is not None else None
+        self.timestamp_ms = time.time() * 1000
+
+    def invalidate(self) -> None:
+        self.frame = None
+        self.gray = None
+        self.timestamp_ms = 0.0
+
+
+@dataclass
+class _DiagEntry:
+    """Single diagnostic record for one detection call."""
+    caller: str             # e.g. "check_activity", "check_state"
+    target: str             # template name tested
+    confidence: float       # max_val from matchTemplate
+    threshold: float        # threshold used
+    time_ms: float          # elapsed time for this match
+    matched: bool           # did it pass threshold?
+    use_color: bool = False # gray or color matching
+
+
+# ── Main Class ────────────────────────────────────────────────────
 
 class GameStateDetector:
     """
-    Modular State Detector.
-    Loads templates into RAM once and uses ADB screencap to memory for zero disk I/O.
-    
-    Optimizations:
-    - Grayscale matching: 3x faster than color (1 channel vs 3)
-    - ROI cropping: scan only relevant screen region per template
-    - Early exit cache: check last matched state first (~90% hit rate)
-    - Screenshot cache: skip ADB if last capture < 100ms ago
-    - Unified template loader: DRY code
+    Modular State Detector — production-grade template matching engine.
+
+    Usage:
+        detector = GameStateDetector(adb_path, templates_dir)
+        state = detector.check_state(serial)
+        match = detector.check_activity(serial, target="CREATE_LEGION")
     """
-    def __init__(self, adb_path: str, templates_dir: str):
+
+    def __init__(self, adb_path: str, templates_dir: str) -> None:
         self.adb_path = adb_path
         self.templates_dir = templates_dir
+        self.roi_hints = ROI_HINTS
 
-        # Template storage format: {state_name: [{"color": np.array, "gray": np.array, "roi": tuple|None}]}
-        self.templates = {}
-        self.construction_templates = {}
-        self.special_templates = {}
-        self.activity_templates = {}
-        self.alliance_templates = {}
-        self.icon_templates = {}
-        self.account_templates = {}
+        # Consolidated template registry: {category: {name: [TemplateEntry]}}
+        self._registry: dict[str, TemplateDict] = {}
+        self._last_matched_state: Optional[str] = None
+        self._cache = _ScreenCache()
 
-        # ── OPT-3: Early exit cache ──
-        self._last_matched_state = None
+        # Diagnostic instrumentation
+        self.diagnostic_mode: bool = False
+        self._diag_log: list[_DiagEntry] = []
 
-        # ── OPT-5b: Screenshot cache ──
-        self._screen_cache = None
-        self._screen_gray_cache = None
-        self._screen_cache_time = 0
-        self._SCREEN_CACHE_MAX_AGE_MS = 100  # Reuse screenshot if < 100ms old
+        self._load_all_templates()
 
-        # ── State definitions ──
-        self.state_configs = {
-            "fixing_network.png": "LOADING SCREEN (NETWORK ISSUE)",
-            "lobby_loading.png": "LOADING SCREEN",
-            "lobby_loading_2.png": "LOADING SCREEN",
-            "lobby_profile_detail.png": "IN-GAME LOBBY (PROFILE MENU DETAIL)",
-            "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
-            "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
-            "lobby_bazzar.png": "IN-GAME LOBBY (BAZAAR)",
-            "lobby_hammer.png": "IN-GAME LOBBY (IN_CITY)",
-            "lobby_in_city_icon.png": "IN-GAME LOBBY (IN_CITY)",
-            "lobby_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
-            "lobby_mini_magnifier.png": "IN-GAME LOBBY (OUT_CITY)",
-            "lobby_out_city_icon.png": "IN-GAME LOBBY (OUT_CITY)",
-            "items_artifacts.png": "IN-GAME ITEMS (ARTIFACTS)",
-            "items_resources.png": "IN-GAME ITEMS (RESOURCES)",
-            "lobby_icons.png": "LOBBY_MENU_EXPANDED",
-            "lobby_icons_war_pet.png": "LOBBY_MENU_EXPANDED",
-        }
-        
-        # Construction templates — loaded separately, NOT part of check_state
-        self.construction_configs = {
-            "contructions/con_hall.png": "HALL",
-            "contructions/con_market.png": "MARKET",
-            "contructions/con_elixir_healing.png": "ELIXIR_HEALING",
-            "contructions/con_pet_sanctuary.png": "PET_SANCTUARY",
-            "contructions/con_pet_enclosure.png": "PET_ENCLOSURE",
-            "contructions/con_markers.png": "MARKERS_MENU",
-            "contructions/con_alliance_menu.png": "ALLIANCE_MENU",
-            "contructions/con_train_units.png": "TRAIN_UNITS",
-            "contructions/con_scout_sentry_post.png": "SCOUT_SENTRY_POST",
-            "contructions/con_tavern.png": "TAVERN",
-            "contructions/con_halfling_house.png": "HALFLING_HOUSE",
-            "contructions/buiding_upgrade.png": "BUILDING_UPGRADE",
-            # Research Center — detect via tab headers (economy/military)
-            "research/research_economy_tech.png": "RESEARCH_CENTER",
-            "research/research_military_tech.png": "RESEARCH_CENTER",
-        }
-        
-        # Special templates — loaded separately, called on specific conditions
-        self.special_configs = {
-            "loading_server_maintenance.png": "SERVER_MAINTENANCE",
-            "auto_capture_pet.png": "AUTO_CAPTURE_PET",
-            "pets/Auto-capture_in_progress.png": "AUTO_CAPTURE_IN_PROGRESS",
-            "pets/Auto-capture_start_icon.png": "AUTO_CAPTURE_START",
-            "accounts/settings.png": "SETTINGS",
-            "accounts/character_management.png": "CHARACTER_MANAGEMENT",
-            "special/mail_menu.png": "MAIL_MENU",
-            "special/note.png": "NOTE",
-            "special/rss_statistics.png": "RESOURCE_STATISTICS",
-            "special/market.png": "MARKET_MENU",
-            "auto-peacekeeping.png": "AUTO_PEACEKEEPING",
-            "icon_markers/skip.png": "SKIP",
-            # Policy screen verification
-            "policy/policy_header.png": "POLICY_SCREEN",
-            "policy/governance_header.png": "GOVERNANCE_HEADER",
-            # Research Technology
-            "research/research_no_resource.png": "RESEARCH_NO_RESOURCE",
-            "research/research_no_confirm.png": "RESEARCH_NO_CONFIRM",
-            # Quest reward screen
-            "quests/quests_menu.png": "QUEST_MENU",
-        }
-        
-        # Activity templates — returns name + center coordinates when matched
-        self.activity_configs = {
-            "activities/legion_1.png": "LEGION_1",
-            "activities/legion_2.png": "LEGION_2",
-            "activities/legion_3.png": "LEGION_3",
-            "activities/legion_4.png": "LEGION_4",
-            "activities/legion_5.png": "LEGION_5",
-            "activities/legion_idle.png": "LEGION_IDLE",
-            "activities/create_legion.png": "CREATE_LEGION",
-            "activities/create_legion_in_rss_center.png": "CREATE_LEGION_RSS",
-            "icon_markers/rss_center.png": "RSS_CENTER_MARKER",
-            "activities/legion_view.png": "RSS_VIEW",
-            "activities/legion_gather.png": "RSS_GATHER",
-            "activities/train_icon.png": "TRAINING_ICON",
-            "activities/btn_train.png": "BTN_TRAIN",
-            "activities/build.png": "RSS_BUILD",
-            "tavern/free_draw_btn.png": "TAVERN_FREE_DRAW",
-            "tavern/draw_x10_btn.png": "TAVERN_DRAW_X10",
-            "activities/farm_search_btn.png": "FARM_SEARCH_BTN",
-            # Policy button detection
-            "policy/enact_btn.png": "POLICY_ENACT_BTN",
-            "policy/go_btn.png": "POLICY_GO_BTN",
-            "policy/go_btn_uppercase.png": "POLICY_GO_BTN",
-            "policy/go_btn_governance.png": "POLICY_GO_BTN",
-            "policy/select_btn.png": "POLICY_SELECT_BTN",
-            "policy/target_default.png": "POLICY_TARGET_DEFAULT",
-            "policy/replenish_resources.png": "POLICY_REPLENISH",
-            "policy/alliance_help_btn.png": "POLICY_ALLIANCE_HELP",
-            # Research Technology
-            "research/research_empty_slot.png": "RESEARCH_EMPTY_SLOT",
-            "research/research_confirm.png": "RESEARCH_CONFIRM",
-            "research/research_allaince_help_btn.png": "RESEARCH_ALLIANCE_HELP",
-            "research/research_use_bag.png": "RESEARCH_USE_BAG",
-            "research/research_economy_tech.png": "RESEARCH_ECONOMY_TECH",
-            "research/research_military_tech.png": "RESEARCH_MILITARY_TECH",
-            # Construction Upgrade
-            "contructions/upgrade_btn.png": "CONSTRUCTION_UPGRADE_BTN",
-            "contructions/upgrade_icon.png": "CONSTRUCTION_UPGRADE_ICON",
-            "contructions/research_icon.png": "CONSTRUCTION_RESEARCH_ICON",
-            "contructions/build_btn.png": "CONSTRUCTION_BUILD_BTN",
-            "contructions/unlock_permanently_btn.png": "CONSTRUCTION_UNLOCK_PERMANENTLY_BTN",
-            "contructions/hire_btn.png": "CONSTRUCTION_HIRE_BTN",
-            "contructions/confirm_btn_gold_color.png": "CONSTRUCTION_CONFIRM_BTN",
-            "contructions/building_go_btn.png": "CONSTRUCTION_GO_BTN",
-            "contructions/con_info_btn.png": "CONSTRUCTION_INFO_BTN",
-            # Quest claim button
-            "quests/claim_btn.png": "QUEST_CLAIM_BTN",
-            # Scout Sentry Post buttons
-            "contructions/scout_sentry_post_btn.png": "SCOUT_SENTRY_POST_BTN",
-            "contructions/scout_quick_help_btn.png": "SCOUT_QUICK_HELP_BTN",
-            "contructions/scout_claim_all.btn.png": "SCOUT_CLAIM_ALL_BTN",
-            # Merchant Store (Goblin Merchant)
-            "alliance/goblin_merchant.png": "GOBLIN_MERCHANT_ICON",
-            "alliance/merchant_rss_1.png": "MERCHANT_RSS_ITEM_1",
-            "alliance/merchant_rss_2.png": "MERCHANT_RSS_ITEM_2",
-            "alliance/merchant_rss_3.png": "MERCHANT_RSS_ITEM_3",
-            # VIP Store (Alliance)
-            "alliance/vip_store_icon.png": "VIP_STORE_ICON",
-        }
+    # ── Backward-compatible properties (zero breaking changes) ────
 
-        # Alliance templates
-        self.alliance_configs = {
-            "alliance/war.png": "ALLIANCE_WAR",
-            "alliance/no_rally.png": "NO_RALLY",
-            "alliance/already_join_rally.png": "ALREADY_JOIN_RALLY",
-            "alliance/alliance_help_btn.png": "ALLIANCE_HELP",
-            "alliance/alliance_donate_btn.png": "ALLIANCE_DONATE_BTN",
-        }
-        
-        # Icon templates — dedicated detector for locating items/markers with coordinates
-        self.icon_configs = {
-            "icon_markers/city_rss_gold_full.png": "CITY_RSS_GOLD",
-            "icon_markers/city_rss_wood_full.png": "CITY_RSS_WOOD",
-            "icon_markers/city_rss_ore_full.png": "CITY_RSS_ORE",
-            "icon_markers/city_rss_mana_full.png": "CITY_RSS_MANA",
-            "icon_markers/heal_icon.png": "HEALING_ICON",
-        }
-        
-        # Account templates — for swap_account flow
-        self.account_configs = {
-            # Account name templates — add per-account entries here
-            # "accounts/account_main.png": "ACCOUNT_MAIN",
-            # "accounts/account_farm1.png": "ACCOUNT_FARM1",
-        }
+    @property
+    def templates(self) -> TemplateDict:
+        return self._registry.get("state", {})
 
-        # ── OPT-1: ROI hints per template ──
-        # Format: "filename.png" -> (x1, y1, x2, y2)
-        # Only scan this screen region for matching (massive speedup)
-        # If a template is NOT listed here, full screen is scanned (safe default)
-        # 
-        # HOW TO ADD ROIs:
-        #   1. Run collect_unknown_states.py to capture screenshots
-        #   2. Open screenshot, note the (x, y) region where the template icon appears
-        #   3. Add entry here with some padding (50-100px margin)
-        #
-        # Screen resolution: 960 x 540
-        self.roi_hints = {
-            # Lobby indicators — bottom-left area
-            # "lobby_hammer.png": (0, 380, 250, 540),
-            # "lobby_magnifier.png": (0, 380, 250, 540),
-            # "lobby_mini_magnifier.png": (0, 380, 250, 540),
-            # "lobby_out_city_icon.png": (0, 380, 250, 540),
-            # Profile — top-left area
-            # "lobby_profile_menu.png": (0, 0, 250, 120),
-            # "lobby_profile_detail.png": (0, 0, 250, 120),
-            # "lobby_profile.png": (0, 0, 250, 120),
-            # Pet capture — bottom button area only
-            "pets/Auto-capture_in_progress.png": (305, 411, 761, 509),
-            "pets/Auto-capture_start_icon.png": (305, 411, 761, 509),
-        }
+    @property
+    def construction_templates(self) -> TemplateDict:
+        return self._registry.get("construction", {})
 
-        self._load_templates()
+    @property
+    def special_templates(self) -> TemplateDict:
+        return self._registry.get("special", {})
 
-    # ── OPT-4: Unified template loader ──
+    @property
+    def activity_templates(self) -> TemplateDict:
+        return self._registry.get("activity", {})
 
-    def _load_template_group(self, configs: dict, target_dict: dict, label: str):
-        """Generic template loader for any category. Stores color + grayscale + ROI."""
+    @property
+    def alliance_templates(self) -> TemplateDict:
+        return self._registry.get("alliance", {})
+
+    @property
+    def icon_templates(self) -> TemplateDict:
+        return self._registry.get("icon", {})
+
+    @property
+    def account_templates(self) -> TemplateDict:
+        return self._registry.get("account", {})
+
+    # Backward-compat: old cache attributes used by test files
+    @property
+    def _screen_cache(self):
+        return self._cache.frame
+
+    @_screen_cache.setter
+    def _screen_cache(self, value):
+        if value is None:
+            self._cache.invalidate()
+        else:
+            self._cache.frame = value
+
+    @property
+    def _screen_gray_cache(self):
+        return self._cache.gray
+
+    @_screen_gray_cache.setter
+    def _screen_gray_cache(self, value):
+        self._cache.gray = value
+
+    @property
+    def _screen_cache_time(self):
+        return self._cache.timestamp_ms
+
+    @_screen_cache_time.setter
+    def _screen_cache_time(self, value):
+        self._cache.timestamp_ms = value
+
+    # Keep old config attributes accessible for external tools
+    @property
+    def state_configs(self) -> dict:
+        return STATE_CONFIGS
+
+    @property
+    def construction_configs(self) -> dict:
+        return CONSTRUCTION_CONFIGS
+
+    @property
+    def special_configs(self) -> dict:
+        return SPECIAL_CONFIGS
+
+    @property
+    def activity_configs(self) -> dict:
+        return ACTIVITY_CONFIGS
+
+    @property
+    def alliance_configs(self) -> dict:
+        return ALLIANCE_CONFIGS
+
+    @property
+    def icon_configs(self) -> dict:
+        return ICON_CONFIGS
+
+    @property
+    def account_configs(self) -> dict:
+        return ACCOUNT_CONFIGS
+
+    # ── Template Loading ──────────────────────────────────────────
+
+    def _load_template_group(self, configs: dict, target_dict: TemplateDict, label: str) -> None:
+        """Load one category of templates into target_dict. Stores color + gray + ROI."""
         loaded = 0
         for filename, name in configs.items():
             path = os.path.join(self.templates_dir, filename)
             if not os.path.exists(path):
-                print(f"[WARNING] {label} template missing: {path}")
+                logger.warning("%s template missing: %s", label, path)
                 continue
 
             img = cv2.imread(path, cv2.IMREAD_COLOR)
             if img is None:
-                print(f"[ERROR] Failed to load: {path}")
+                logger.error("Failed to load: %s", path)
                 continue
 
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -241,66 +247,62 @@ class GameStateDetector:
             loaded += 1
 
         if loaded > 0:
-            print(f"[INFO] Loaded {loaded} {label} templates.")
+            logger.info("Loaded %d %s templates.", loaded, label)
 
-    def _load_templates(self):
-        print("[INFO] Pre-loading image templates into RAM...")
-        self._load_template_group(self.state_configs, self.templates, "State")
-        self._load_template_group(self.construction_configs, self.construction_templates, "Construction")
-        self._load_template_group(self.special_configs, self.special_templates, "Special")
-        self._load_template_group(self.activity_configs, self.activity_templates, "Activity")
-        self._load_template_group(self.alliance_configs, self.alliance_templates, "Alliance")
-        self._load_template_group(self.icon_configs, self.icon_templates, "Icon")
-        self._load_template_group(self.account_configs, self.account_templates, "Account")
-        print("[INFO] Template loading complete.")
+    def _load_all_templates(self) -> None:
+        """Load all template categories into the unified registry."""
+        logger.info("Pre-loading image templates into RAM...")
+        for category, configs in _CATEGORY_REGISTRY.items():
+            self._registry[category] = {}
+            self._load_template_group(configs, self._registry[category], category.capitalize())
+        logger.info("Template loading complete.")
 
-    # ── Screencap ──
+    # ── Screencap ─────────────────────────────────────────────────
 
-    def screencap_memory(self, serial: str) -> np.ndarray:
-        """Captures screen directly to RAM with caching (OPT-5b)."""
-        # Return cached screenshot if fresh enough
-        now = time.time() * 1000
-        if self._screen_cache is not None and (now - self._screen_cache_time) < self._SCREEN_CACHE_MAX_AGE_MS:
-            return self._screen_cache
+    def screencap_memory(self, serial: str) -> Optional[np.ndarray]:
+        """Capture screen directly to RAM with caching."""
+        if self._cache.is_fresh:
+            return self._cache.frame
 
         cmd = [self.adb_path, "-s", serial, "exec-out", "screencap", "-p"]
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        
+
         try:
-            result = subprocess.run(cmd, capture_output=True, startupinfo=startupinfo, timeout=5)
+            result = subprocess.run(cmd, capture_output=True, startupinfo=startupinfo, timeout=SCREENCAP_TIMEOUT_SEC)
             if not result.stdout:
                 return None
-                
+
             image_array = np.frombuffer(result.stdout, np.uint8)
             img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-
-            # Update cache
-            self._screen_cache = img
-            self._screen_gray_cache = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img is not None else None
-            self._screen_cache_time = time.time() * 1000
+            self._cache.update(img)
             return img
         except subprocess.TimeoutExpired:
-            print(f"[WARNING] Screencap timeout on {serial}")
+            logger.warning("Screencap timeout on %s", serial)
             return None
         except Exception as e:
-            print(f"[ERROR] Screencap failed on {serial}: {e}")
+            logger.error("Screencap failed on %s: %s", serial, e)
             return None
 
     def _get_gray(self, screen: np.ndarray) -> np.ndarray:
         """Get grayscale version of screen, using cache if available."""
-        if self._screen_cache is not None and screen is self._screen_cache and self._screen_gray_cache is not None:
-            return self._screen_gray_cache
+        if self._cache.frame is not None and screen is self._cache.frame and self._cache.gray is not None:
+            return self._cache.gray
         return cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
 
-    # ── Core matching engine (OPT-1 ROI + OPT-2 Grayscale) ──
+    # ── Core Matching Engine ──────────────────────────────────────
 
-    def _match_single(self, screen_gray: np.ndarray, entry: dict, threshold: float, use_color: bool = False, screen_color: np.ndarray = None):
+    def _match_single(
+        self,
+        screen_gray: np.ndarray,
+        entry: TemplateEntry,
+        threshold: float,
+        use_color: bool = False,
+        screen_color: Optional[np.ndarray] = None,
+    ) -> tuple[float, tuple[int, int]]:
         """
-        Match one template entry against screen. Uses grayscale + ROI by default.
-        If use_color=True, uses COLOR (BGR) matching instead (requires screen_color).
-        Returns (max_val, max_loc_on_screen).
-        max_loc is adjusted to absolute screen coordinates if ROI was used.
+        Match one template entry against screen.
+        Returns (max_val, max_loc) with loc in absolute screen coordinates.
         """
         if use_color and screen_color is not None:
             tmpl = entry["color"]
@@ -314,138 +316,183 @@ class GameStateDetector:
         if roi:
             x1, y1, x2, y2 = roi
             region = screen_src[y1:y2, x1:x2]
-            # Safety: ROI must be larger than template
             if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
                 region = screen_src
-                roi = None  # Fallback to full screen
+                roi = None
         else:
             region = screen_src
 
-        # Safety: region must be larger than template for matchTemplate
         if region.shape[0] < tmpl.shape[0] or region.shape[1] < tmpl.shape[1]:
             return 0.0, (0, 0)
 
         res = cv2.matchTemplate(region, tmpl, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-        # Adjust coordinates to absolute screen position
         if roi:
             max_loc = (max_loc[0] + roi[0], max_loc[1] + roi[1])
 
         return max_val, max_loc
 
-    # ── Internal _from_screen methods ──
+    # ── Diagnostic Helpers ─────────────────────────────────────────
+
+    def _record_diag(
+        self, caller: str, target: str, confidence: float,
+        threshold: float, time_ms: float, matched: bool, use_color: bool = False,
+    ) -> None:
+        """Record a diagnostic entry if diagnostic_mode is ON."""
+        if not self.diagnostic_mode:
+            return
+        self._diag_log.append(_DiagEntry(
+            caller=caller, target=target, confidence=confidence,
+            threshold=threshold, time_ms=time_ms, matched=matched, use_color=use_color,
+        ))
+
+    # ── Unified Template Finder (DRY engine) ──────────────────────
+
+    def _find_template(
+        self,
+        serial: str,
+        template_dict: TemplateDict,
+        target: Optional[str] = None,
+        threshold: float = 0.80,
+        use_color: bool = False,
+        frame: Optional[np.ndarray] = None,
+        _caller: str = "_find_template",
+    ) -> Optional[MatchResult]:
+        """
+        Universal template finder — single engine replacing 6 duplicated methods.
+        Returns (name, center_x, center_y) if found, or None.
+        """
+        screen = frame if frame is not None else self.screencap_memory(serial)
+        if screen is None:
+            return None
+
+        if target and target not in template_dict:
+            return None
+
+        screen_gray = self._get_gray(screen)
+        checks = {target: template_dict[target]} if target else template_dict
+
+        for name, entries in checks.items():
+            for entry in entries:
+                t0 = time.perf_counter()
+                max_val, max_loc = self._match_single(
+                    screen_gray, entry, threshold,
+                    use_color=use_color, screen_color=screen if use_color else None,
+                )
+                elapsed = (time.perf_counter() - t0) * 1000
+                matched = max_val >= threshold
+                self._record_diag(_caller, name, max_val, threshold, elapsed, matched, use_color)
+
+                if matched:
+                    h, w = entry["color"].shape[:2]
+                    cx = max_loc[0] + w // 2
+                    cy = max_loc[1] + h // 2
+                    logger.debug("%s found at (%d, %d) | conf=%.3f", name, cx, cy, max_val)
+                    return (name, cx, cy)
+
+        return None
+
+    def _find_name_only(
+        self,
+        screen: np.ndarray,
+        template_dict: TemplateDict,
+        target: Optional[str] = None,
+        threshold: float = 0.80,
+        _caller: str = "_find_name_only",
+    ) -> Optional[str]:
+        """Match templates and return only the name (no coordinates). Used by state/construction/special."""
+        if target and target not in template_dict:
+            return None
+
+        screen_gray = self._get_gray(screen)
+        checks = {target: template_dict[target]} if target else template_dict
+
+        for name, entries in checks.items():
+            for entry in entries:
+                t0 = time.perf_counter()
+                max_val, _ = self._match_single(screen_gray, entry, threshold)
+                elapsed = (time.perf_counter() - t0) * 1000
+                matched = max_val >= threshold
+                self._record_diag(_caller, name, max_val, threshold, elapsed, matched)
+
+                if matched:
+                    return name
+        return None
+
+    # ── State Detection (unique logic — priority ordering + early exit cache) ──
 
     def _match_state_from_screen(self, screen: np.ndarray, threshold: float = 0.8) -> str:
-        """Core state matching with early-exit cache (OPT-3) + grayscale (OPT-2) + ROI (OPT-1)."""
+        """Core state matching with early-exit cache + priority ordering."""
         screen_gray = self._get_gray(screen)
+        state_dict = self.templates
+        diag = self.diagnostic_mode
 
-        # OPT-3: Try last matched state FIRST (high hit rate in steady states)
-        if self._last_matched_state and self._last_matched_state in self.templates:
-            for entry in self.templates[self._last_matched_state]:
+        def _check_entries(state_name: str) -> bool:
+            for entry in state_dict[state_name]:
+                t0 = time.perf_counter()
                 max_val, _ = self._match_single(screen_gray, entry, threshold)
-                if max_val >= threshold:
-                    return self._last_matched_state
+                elapsed = (time.perf_counter() - t0) * 1000
+                matched = max_val >= threshold
+                if diag:
+                    self._record_diag("check_state", state_name, max_val, threshold, elapsed, matched)
+                if matched:
+                    return True
+            return False
 
-        # Full priority scan
-        priority_checks = [
-            "LOADING SCREEN (NETWORK ISSUE)",
-            "LOADING SCREEN",
-            "IN-GAME LOBBY (PROFILE MENU DETAIL)",
-            "IN-GAME LOBBY (PROFILE MENU)",
-            "IN-GAME LOBBY (EVENTS MENU)",
-            "IN-GAME LOBBY (BAZAAR)",
-            "IN-GAME LOBBY (HALL_NEW)",
-            "IN-GAME ITEMS (ARTIFACTS)",
-            "IN-GAME ITEMS (RESOURCES)",
-        ]
+        # Early exit: try last matched state first (~90% hit rate in steady states)
+        if self._last_matched_state and self._last_matched_state in state_dict:
+            if _check_entries(self._last_matched_state):
+                return self._last_matched_state
 
-        for state_name in priority_checks:
-            if state_name == self._last_matched_state:
-                continue  # Already checked above
-            if state_name in self.templates:
-                for entry in self.templates[state_name]:
-                    max_val, _ = self._match_single(screen_gray, entry, threshold)
-                    if max_val >= threshold:
-                        self._last_matched_state = state_name
-                        return state_name
-
-        base_states = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
-        for state_name in base_states:
+        # Priority scan
+        for state_name in _STATE_PRIORITY:
             if state_name == self._last_matched_state:
                 continue
-            if state_name in self.templates:
-                for entry in self.templates[state_name]:
-                    max_val, _ = self._match_single(screen_gray, entry, threshold)
-                    if max_val >= threshold:
-                        self._last_matched_state = state_name
-                        return state_name
+            if state_name in state_dict:
+                if _check_entries(state_name):
+                    self._last_matched_state = state_name
+                    return state_name
 
-        self._last_matched_state = None  # Clear cache on miss
-        return "UNKNOWN / TRANSITION"
+        # Base states
+        for state_name in _STATE_BASE:
+            if state_name == self._last_matched_state:
+                continue
+            if state_name in state_dict:
+                if _check_entries(state_name):
+                    self._last_matched_state = state_name
+                    return state_name
 
-    def _match_construction_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
-        """Construction matching with grayscale + ROI."""
-        screen_gray = self._get_gray(screen)
-        if target:
-            if target not in self.construction_templates:
-                return None
-            checks = {target: self.construction_templates[target]}
-        else:
-            checks = self.construction_templates
-        for name, entries in checks.items():
-            for entry in entries:
-                max_val, _ = self._match_single(screen_gray, entry, threshold)
-                if max_val >= threshold:
-                    return name
-        return None
+        self._last_matched_state = None
+        return UNKNOWN_STATE
 
-    def _match_special_from_screen(self, screen: np.ndarray, target: str = None, threshold: float = 0.8) -> str:
-        """Special state matching with grayscale + ROI."""
-        screen_gray = self._get_gray(screen)
-        if target:
-            if target not in self.special_templates:
-                return None
-            checks = {target: self.special_templates[target]}
-        else:
-            checks = self.special_templates
-        for name, entries in checks.items():
-            for entry in entries:
-                max_val, _ = self._match_single(screen_gray, entry, threshold)
-                if max_val >= threshold:
-                    return name
-        return None
+    # ── Public API ────────────────────────────────────────────────
 
-    # ── Public API methods ──
-
-    def get_frame(self, serial: str) -> np.ndarray:
-        """Capture and return the current screen frame (alias for screencap_memory)."""
+    def get_frame(self, serial: str) -> Optional[np.ndarray]:
+        """Capture and return the current screen frame."""
         return self.screencap_memory(serial)
 
     def check_state(self, serial: str, threshold: float = 0.8) -> str:
-        """Determines the current game state via OpenCV Template Matching."""
+        """Determines the current game state via template matching."""
         screen = self.screencap_memory(serial)
         if screen is None:
-            return "ERROR_CAPTURE"
+            return ERROR_CAPTURE
         return self._match_state_from_screen(screen, threshold)
 
     def check_state_full(self, serial: str, threshold: float = 0.8) -> dict:
-        """
-        Comprehensive state check. Single screencap, checks ALL categories.
-        Returns dict with: state, construction, special, screen (numpy array).
-        """
+        """Comprehensive state check. Single screencap, checks ALL categories."""
         screen = self.screencap_memory(serial)
         if screen is None:
-            return {"state": "ERROR_CAPTURE", "construction": None, "special": None, "screen": None}
+            return {"state": ERROR_CAPTURE, "construction": None, "special": None, "screen": None}
 
         state = self._match_state_from_screen(screen, threshold)
         construction = None
         special = None
 
-        if state == "UNKNOWN / TRANSITION":
-            construction = self._match_construction_from_screen(screen, threshold=threshold)
+        if state == UNKNOWN_STATE:
+            construction = self._find_name_only(screen, self.construction_templates, threshold=threshold)
             if not construction:
-                special = self._match_special_from_screen(screen, threshold=threshold)
+                special = self._find_name_only(screen, self.special_templates, threshold=threshold)
 
         return {"state": state, "construction": construction, "special": special, "screen": screen}
 
@@ -463,58 +510,50 @@ class GameStateDetector:
                 return True
         return False
 
-    def check_construction(self, serial: str, target: str = None, threshold: float = 0.8) -> str:
+    def check_construction(self, serial: str, target: Optional[str] = None, threshold: float = 0.8) -> Optional[str]:
         """Checks for construction buildings. Returns matched name or None."""
         screen = self.screencap_memory(serial)
         if screen is None:
             return None
-        return self._match_construction_from_screen(screen, target, threshold)
+        return self._find_name_only(screen, self.construction_templates, target, threshold, _caller="check_construction")
 
-    def check_special_state(self, serial: str, target: str = None, threshold: float = 0.8, frame=None) -> str:
-        """Checks for special screens (e.g. Server Maintenance). Returns matched name or None.
-        If frame is provided, uses it instead of capturing a new screenshot."""
+    def check_special_state(
+        self, serial: str, target: Optional[str] = None, threshold: float = 0.8, frame: Optional[np.ndarray] = None,
+    ) -> Optional[str]:
+        """Checks for special screens. Returns matched name or None."""
         screen = frame if frame is not None else self.screencap_memory(serial)
         if screen is None:
             return None
-        return self._match_special_from_screen(screen, target, threshold)
+        return self._find_name_only(screen, self.special_templates, target, threshold, _caller="check_special_state")
 
-    def check_activity(self, serial: str, target: str = None, threshold: float = 0.98, frame=None) -> tuple:
-        """
-        Activity Detector — finds a template on screen and returns its name + center coordinates.
-        Returns: (name, center_x, center_y) if found, or None if not found.
-        If frame is provided, uses it instead of capturing a new screenshot.
-        """
-        screen = frame if frame is not None else self.screencap_memory(serial)
-        if screen is None:
-            return None
-        screen_gray = self._get_gray(screen)
+    def check_activity(
+        self, serial: str, target: Optional[str] = None, threshold: float = 0.8, frame: Optional[np.ndarray] = None,
+    ) -> Optional[MatchResult]:
+        """Activity Detector — returns (name, center_x, center_y) or None."""
+        return self._find_template(serial, self.activity_templates, target, threshold, use_color=True, frame=frame, _caller="check_activity")
 
-        if target:
-            if target not in self.activity_templates:
-                return None
-            checks = {target: self.activity_templates[target]}
-        else:
-            checks = self.activity_templates
-        
-        for name, entries in checks.items():
-            for entry in entries:
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
-                if max_val >= threshold:
-                    h, w = entry["color"].shape[:2]
-                    center_x = max_loc[0] + w // 2
-                    center_y = max_loc[1] + h // 2
-                    print(f"[ACTIVITY] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
-                    return (name, center_x, center_y)
-                
-        return None
+    def check_alliance(
+        self, serial: str, target: Optional[str] = None, threshold: float = 0.9,
+    ) -> Optional[MatchResult]:
+        """Alliance Detector — returns (name, center_x, center_y) or None."""
+        return self._find_template(serial, self.alliance_templates, target, threshold, use_color=True, _caller="check_alliance")
 
-    def find_all_activity_matches(self, serial: str, target: str, threshold: float = 0.8) -> list:
+    def locate_icon(
+        self, serial: str, target: Optional[str] = None, threshold: float = 0.8,
+    ) -> Optional[MatchResult]:
+        """Icon/Marker Detector — returns (name, center_x, center_y) or None."""
+        return self._find_template(serial, self.icon_templates, target, threshold, use_color=True, _caller="locate_icon")
+
+    def check_account_state(
+        self, serial: str, target: Optional[str] = None, threshold: float = 0.95,
+    ) -> Optional[MatchResult]:
+        """Account Detector — returns (name, center_x, center_y) or None."""
+        return self._find_template(serial, self.account_templates, target, threshold, use_color=True, _caller="check_account_state")
+
+    def find_all_activity_matches(self, serial: str, target: str, threshold: float = 0.8) -> list[tuple[int, int]]:
         """
         Multi-match activity detector with Non-Maximum Suppression.
-        Returns ALL matching positions for a given target template.
-        Used for counting BUILD buttons and detecting multiple GO buttons.
-
-        Returns: list of (center_x, center_y) tuples, sorted top-to-bottom.
+        Returns ALL matching positions sorted top-to-bottom.
         """
         screen = self.screencap_memory(serial)
         if screen is None:
@@ -522,13 +561,12 @@ class GameStateDetector:
         screen_gray = self._get_gray(screen)
 
         if target not in self.activity_templates:
-            print(f"[ACTIVITY-MULTI] Target '{target}' not found in activity_templates.")
+            logger.warning("Target '%s' not found in activity_templates.", target)
             return []
 
-        results = []
-        entries = self.activity_templates[target]
+        results: list[tuple[int, int]] = []
 
-        for entry in entries:
+        for entry in self.activity_templates[target]:
             tmpl_gray = entry["gray"]
             roi = entry.get("roi")
 
@@ -544,114 +582,102 @@ class GameStateDetector:
             res = cv2.matchTemplate(region, tmpl_gray, cv2.TM_CCOEFF_NORMED)
             h, w = tmpl_gray.shape[:2]
 
-            # Find all locations above threshold with NMS
             while True:
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 if max_val < threshold:
                     break
 
-                # Calculate absolute center position
                 offset_x = roi[0] if roi else 0
                 offset_y = roi[1] if roi else 0
-                center_x = offset_x + max_loc[0] + w // 2
-                center_y = offset_y + max_loc[1] + h // 2
-                results.append((center_x, center_y))
+                results.append((offset_x + max_loc[0] + w // 2, offset_y + max_loc[1] + h // 2))
 
-                # Suppress this match region (NMS)
+                # NMS — suppress this match region
                 sx = max(0, max_loc[0] - w // 2)
                 sy = max(0, max_loc[1] - h // 2)
                 ex = min(res.shape[1], max_loc[0] + w // 2 + 1)
                 ey = min(res.shape[0], max_loc[1] + h // 2 + 1)
                 res[sy:ey, sx:ex] = 0
 
-        # Sort top-to-bottom
         results.sort(key=lambda p: p[1])
         if results:
-            print(f"[ACTIVITY-MULTI] '{target}' found {len(results)} match(es): {results}")
+            logger.debug("Multi-match '%s': %d match(es) at %s", target, len(results), results)
         return results
 
-    def check_alliance(self, serial: str, target: str = None, threshold: float = 0.98) -> tuple:
-        """
-        Alliance Detector — finds an alliance template on screen and returns its name + center coordinates.
-        Returns: (name, center_x, center_y) if found, or None if not found.
-        """
-        screen = self.screencap_memory(serial)
-        if screen is None:
-            return None
+    # ── Diagnostic API ────────────────────────────────────────────
 
-        if target:
-            if target not in self.alliance_templates:
-                return None
-            checks = {target: self.alliance_templates[target]}
-        else:
-            checks = self.alliance_templates
-        
-        for name, entries in checks.items():
-            for entry in entries:
-                screen_gray = self._get_gray(screen)
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
-                if max_val >= threshold:
-                    h, w = entry["color"].shape[:2]
-                    center_x = max_loc[0] + w // 2
-                    center_y = max_loc[1] + h // 2
-                    print(f"[ALLIANCE] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
-                    return (name, center_x, center_y)
-                
-        return None
+    def clear_diagnostics(self) -> None:
+        """Clear all recorded diagnostic entries."""
+        self._diag_log.clear()
 
-    def locate_icon(self, serial: str, target: str = None, threshold: float = 0.8) -> tuple:
-        """
-        Icon/Marker Detector — finds a template on screen and returns its name + center coordinates.
-        Returns: (name, center_x, center_y) if found, or None if not found.
-        """
-        screen = self.screencap_memory(serial)
-        if screen is None:
-            return None
+    def get_diagnostics(self) -> list[_DiagEntry]:
+        """Return raw diagnostic log entries."""
+        return list(self._diag_log)
 
-        if target:
-            if target not in self.icon_templates:
-                return None
-            checks = {target: self.icon_templates[target]}
-        else:
-            checks = self.icon_templates
-        
-        for name, entries in checks.items():
-            for entry in entries:
-                screen_gray = self._get_gray(screen)
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
-                if max_val >= threshold:
-                    h, w = entry["color"].shape[:2]
-                    center_x = max_loc[0] + w // 2
-                    center_y = max_loc[1] + h // 2
-                    print(f"[ICON] '{name}' found at center ({center_x}, {center_y}) | confidence: {max_val:.3f}")
-                    return (name, center_x, center_y)
-                
-        return None
-
-    def check_account_state(self, serial: str, target: str = None, threshold: float = 0.95) -> tuple:
+    def print_diagnostics(self, show_all: bool = False) -> None:
         """
-        Account Detector — finds account name template on screen.
-        Returns: (name, center_x, center_y) if found, or None if not found.
-        """
-        screen = self.screencap_memory(serial)
-        if screen is None:
-            return None
+        Print formatted diagnostic report to console.
 
-        if target:
-            if target not in self.account_templates:
-                return None
-            checks = {target: self.account_templates[target]}
-        else:
-            checks = self.account_templates
-        
-        for name, entries in checks.items():
-            for entry in entries:
-                screen_gray = self._get_gray(screen)
-                max_val, max_loc = self._match_single(screen_gray, entry, threshold, use_color=True, screen_color=screen)
-                if max_val >= threshold:
-                    h, w = entry["color"].shape[:2]
-                    center_x = max_loc[0] + w // 2
-                    center_y = max_loc[1] + h // 2
-                    return (name, center_x, center_y)
-                
-        return None
+        Args:
+            show_all: If True, show every match attempt. If False (default),
+                      show only matches + near-misses.
+        """
+        if not self._diag_log:
+            print("[DIAG] No diagnostic entries recorded. Set detector.diagnostic_mode = True first.")
+            return
+
+        matches = [e for e in self._diag_log if e.matched]
+        near_misses = [
+            e for e in self._diag_log
+            if not e.matched and e.confidence >= (e.threshold - NEAR_MISS_MARGIN)
+        ]
+        total_time = sum(e.time_ms for e in self._diag_log)
+        slowest = max(self._diag_log, key=lambda e: e.time_ms) if self._diag_log else None
+
+        print(f"\n{'═' * 80}")
+        print(f"  DIAGNOSTIC REPORT — {len(self._diag_log)} calls recorded")
+        print(f"{'═' * 80}")
+
+        # Group by caller for cleaner output
+        callers_seen: dict[str, list[_DiagEntry]] = {}
+        for e in self._diag_log:
+            callers_seen.setdefault(e.caller, []).append(e)
+
+        for caller, entries in callers_seen.items():
+            caller_matches = sum(1 for e in entries if e.matched)
+            caller_time = sum(e.time_ms for e in entries)
+            print(f"\n── {caller}() — {len(entries)} attempts, {caller_matches} matched, {caller_time:.1f}ms total ──")
+
+            for e in entries:
+                if not show_all and not e.matched and e.confidence < (e.threshold - NEAR_MISS_MARGIN):
+                    continue  # Skip low-confidence misses in compact mode
+
+                marker = "✓" if e.matched else ("⚠" if e.confidence >= (e.threshold - NEAR_MISS_MARGIN) else "·")
+                color_tag = "COLOR" if e.use_color else "GRAY "
+                print(
+                    f"  {marker} {e.target:<40} "
+                    f"conf={e.confidence:.4f} thr={e.threshold:.2f} "
+                    f"{color_tag} {e.time_ms:>6.1f}ms"
+                )
+
+        # Summary
+        print(f"\n{'─' * 80}")
+        print(f"  SUMMARY")
+        print(f"    Total calls:  {len(self._diag_log)}")
+        print(f"    Matches:      {len(matches)}")
+        print(f"    Near-misses:  {len(near_misses)}")
+        print(f"    Total time:   {total_time:.1f}ms")
+        if slowest:
+            print(f"    Slowest:      {slowest.caller}() → {slowest.target} ({slowest.time_ms:.1f}ms)")
+
+        # Near-miss warnings
+        if near_misses:
+            print(f"\n  ⚠ NEAR-MISS WARNINGS (confidence within {NEAR_MISS_MARGIN} of threshold):")
+            for e in near_misses:
+                gap = e.threshold - e.confidence
+                print(
+                    f"    {e.caller}() → {e.target}: "
+                    f"conf={e.confidence:.4f} (threshold={e.threshold:.2f}, gap={gap:.4f})"
+                )
+            print(f"    → Consider lowering threshold or improving template quality.")
+
+        print(f"{'═' * 80}\n")

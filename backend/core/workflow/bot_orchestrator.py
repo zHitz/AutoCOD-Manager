@@ -60,7 +60,7 @@ class BotOrchestrator:
         self.misc_config = misc_config or {}
         self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
         self.continue_on_error = self.misc_config.get("continue_on_error", False)
-        self.package_name = core_actions.get_package_for_provider()  # default, updated per-account
+        self.package_name = core_actions.get_package_for_provider()  # default, auto-detected per-emu in _ensure_lobby
 
         self.main_task: asyncio.Task = None
 
@@ -430,14 +430,19 @@ class BotOrchestrator:
         self, serial: str, detector: GameStateDetector, load_timeout: int = 120
     ) -> bool:
         """Ensure the game is running and at lobby before account-sensitive actions."""
-        return await asyncio.to_thread(
+        # Auto-detect provider from running emulator (Global vs Funtap)
+        detected_provider = core_actions.detect_provider_from_emulator(serial)
+        pkg = core_actions.get_package_for_provider(detected_provider)
+        self.package_name = pkg  # update instance-level for other methods
+        result = await asyncio.to_thread(
             core_actions.startup_to_lobby,
             serial,
             detector,
-            self.package_name,
+            pkg,
             config.adb_path,
             load_timeout,
         )
+        return core_actions._is_ok(result)
 
     def _log_account_verification_failure(
         self,

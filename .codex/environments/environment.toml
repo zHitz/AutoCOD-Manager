@@ -6,11 +6,6 @@ name = "UI_MANAGER"
 script = ""
 
 [[actions]]
-name = "Run"
-icon = "run"
-command = "python3 ./main"
-
-[[actions]]
 name = "RUN"
 icon = "run"
 command = "python3 ./main.py"
