@@ -12,12 +12,6 @@ from backend.storage.database import Database, database as _main_db
 
 _db = Database()
 
-# Round-robin rotation tracker for resource farming
-# Key: serial string, Value: index into _ROTATION_ORDER
-_farming_rotation_idx: dict[str, int] = {}
-_ROTATION_ORDER = ["gold", "wood", "stone", "mana"]
-
-
 async def _check_power_hall_limits(
     serial: str, max_power: int = 0, max_hall_level: int = 0
 ) -> tuple:
@@ -116,7 +110,7 @@ async def execute_recipe(
     await log(f"▶ Workflow execution started on {emulator_name}", "info")
 
     all_ok = True
-    _activity_meta = {}  # Collects metadata from dict-returning core_actions
+    _activity_meta = {}  # Collects metadata from the current step result
     fn_id = "unknown"  # Safe default for error reporting
 
     try:
@@ -124,6 +118,7 @@ async def execute_recipe(
         for i, step in enumerate(steps):
             fn_id = step.get("function_id")
             config = step.get("config") or {}
+            _activity_meta = {}
 
             await log(f"[{i + 1}/{total_steps}] Executing {fn_id}...", "run")
             await progress(i, total_steps)
@@ -184,7 +179,7 @@ async def execute_recipe(
 
             # ── Startup / Boot ──
             elif fn_id == "startup_to_lobby":
-                timeout = int(config.get("timeout", 120))
+                timeout = int(config.get("timeout", 180))
                 detected_pkg = config.get("package") or core_actions.get_package_for_provider(
                     core_actions.detect_provider_from_emulator(serial)
                 )
@@ -481,21 +476,28 @@ async def execute_recipe(
                 )
 
             elif fn_id == "nav_to_farming":
+                farming_mode = str((config or {}).get("farming_mode", "legacy")).lower()
                 resource_type = (config or {}).get("resource_type", "wood")
-
-                # Rotation mode: cycle through all resource types
-                if resource_type == "rotation":
-                    idx = _farming_rotation_idx.get(serial, -1)
-                    idx = (idx + 1) % len(_ROTATION_ORDER)
-                    _farming_rotation_idx[serial] = idx
-                    resource_type = _ROTATION_ORDER[idx]
-                    await log(f"  [Rotation] Selected: {resource_type} (slot {idx + 1}/{len(_ROTATION_ORDER)})", "info")
+                rotation_shuffle = bool((config or {}).get("rotation_shuffle", False))
+                legion_resource_plan = [
+                    (config or {}).get(f"legion_{idx}_resource", "wood")
+                    for idx in range(1, 6)
+                ]
+                await log(
+                    f"  [DEBUG] nav_to_farming config={config}, farming_mode='{farming_mode}', "
+                    f"resource_type='{resource_type}', rotation_shuffle={rotation_shuffle}, "
+                    f"legion_resource_plan={legion_resource_plan}",
+                    "info",
+                )
 
                 ok = await asyncio.to_thread(
                     core_actions.go_to_farming,
                     serial,
                     detector,
+                    farming_mode=farming_mode,
                     resource_type=resource_type,
+                    rotation_shuffle=rotation_shuffle,
+                    legion_resource_plan=legion_resource_plan,
                 )
 
             elif fn_id == "check_mail":
@@ -683,6 +685,19 @@ async def execute_recipe(
                 await log(f"  ✓ {fn_id} complete", "ok")
             else:
                 err_reason = _activity_meta.get("error", "")
+                if not err_reason:
+                    err_reason = f"{fn_id} failed without structured error"
+                    _activity_meta["error"] = err_reason
+
+                if not _activity_meta.get("debug_screenshot"):
+                    try:
+                        fallback_error_code = err_reason.split(":")[0].strip() if err_reason else f"{fn_id}_FAILED"
+                        screenshot_path = core_actions._capture_debug_screenshot(fallback_error_code)
+                        if screenshot_path:
+                            _activity_meta["debug_screenshot"] = screenshot_path
+                    except Exception:
+                        pass
+
                 fail_msg = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
                 await log(f"  ✕ {fail_msg}", "err")
 

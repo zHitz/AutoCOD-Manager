@@ -2,10 +2,15 @@
 FastAPI Routes — REST API + WebSocket endpoints.
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import os
+import re
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pathlib import Path
 
 # MUST load config BEFORE any other backend imports
 from backend.config import config
@@ -18,8 +23,6 @@ from backend.tasks.task_queue import task_queue
 from backend.storage.database import database
 from backend.websocket import ws_manager
 from backend.models.scan_result import TaskType
-
-import os
 
 # Resolve frontend path
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -40,6 +43,162 @@ app.add_middleware(
 app.mount("/css", StaticFiles(directory=str(FRONTEND_DIR / "css")), name="css")
 app.mount("/js", StaticFiles(directory=str(FRONTEND_DIR / "js")), name="js")
 app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="assets")
+
+
+_LOG_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_SAFE_SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _workflow_logs_root() -> Path:
+    root = Path(config.db_path).resolve().parent / "workflow_logs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _validate_log_serial(serial: str) -> str:
+    serial = (serial or "").strip()
+    if not serial or not _SAFE_SERIAL_RE.fullmatch(serial):
+        raise HTTPException(status_code=400, detail="Invalid serial")
+    return serial
+
+
+def _validate_log_date(date: str) -> str:
+    date = (date or "").strip()
+    if not _LOG_DATE_RE.fullmatch(date):
+        raise HTTPException(status_code=400, detail="Invalid date")
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date") from exc
+    return date
+
+
+def _resolve_workflow_log_file(serial: str, date: str) -> Path:
+    safe_serial = _validate_log_serial(serial)
+    safe_date = _validate_log_date(date)
+    root = _workflow_logs_root().resolve()
+    path = (root / safe_serial / f"{safe_date}.log").resolve()
+
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid log target") from exc
+
+    return path
+
+
+def _estimate_line_count(path: Path) -> int:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+def _list_workflow_log_files(serial: str | None = None, date: str | None = None) -> list[dict]:
+    root = _workflow_logs_root()
+    selected_serial = _validate_log_serial(serial) if serial else None
+    selected_date = _validate_log_date(date) if date else None
+    rows: list[dict] = []
+
+    serial_dirs = [root / selected_serial] if selected_serial else [p for p in root.iterdir() if p.is_dir()]
+    for serial_dir in serial_dirs:
+        if not serial_dir.exists() or not serial_dir.is_dir():
+            continue
+
+        serial_name = serial_dir.name
+        if not _SAFE_SERIAL_RE.fullmatch(serial_name):
+            continue
+
+        for log_file in serial_dir.glob("*.log"):
+            date_part = log_file.stem
+            if not _LOG_DATE_RE.fullmatch(date_part):
+                continue
+            if selected_date and date_part != selected_date:
+                continue
+
+            stat = log_file.stat()
+            rows.append({
+                "serial": serial_name,
+                "date": date_part,
+                "filename": log_file.name,
+                "path_token": f"{serial_name}:{date_part}",
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "line_count_estimate": _estimate_line_count(log_file),
+            })
+
+    rows.sort(key=lambda item: (item["date"], item["modified_at"], item["serial"]), reverse=True)
+    return rows
+
+
+def _read_workflow_log_content(
+    serial: str,
+    date: str,
+    tail: int = 500,
+    offset: int = 0,
+    search: str | None = None,
+    anchor_line: int | None = None,
+    context: int = 12,
+) -> dict:
+    path = _resolve_workflow_log_file(serial, date)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            lines = [line.rstrip("\r\n") for line in f]
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Failed to read log file") from exc
+
+    total_lines = len(lines)
+    tail = max(1, min(int(tail or 500), 5000))
+    offset = max(0, int(offset or 0))
+    indexed_lines = list(enumerate(lines, start=1))
+    if search:
+        needle = search.lower()
+        indexed_lines = [(line_no, line) for line_no, line in indexed_lines if needle in line.lower()]
+
+    has_more_after = False
+    anchor_line = int(anchor_line) if anchor_line is not None else None
+    if anchor_line:
+        context = max(1, min(int(context or 12), 100))
+        anchor_line = max(1, min(anchor_line, total_lines))
+        start_line = max(1, anchor_line - context)
+        end_line = min(total_lines, anchor_line + context)
+        visible_entries = indexed_lines[start_line - 1:end_line]
+        matched_lines = len(visible_entries)
+        start_idx = start_line - 1
+        has_more_after = end_line < total_lines
+    else:
+        matched_lines = len(indexed_lines)
+        window_size = min(matched_lines, tail + offset)
+        start_idx = max(0, matched_lines - window_size)
+        visible_entries = indexed_lines[start_idx:]
+        has_more_after = False
+    visible_lines = [line for _, line in visible_entries]
+    line_numbers = [line_no for line_no, _ in visible_entries]
+
+    last_modified = datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+    return {
+        "serial": serial,
+        "date": date,
+        "total_lines": total_lines,
+        "matched_lines": matched_lines,
+        "returned_lines": len(visible_lines),
+        "has_more_before": start_idx > 0,
+        "has_more_after": has_more_after,
+        "content": "\n".join(visible_lines),
+        "line_numbers": line_numbers,
+        "search_applied": bool(search),
+        "anchor_line": anchor_line,
+        "context_mode": bool(anchor_line),
+        "last_modified": last_modified,
+        "size_bytes": path.stat().st_size,
+        "filename": path.name,
+        "offset": offset,
+        "tail": tail,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -646,6 +805,76 @@ async def clear_debug_logs(serial: str = None):
     """Clear debug logs and screenshots, optionally for a specific serial."""
     deleted = await database.clear_debug_logs(serial=serial)
     return {"deleted": deleted}
+
+
+@app.get("/api/workflow/logs/summary")
+async def get_workflow_logs_summary(serial: str = None, date: str = None):
+    """Return workflow text log files grouped by emulator serial and date."""
+    files = _list_workflow_log_files(serial=serial, date=date)
+
+    serials = sorted({row["serial"] for row in files})
+    if serial:
+        selected_serial = _validate_log_serial(serial)
+        dates = sorted({row["date"] for row in files if row["serial"] == selected_serial}, reverse=True)
+    else:
+        dates = sorted({row["date"] for row in files}, reverse=True)
+
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in files:
+        grouped[row["serial"]].append(row)
+
+    return {
+        "serials": serials,
+        "dates": dates,
+        "files": files,
+        "grouped_files": dict(grouped),
+    }
+
+
+@app.get("/api/workflow/logs/content")
+async def get_workflow_log_content(
+    serial: str,
+    date: str,
+    tail: int = 500,
+    offset: int = 0,
+    search: str = None,
+    anchor_line: int = None,
+    context: int = 12,
+):
+    """Return tail content for one workflow text log file."""
+    safe_serial = _validate_log_serial(serial)
+    safe_date = _validate_log_date(date)
+    return _read_workflow_log_content(
+        safe_serial,
+        safe_date,
+        tail=tail,
+        offset=offset,
+        search=search,
+        anchor_line=anchor_line,
+        context=context,
+    )
+
+
+@app.delete("/api/workflow/logs/file")
+async def delete_workflow_log_file(serial: str, date: str):
+    """Delete one workflow text log file."""
+    path = _resolve_workflow_log_file(serial, date)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Failed to delete log file") from exc
+
+    serial_dir = path.parent
+    try:
+        if serial_dir.exists() and not any(serial_dir.iterdir()):
+            serial_dir.rmdir()
+    except OSError:
+        pass
+
+    return {"deleted": True, "serial": serial, "date": date}
 
 
 # Mount debug_captures directory for serving screenshots

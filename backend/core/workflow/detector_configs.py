@@ -11,6 +11,7 @@ STATE_CONFIGS = {
     "fixing_network.png": "LOADING SCREEN (NETWORK ISSUE)",
     "lobby_loading.png": "LOADING SCREEN",
     "lobby_loading_2.png": "LOADING SCREEN",
+    "lobby_loading_3.png": "LOADING SCREEN",    
     "lobby_profile_detail.png": "IN-GAME LOBBY (PROFILE MENU DETAIL)",
     "lobby_profile_menu.png": "IN-GAME LOBBY (PROFILE MENU)",
     "lobby_events.png": "IN-GAME LOBBY (EVENTS MENU)",
@@ -45,6 +46,7 @@ CONSTRUCTION_CONFIGS = {
 }
 
 SPECIAL_CONFIGS = {
+    "special/popup_X_btn.png": "POPUP_X_BTN",
     "loading_server_maintenance.png": "SERVER_MAINTENANCE",
     "auto_capture_pet.png": "AUTO_CAPTURE_PET",
     "pets/Auto-capture_in_progress.png": "AUTO_CAPTURE_IN_PROGRESS",
@@ -187,6 +189,7 @@ ROI_HINTS = {
     "contructions/season_menu.png": (10, 0, 250, 65),
 
     # ── SPECIAL: Center popups + headers ──
+    "special/popup_X_btn.png": (700, 100, 900, 250),
     "loading_server_maintenance.png": (0, 0, 950, 540),
     "auto_capture_pet.png":           (350, 27, 630, 115),
     "pets/Auto-capture_in_progress.png": (305, 411, 761, 509),

@@ -427,7 +427,7 @@ class BotOrchestrator:
         return True
 
     async def _ensure_lobby(
-        self, serial: str, detector: GameStateDetector, load_timeout: int = 120
+        self, serial: str, detector: GameStateDetector, load_timeout: int = 180
     ) -> bool:
         """Ensure the game is running and at lobby before account-sensitive actions."""
         # Auto-detect provider from running emulator (Global vs Funtap)
@@ -974,7 +974,7 @@ class BotOrchestrator:
                 )
 
                 print(f"[BotOrchestrator] Ensuring game is running and at lobby on Emu {emu_idx}...")
-                lobby_ok = await self._ensure_lobby(serial, detector, 120)
+                lobby_ok = await self._ensure_lobby(serial, detector, 180)
                 
                 if not lobby_ok:
                     print(f"[BotOrchestrator] Failed to reach lobby on Emu {emu_idx}. Skipping account.")

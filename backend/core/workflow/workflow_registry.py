@@ -17,7 +17,7 @@ FUNCTION_REGISTRY = [
                 "key": "timeout",
                 "label": "Load Timeout (sec)",
                 "type": "number",
-                "default": 120,
+                "default": 180,
                 "min": 30,
                 "max": 300,
             }
@@ -569,7 +569,7 @@ RECIPE_TEMPLATES = [
         "description": "Boot → Run farm macro → Scan → Back to lobby",
         "icon": "🌾",
         "steps": [
-            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "startup_to_lobby", "config": {"timeout": 180}},
             {"function_id": "run_macro", "config": {"file": "FARM +4", "loop": 1}},
             {"function_id": "flow_delay", "config": {"seconds": 30}},
             {"function_id": "scan_full", "config": {}},
@@ -582,7 +582,7 @@ RECIPE_TEMPLATES = [
         "description": "Boot → Profile → Extract Player ID → Back",
         "icon": "🆔",
         "steps": [
-            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "startup_to_lobby", "config": {"timeout": 180}},
             {"function_id": "go_to_profile", "config": {}},
             {"function_id": "extract_player_id", "config": {}},
             {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
@@ -594,7 +594,7 @@ RECIPE_TEMPLATES = [
         "description": "Boot → Full Scan → Save to DB",
         "icon": "🔬",
         "steps": [
-            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "startup_to_lobby", "config": {"timeout": 180}},
             {"function_id": "scan_full", "config": {}},
             {"function_id": "back_to_lobby", "config": {"timeout_sec": 45}},
         ],
@@ -605,7 +605,7 @@ RECIPE_TEMPLATES = [
         "description": "Run character swap macro in a loop",
         "icon": "🔁",
         "steps": [
-            {"function_id": "startup_to_lobby", "config": {"timeout": 120}},
+            {"function_id": "startup_to_lobby", "config": {"timeout": 180}},
             {
                 "function_id": "run_macro",
                 "config": {"file": "Swap_Charactor", "loop": 5},
@@ -661,10 +661,58 @@ ACTIVITY_REGISTRY = [
         ],
         "config_fields": [
             {
+                "key": "farming_mode",
+                "label": "Farming Mode",
+                "type": "select",
+                "options": ["legacy", "manual"],
+                "default": "legacy",
+            },
+            {
                 "key": "resource_type",
-                "label": "Farm Resource Type",
+                "label": "Legacy Resource Type",
                 "type": "select",
                 "options": ["gold", "wood", "stone", "mana", "rotation"],
+                "default": "wood",
+            },
+            {
+                "key": "rotation_shuffle",
+                "label": "Shuffle Rotation (Legacy)",
+                "type": "checkbox",
+                "default": False,
+            },
+            {
+                "key": "legion_1_resource",
+                "label": "Legion 1 Resource",
+                "type": "select",
+                "options": ["wood", "stone", "gold", "mana", "skip"],
+                "default": "wood",
+            },
+            {
+                "key": "legion_2_resource",
+                "label": "Legion 2 Resource",
+                "type": "select",
+                "options": ["wood", "stone", "gold", "mana", "skip"],
+                "default": "wood",
+            },
+            {
+                "key": "legion_3_resource",
+                "label": "Legion 3 Resource",
+                "type": "select",
+                "options": ["wood", "stone", "gold", "mana", "skip"],
+                "default": "wood",
+            },
+            {
+                "key": "legion_4_resource",
+                "label": "Legion 4 Resource",
+                "type": "select",
+                "options": ["wood", "stone", "gold", "mana", "skip"],
+                "default": "wood",
+            },
+            {
+                "key": "legion_5_resource",
+                "label": "Legion 5 Resource",
+                "type": "select",
+                "options": ["wood", "stone", "gold", "mana", "skip"],
                 "default": "wood",
             },
         ],
@@ -1107,6 +1155,10 @@ def build_steps_for_activity(activity_id: str, user_config: dict = None):
 
     cfg = user_config or {}
 
+    # DEBUG: trace resource_type through merge
+    if "resource_type" in cfg:
+        print(f"[BUILD_STEPS] {activity_id}: user_config has resource_type='{cfg['resource_type']}'")
+
     # Handle event-type activities: dispatch to enabled sub-events
     if act.get("type") == "event":
         return _build_event_steps(act, cfg)
@@ -1126,6 +1178,10 @@ def build_steps_for_activity(activity_id: str, user_config: dict = None):
                 # Ignore global defaults like 'cooldown_enabled' inside step configs
                 continue
             step["config"][key] = val
+
+        # DEBUG: trace final step config
+        if step["function_id"] == "nav_to_farming":
+            print(f"[BUILD_STEPS] nav_to_farming step config: {step['config']}")
 
         steps.append(step)
 

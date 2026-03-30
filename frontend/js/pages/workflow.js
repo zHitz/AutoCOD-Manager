@@ -415,12 +415,23 @@ const WorkflowPage = {
                 <!-- Edit Mode: full account table with checkboxes (hidden by default) -->
                 <div id="wf-group-edit-mode" class="grp-field" style="flex:1; min-height:0; display:flex; flex-direction:column; display:none;">
                   <div class="grp-label-row">
-                    <label class="grp-label">Select Accounts</label>
-                    <span id="wf-group-selected-count" class="grp-count-badge">0 selected</span>
-                    <button class="grp-btn-edit" onclick="WF3.exitGroupEditMode()">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                      Done
-                    </button>
+                    <div class="grp-label-row-left">
+                      <label class="grp-label">Select Accounts</label>
+                      <span id="wf-group-selected-count" class="grp-count-badge">0 selected</span>
+                    </div>
+                    <div class="grp-label-row-actions">
+                      <select id="wf-group-sort" class="grp-sort-select" onchange="WF3.changeGroupAccountSort(this.value)">
+                        <option value="lord_name_asc">Name A-Z</option>
+                        <option value="lord_name_desc">Name Z-A</option>
+                        <option value="emu_name_asc">Emulator A-Z</option>
+                        <option value="game_id_asc">Game ID Asc</option>
+                        <option value="game_id_desc">Game ID Desc</option>
+                      </select>
+                      <button class="grp-btn-edit" onclick="WF3.exitGroupEditMode()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        Done
+                      </button>
+                    </div>
                   </div>
                   <div class="grp-table-wrap">
                     <table class="grp-table">
@@ -971,7 +982,21 @@ const WF3 = {
             // Fallback for offline UI testing
             this._systemActivities = [
                 { id: 'gather_rss_center', name: 'Gather Resource Center', defaults: {} },
-                { id: 'gather_resource', name: 'Gather Resource', defaults: {}, config_fields: [{ key: 'resource_type', default: 'wood' }] },
+        {
+            id: 'gather_resource',
+            name: 'Gather Resource',
+            defaults: {},
+            config_fields: [
+                { key: 'farming_mode', label: 'Farming Mode', type: 'select', options: ['legacy', 'manual'], default: 'legacy' },
+                { key: 'resource_type', label: 'Legacy Resource Type', type: 'select', options: ['gold', 'wood', 'stone', 'mana', 'rotation'], default: 'wood' },
+                { key: 'rotation_shuffle', label: 'Shuffle Rotation (Legacy)', type: 'checkbox', default: false },
+                { key: 'legion_1_resource', label: 'Legion 1 Resource', type: 'select', options: ['wood', 'stone', 'gold', 'mana', 'skip'], default: 'wood' },
+                { key: 'legion_2_resource', label: 'Legion 2 Resource', type: 'select', options: ['wood', 'stone', 'gold', 'mana', 'skip'], default: 'wood' },
+                { key: 'legion_3_resource', label: 'Legion 3 Resource', type: 'select', options: ['wood', 'stone', 'gold', 'mana', 'skip'], default: 'wood' },
+                { key: 'legion_4_resource', label: 'Legion 4 Resource', type: 'select', options: ['wood', 'stone', 'gold', 'mana', 'skip'], default: 'wood' },
+                { key: 'legion_5_resource', label: 'Legion 5 Resource', type: 'select', options: ['wood', 'stone', 'gold', 'mana', 'skip'], default: 'wood' },
+            ]
+        },
                 { id: 'full_scan', name: 'Full Scan', defaults: {} },
                 { id: 'catch_pet', name: 'Catch Pet', defaults: {} }
             ];
@@ -2321,7 +2346,86 @@ const WF3 = {
         }
 
         this._saveConfigToBackend(groupId);
+        if (this._currentConfigActivityId === activityId) {
+            this.showActivityConfig(activityId, groupId);
+        }
         WfToast.show('s', 'Saved', 'Configuration saved.');
+    },
+
+    _formatConfigOptionLabel(value) {
+        return String(value)
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, ch => ch.toUpperCase());
+    },
+
+    _describeConfigField(field) {
+        const key = String(field.key || '').toLowerCase();
+        const label = field.label || this._formatConfigOptionLabel(field.key || '');
+
+        if (key.includes('farming_mode')) return 'Choose legacy or manual routing.';
+        if (key.includes('resource_type')) return 'Resource target for legacy mode.';
+        if (key.includes('rotation_shuffle')) return 'Randomize legacy rotation.';
+        if (key.includes('legion_')) return 'Target for this legion slot, or skip.';
+        if (key.includes('mail_type')) return 'Filter by mail category.';
+        if (key.includes('research_type')) return 'Select the tech branch.';
+        if (key.includes('max_refreshes')) return 'Cap repeat refresh attempts.';
+        if (key.includes('duration')) return 'Max runtime for this action.';
+        if (key.includes('score_threshold')) return 'Minimum confidence to commit.';
+        if (key.includes('max_')) return 'Safety limit for this workflow.';
+        if (key.includes('tier_')) return 'Troop tier for this house.';
+        return `${label} for this workflow.`;
+    },
+
+    _getConfigFieldCategory(field) {
+        const key = String(field.key || '').toLowerCase();
+        if (key.includes('mode') || key.includes('resource') || key.includes('tier_')) return 'routing';
+        if (key.includes('max_') || key.includes('threshold') || key.includes('duration')) return 'guard';
+        return 'general';
+    },
+
+    _shouldShowConfigField(field, saved) {
+        const key = String(field.key || '');
+        const mode = String(saved.farming_mode || 'legacy').toLowerCase();
+
+        if (key === 'resource_type' || key === 'rotation_shuffle') return mode === 'legacy';
+        if (/^legion_[1-5]_resource$/.test(key)) return mode === 'manual';
+        return true;
+    },
+
+    _renderActivityConfigField(field, value, activityId, groupId) {
+        const category = this._getConfigFieldCategory(field);
+        const desc = this._describeConfigField(field);
+        const key = field.key;
+
+        if (field.type === 'checkbox') {
+            return `<div class="acv-cfg-card acv-cfg-card-${category} acv-cfg-card-toggle">
+                <div class="acv-cfg-card-top">
+                    <div>
+                        <div class="acv-cfg-card-label">${field.label}</div>
+                        <div class="acv-cfg-card-help">${desc}</div>
+                    </div>
+                    <label class="acv-switch">
+                        <input type="checkbox" data-cfgkey="${key}" ${value ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                        <span class="acv-switch-track"></span>
+                    </label>
+                </div>
+            </div>`;
+        }
+
+        if (field.type === 'select') {
+            const opts = field.options.map(o => `<option value="${o}" ${value === o ? 'selected' : ''}>${this._formatConfigOptionLabel(o)}</option>`).join('');
+            return `<div class="acv-cfg-card acv-cfg-card-${category}">
+                <label class="acv-cfg-card-label" for="cfg-${activityId}-${key}">${field.label}</label>
+                <div class="acv-cfg-card-help">${desc}</div>
+                <select id="cfg-${activityId}-${key}" class="acv-cfg-select acv-cfg-select-wide" data-cfgkey="${key}" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">${opts}</select>
+            </div>`;
+        }
+
+        return `<div class="acv-cfg-card acv-cfg-card-${category}">
+            <label class="acv-cfg-card-label" for="cfg-${activityId}-${key}">${field.label}</label>
+            <div class="acv-cfg-card-help">${desc}</div>
+            <input id="cfg-${activityId}-${key}" type="number" class="acv-cfg-input acv-cfg-input-wide" data-cfgkey="${key}" value="${value}" ${field.min !== undefined ? 'min="' + field.min + '"' : ''} ${field.max !== undefined ? 'max="' + field.max + '"' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+        </div>`;
     },
 
     // Click on activity name → highlight row + open config
@@ -2434,6 +2538,153 @@ const WF3 = {
     },
 
     // ── Event Activity — Sub-events Helpers ──
+
+    showActivityConfig(activityId, groupId) {
+        this.switchRightTab('config');
+        this._currentConfigActivityId = activityId;
+
+        const panel = document.getElementById('acv-config-panel');
+        if (!panel) return;
+
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        if (!sys) return;
+
+        const activityName = sys.name;
+        const defs = sys.config_fields || [];
+        const saved = this.getPerActivityConfig(activityId, groupId);
+        const visibleDefs = defs.filter(d => this._shouldShowConfigField(d, saved));
+        const fieldsHtml = visibleDefs.map(d => {
+            const val = saved[d.key] !== undefined ? saved[d.key] : d.default;
+            return this._renderActivityConfigField(d, val, activityId, groupId);
+        }).join('');
+
+        const cdEnabled = saved.cooldown_enabled || false;
+        const cdMinutes = saved.cooldown_minutes !== undefined ? saved.cooldown_minutes : 60;
+        const cdMinutesMax = saved.cooldown_minutes_max || 0;
+        const lastRun = this._getLastRun(activityId, groupId);
+        const lastRunStr = lastRun ? new Date(lastRun).toLocaleString() : 'Never';
+        const runsToday = this._getRunsToday(activityId, groupId);
+        const isOnCooldown = this._isOnCooldown(activityId, groupId);
+        const cooldownStatus = isOnCooldown
+            ? `<span class="acv-cfg-status-pill is-waiting">Cooling Down</span>`
+            : (lastRun ? '<span class="acv-cfg-status-pill is-ready">Ready</span>' : '<span class="acv-cfg-status-pill">Not Run Yet</span>');
+        const summaryMode = saved.farming_mode ? this._formatConfigOptionLabel(saved.farming_mode) : 'Standard';
+        const summaryWeight = this._formatConfigOptionLabel(saved.weight || sys.weight || 'light');
+        const summaryCooldown = isOnCooldown
+            ? this._formatCooldownRemaining(activityId, groupId)
+            : (cdEnabled ? `${cdMinutesMax > cdMinutes ? `${cdMinutes}-${cdMinutesMax}` : cdMinutes} min` : 'Disabled');
+
+        const cooldownHtml = `
+            <section class="acv-cfg-section">
+                <div class="acv-cfg-section-head">
+                    <div>
+                        <div class="acv-cfg-section-kicker">Cooldown Policy</div>
+                        <h4 class="acv-cfg-section-title-xl">Recovery Timing</h4>
+                    </div>
+                    ${cooldownStatus}
+                </div>
+                <div class="acv-cfg-grid acv-cfg-grid-tight">
+                    <div class="acv-cfg-card acv-cfg-card-control acv-cfg-card-toggle">
+                        <div class="acv-cfg-card-top">
+                            <div>
+                                <div class="acv-cfg-card-label">Enable Cooldown</div>
+                                <div class="acv-cfg-card-help">Prevent immediate reruns after this workflow completes.</div>
+                            </div>
+                            <label class="acv-switch">
+                                <input type="checkbox" data-cfgkey="cooldown_enabled" ${cdEnabled ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                                <span class="acv-switch-track"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="acv-cfg-card acv-cfg-card-control">
+                        <label class="acv-cfg-card-label">Cooldown Range</label>
+                        <div class="acv-cfg-card-help">Set a fixed wait or a min/max window for randomized reruns.</div>
+                        <div class="acv-cfg-inline-inputs">
+                            <input type="number" class="acv-cfg-input acv-cfg-input-mini" data-cfgkey="cooldown_minutes" value="${cdMinutes}" min="1" max="9999" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                            <span class="acv-cfg-inline-sep">to</span>
+                            <input type="number" class="acv-cfg-input acv-cfg-input-mini" data-cfgkey="cooldown_minutes_max" value="${cdMinutesMax}" min="0" max="9999" onchange="WF3.savePerActivityConfig('${activityId}',${groupId})" title="Max cooldown (0 = fixed)">
+                            <span class="acv-cfg-inline-unit">min</span>
+                        </div>
+                        <div class="acv-cfg-inline-note">
+                            ${cdMinutesMax > cdMinutes ? `Randomized window between ${cdMinutes} and ${cdMinutesMax} minutes.` : 'Single fixed cooldown duration.'}
+                        </div>
+                    </div>
+                </div>
+                <div class="acv-cfg-meta-row">
+                    <span>Last run: <strong id="acv-cfg-last-run">${lastRunStr}</strong></span>
+                    <span>Runs today: <strong id="acv-cfg-runs-today">${runsToday}</strong></span>
+                    <span>Effective state: <strong>${summaryCooldown}</strong></span>
+                </div>
+            </section>`;
+
+        const currentWeight = saved.weight || sys.weight || 'light';
+        const weightHtml = `
+            <section class="acv-cfg-section">
+                <div class="acv-cfg-section-head">
+                    <div>
+                        <div class="acv-cfg-section-kicker">Execution Profile</div>
+                        <h4 class="acv-cfg-section-title-xl">Priority & Scheduling</h4>
+                    </div>
+                </div>
+                <div class="acv-cfg-grid acv-cfg-grid-tight">
+                    <div class="acv-cfg-card acv-cfg-card-guard">
+                        <label class="acv-cfg-card-label">Weight</label>
+                        <div class="acv-cfg-card-help">Heavy workflows consume more time or troops, so they are scheduled more carefully.</div>
+                        <select class="acv-cfg-select acv-cfg-select-wide" data-cfgkey="weight" onchange="WF3.savePerActivityConfig('${activityId}',${groupId}); WF3.renderActivitiesForGroup(${groupId})">
+                            <option value="light" ${currentWeight === 'light' ? 'selected' : ''}>Light</option>
+                            <option value="heavy" ${currentWeight === 'heavy' ? 'selected' : ''}>Heavy</option>
+                        </select>
+                    </div>
+                </div>
+            </section>`;
+
+        panel.innerHTML = `
+    <div class="acv-cfg-shell">
+        <div class="acv-cfg-hero">
+            <div class="acv-cfg-hero-main">
+                <div class="acv-cfg-kicker">Workflow Control Surface</div>
+                <div class="acv-cfg-title-row">
+                    <div class="acv-cfg-title">${activityName}</div>
+                    ${cooldownStatus}
+                </div>
+                <div class="acv-cfg-sub">Tune behavior, routing, and recovery without leaving the workflow page.</div>
+            </div>
+            <div class="acv-cfg-snapshot">
+                <div class="acv-cfg-metric">
+                    <span class="acv-cfg-metric-label">Mode</span>
+                    <strong class="acv-cfg-metric-value">${summaryMode}</strong>
+                </div>
+                <div class="acv-cfg-metric">
+                    <span class="acv-cfg-metric-label">Weight</span>
+                    <strong class="acv-cfg-metric-value">${summaryWeight}</strong>
+                </div>
+                <div class="acv-cfg-metric">
+                    <span class="acv-cfg-metric-label">Cooldown</span>
+                    <strong class="acv-cfg-metric-value">${summaryCooldown}</strong>
+                </div>
+                <div class="acv-cfg-metric">
+                    <span class="acv-cfg-metric-label">Runs Today</span>
+                    <strong class="acv-cfg-metric-value">${runsToday}</strong>
+                </div>
+            </div>
+        </div>
+        <div class="acv-cfg-body">
+            <section class="acv-cfg-section">
+                <div class="acv-cfg-section-head">
+                    <div>
+                        <div class="acv-cfg-section-kicker">Activity Settings</div>
+                        <h4 class="acv-cfg-section-title-xl">Behavior & Routing</h4>
+                    </div>
+                </div>
+                <div class="acv-cfg-grid">
+                    ${fieldsHtml || `<div class="acv-cfg-empty">This workflow has no custom settings yet.</div>`}
+                </div>
+            </section>
+            ${cooldownHtml}
+            ${weightHtml}
+        </div>
+    </div>`;
+    },
 
     _getEnabledSubEventCount(activityId, groupId) {
         const conf = this._groupConfigs[groupId];
@@ -2692,6 +2943,7 @@ const WF3 = {
 
     // ── View / Edit Mode for Account Groups ──
     _currentGroupAccountIds: [],
+    _groupAccountSort: 'lord_name_asc',
 
     renderGroupMembersView(accountIds) {
         const container = document.getElementById('wf-group-members-list');
@@ -2724,6 +2976,8 @@ const WF3 = {
         const editMode = document.getElementById('wf-group-edit-mode');
         if (viewMode) viewMode.style.display = 'none';
         if (editMode) editMode.style.display = 'flex';
+        const sortSelect = document.getElementById('wf-group-sort');
+        if (sortSelect) sortSelect.value = this._groupAccountSort;
 
         // Load full account table with current selections
         this.renderGroupAccounts(this._currentGroupAccountIds || []);
@@ -2756,7 +3010,9 @@ const WF3 = {
             return;
         }
 
-        tbody.innerHTML = this.accountsData.map(acc => {
+        const rows = [...this.accountsData].sort((a, b) => this._compareGroupAccounts(a, b, this._groupAccountSort));
+
+        tbody.innerHTML = rows.map(acc => {
             const isSelected = selectedIds.includes(acc.account_id) ? 'checked' : '';
             return `
     <tr style = "border-bottom: 1px solid var(--border);" >
@@ -2772,6 +3028,31 @@ const WF3 = {
     `;
         }).join('');
         this.updateGroupCount();
+    },
+
+    _compareGroupAccounts(a, b, sortKey) {
+        const normalize = (v) => String(v ?? '').trim().toLowerCase();
+        const num = (v) => Number(v ?? 0);
+
+        switch (sortKey) {
+            case 'lord_name_desc':
+                return normalize(b.lord_name).localeCompare(normalize(a.lord_name));
+            case 'emu_name_asc':
+                return normalize(a.emu_name || a.emu_index).localeCompare(normalize(b.emu_name || b.emu_index));
+            case 'game_id_desc':
+                return num(b.game_id) - num(a.game_id);
+            case 'game_id_asc':
+                return num(a.game_id) - num(b.game_id);
+            case 'lord_name_asc':
+            default:
+                return normalize(a.lord_name).localeCompare(normalize(b.lord_name));
+        }
+    },
+
+    changeGroupAccountSort(sortValue) {
+        this._groupAccountSort = sortValue || 'lord_name_asc';
+        const selectedIds = Array.from(document.querySelectorAll('.wf-group-account-cb:checked')).map(cb => parseInt(cb.value));
+        this.renderGroupAccounts(selectedIds.length ? selectedIds : (this._currentGroupAccountIds || []));
     },
 
     toggleAllGroupAccounts(checked) {

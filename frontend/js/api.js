@@ -50,6 +50,36 @@ const API = {
         if (serial) url += `&serial=${serial}`;
         return this.get(url);
     },
+    getWorkflowLogSummary(serial, date) {
+        const params = new URLSearchParams();
+        if (serial) params.set('serial', serial);
+        if (date) params.set('date', date);
+        const query = params.toString();
+        return this.get(`/api/workflow/logs/summary${query ? `?${query}` : ''}`);
+    },
+    getWorkflowLogContent({ serial, date, tail, offset, search, anchorLine, context } = {}) {
+        const params = new URLSearchParams();
+        if (serial) params.set('serial', serial);
+        if (date) params.set('date', date);
+        if (tail != null) params.set('tail', String(tail));
+        if (offset != null) params.set('offset', String(offset));
+        if (search) params.set('search', search);
+        if (anchorLine != null) params.set('anchor_line', String(anchorLine));
+        if (context != null) params.set('context', String(context));
+        return this.get(`/api/workflow/logs/content?${params.toString()}`);
+    },
+    deleteWorkflowLogFile(serial, date) {
+        const params = new URLSearchParams();
+        if (serial) params.set('serial', serial);
+        if (date) params.set('date', date);
+        return fetch(`/api/workflow/logs/file?${params.toString()}`, { method: 'DELETE' }).then(async (res) => {
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || err.detail || `HTTP Error ${res.status}: ${res.statusText}`);
+            }
+            return res.json();
+        });
+    },
     clearDebugLogs(serial) {
         let url = '/api/debug/logs';
         if (serial) url += `?serial=${serial}`;

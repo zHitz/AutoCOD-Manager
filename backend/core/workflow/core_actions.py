@@ -82,6 +82,7 @@ def detect_provider_from_emulator(serial: str, adb_path: str = None) -> str:
 
 # Global cache to store the last screenshot hash/image for freeze detection
 _FREEZE_CACHE = {}
+_APP_HEALTH_CACHE = {}
 
 import threading
 from datetime import datetime
@@ -94,6 +95,35 @@ _KNOWN_LOG_LEVELS = {
     "FATAL",
     "CRASH DETECTED",
 }
+
+_LOG_FILE_LOCK = threading.Lock()
+
+
+def _resolve_workflow_log_path(serial: str) -> str:
+    """Build a daily workflow log file path scoped by emulator/account serial."""
+    base_dir = os.path.join(os.path.dirname(config.db_path), "workflow_logs")
+    safe_serial = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in (serial or "GENERAL"))
+    dated_name = f"{datetime.now().strftime('%Y-%m-%d')}.log"
+    log_dir = os.path.join(base_dir, safe_serial)
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, dated_name)
+
+
+def _append_workflow_log(line: str) -> None:
+    """Best-effort file append for workflow logs. Must never break workflow execution."""
+    try:
+        serial = "GENERAL"
+        parts = line.split("] [", 2)
+        if len(parts) >= 2:
+            serial = parts[1].rstrip("]").strip() or "GENERAL"
+
+        log_path = _resolve_workflow_log_path(serial)
+        with _LOG_FILE_LOCK:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception:
+        # Logging to file must never interfere with the actual workflow.
+        pass
 
 
 def _format_output_message(message: str) -> str:
@@ -126,7 +156,9 @@ def _format_output_message(message: str) -> str:
 
 def print(*args, sep=" ", end="\n", file=None, flush=False):
     message = sep.join(str(arg) for arg in args)
-    builtins.print(_format_output_message(message), end=end, file=file, flush=flush)
+    formatted = _format_output_message(message)
+    builtins.print(formatted, end=end, file=file, flush=flush)
+    _append_workflow_log(formatted)
 
 
 def _exit_with_log(serial: str, level: str, message: str):
@@ -231,40 +263,76 @@ def ensure_app_running(serial: str, package_name: str, adb_path: str = config.ad
         if not launched:
             print(f"[{serial}] [ERROR] open_app failed. App did not launch.")
             return None
+        _FREEZE_CACHE.pop(serial, None)
+        _APP_HEALTH_CACHE.pop(serial, None)
         _human_delay(10)
         return False
     return True
 
-def check_app_crash(serial: str, package_name: str = "", adb_path: str = config.adb_path) -> bool:
+def _parse_pid_output(raw: str) -> list[str]:
+    return [part for part in str(raw or "").split() if part.isdigit()]
+
+
+def _is_package_foreground(serial: str, package_name: str) -> bool:
+    activity_out = adb_helper._run_adb(["shell", "dumpsys", "activity", "activities"], serial=serial) or ""
+    for line in activity_out.splitlines():
+        if any(marker in line for marker in ("topResumedActivity", "mResumedActivity", "ResumedActivity")):
+            if package_name in line:
+                return True
+
+    window_out = adb_helper._run_adb(["shell", "dumpsys", "window", "windows"], serial=serial) or ""
+    for line in window_out.splitlines():
+        if any(marker in line for marker in ("mCurrentFocus", "mFocusedApp")):
+            if package_name in line:
+                return True
+
+    return False
+
+
+def check_app_crash(serial: str, package_name: str = "", adb_path: str = config.adb_path, current_state: str = "") -> bool:
     """
     Checks if the game has crashed, frozen, or been pushed to the background.
     Returns True if crashed/not in foreground/frozen, False if running normally.
     """
     try:
+        health = _APP_HEALTH_CACHE.setdefault(serial, {
+            "no_pid_count": 0,
+            "not_foreground_count": 0,
+            "capture_fail_count": 0,
+        })
+        loading_like_states = {"LOADING SCREEN", "LOADING SCREEN (NETWORK ISSUE)"}
+
         # 1. Check PID
         res = adb_helper._run_adb(["shell", "pidof", package_name], serial=serial)
-        if not res or not res.strip().isdigit():
-            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not running (No PID).")
+        pids = _parse_pid_output(res)
+        if not pids:
+            health["no_pid_count"] += 1
+        else:
+            health["no_pid_count"] = 0
+
+        if health["no_pid_count"] >= 2:
+            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not running (pidof empty on 2 consecutive checks).")
             return True
             
         # 2. Check if it's the foreground app
-        out = adb_helper._run_adb(["shell", "dumpsys", "window", "windows"], serial=serial)
-        is_foreground = False
-        for line in out.splitlines():
-            if "mCurrentFocus" in line:
-                if package_name in line:
-                    is_foreground = True
-                break
-                
+        is_foreground = _is_package_foreground(serial, package_name)
         if not is_foreground:
-            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not in foreground.")
+            health["not_foreground_count"] += 1
+        else:
+            health["not_foreground_count"] = 0
+        health["is_foreground"] = is_foreground
+
+        foreground_threshold = 3 if current_state in loading_like_states else 2
+        if health["not_foreground_count"] >= foreground_threshold:
+            print(f"[{serial}] [CRASH DETECTED] App {package_name} is not foreground on {foreground_threshold} consecutive checks.")
             return True
             
         # 3. Check for Engine Freeze (screen hasn't changed a single pixel)
         # We take a fast, low-res screencap (e.g. 1/4 size) to compare.
         import subprocess
-        proc = subprocess.run([adb_path, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True)
+        proc = subprocess.run([adb_path, "-s", serial, "exec-out", "screencap", "-p"], capture_output=True, timeout=5)
         if proc.returncode == 0 and len(proc.stdout) > 1000:
+            health["capture_fail_count"] = 0
             img_data = np.frombuffer(proc.stdout, np.uint8)
             img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
             
@@ -281,16 +349,23 @@ def check_app_crash(serial: str, package_name: str = "", adb_path: str = config.
                     if np.max(diff) == 0:
                         # 100% identical pixel for pixel
                         _FREEZE_CACHE[serial]["freeze_count"] += 1
-                        # Wait for 6 consecutive checks (60 seconds) before declaring a freeze
-                        # to account for long loading screens
-                        if _FREEZE_CACHE[serial]["freeze_count"] >= 6:
-                            print(f"[{serial}] [CRASH DETECTED] Game engine is completely FROZEN (0 pixel change for 60s).")
+                        freeze_threshold = 6 if current_state in loading_like_states else 4
+                        if _FREEZE_CACHE[serial]["freeze_count"] >= freeze_threshold:
+                            if health.get("is_foreground") and pids:
+                                print(f"[{serial}] [CRASH DETECTED] HARD FREEZE while app is still foreground/alive (0 pixel change for {freeze_threshold} consecutive checks).")
+                            else:
+                                print(f"[{serial}] [CRASH DETECTED] Game engine is completely FROZEN (0 pixel change for {freeze_threshold} consecutive checks).")
                             return True
                     else:
                         # Screen changed, reset freeze counter
                         _FREEZE_CACHE[serial]["freeze_count"] = 0
                     
                     _FREEZE_CACHE[serial]["img"] = small
+        else:
+            health["capture_fail_count"] += 1
+            if health["capture_fail_count"] >= 3:
+                print(f"[{serial}] [CRASH DETECTED] Repeated screencap failure ({health['capture_fail_count']}x).")
+                return True
                     
         return False
     except Exception as e:
@@ -298,7 +373,70 @@ def check_app_crash(serial: str, package_name: str = "", adb_path: str = config.
         return False
 
 
-def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str, adb_path: str = config.adb_path, load_timeout: int = 120) -> dict:
+def _get_crash_reason(serial: str) -> str:
+    freeze = _FREEZE_CACHE.get(serial, {})
+    health = _APP_HEALTH_CACHE.get(serial, {})
+
+    if freeze.get("freeze_count", 0) > 0 and health.get("is_foreground"):
+        return "CRASH_HARD_FREEZE_FOREGROUND"
+    if health.get("capture_fail_count", 0) >= 3:
+        return "CRASH_SCREENCAP_FAILURE"
+    if health.get("not_foreground_count", 0) >= 2:
+        return "CRASH_NOT_FOREGROUND"
+    if health.get("no_pid_count", 0) >= 2:
+        return "CRASH_NO_PID"
+    return "CRASH_APP_UNRESPONSIVE"
+
+
+def _recover_game_from_crash(
+    serial: str,
+    detector: GameStateDetector,
+    package_name: str,
+    target_lobby: str = None,
+    load_timeout: int = 180,
+) -> dict:
+    """Force-stop and relaunch the game after a verified crash/freeze."""
+    LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
+
+    print(f"[{serial}] [WARNING] Crash confirmed. Force-stopping {package_name} before recovery...")
+    adb_helper._run_adb(["shell", "am", "force-stop", package_name], serial=serial)
+    _FREEZE_CACHE.pop(serial, None)
+    _APP_HEALTH_CACHE.pop(serial, None)
+    _human_delay(2)
+
+    print(f"[{serial}] [WARNING] Relaunching {package_name} after crash...")
+    launched = clipper_helper.open_app(config.adb_path, serial, package_name)
+    if not launched:
+        return _fail("CRASH_RECOVERY_LAUNCH_FAILED: Could not relaunch app after crash")
+
+    lobby = wait_for_state(
+        serial,
+        detector,
+        LOBBY_STATES,
+        timeout_sec=load_timeout,
+        package_name=package_name,
+    )
+    if not lobby:
+        return _fail(f"CRASH_RECOVERY_TIMEOUT: Game did not return to Lobby after {load_timeout}s")
+
+    if target_lobby and lobby != target_lobby:
+        print(f"[{serial}] -> Recovery reached {lobby}. Swapping to {target_lobby}...")
+        adb_helper.tap(serial, 50, 500)
+        swapped = wait_for_state(
+            serial,
+            detector,
+            [target_lobby],
+            timeout_sec=10,
+            package_name=package_name,
+        )
+        if not swapped:
+            return _fail(f"CRASH_RECOVERY_SWAP_FAILED: Could not swap to {target_lobby} after recovery")
+
+    print(f"[{serial}] [INFO] Crash recovery successful. Lobby restored.")
+    return _ok(recovered_from_crash=True)
+
+
+def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str, adb_path: str = config.adb_path, load_timeout: int = 180) -> dict:
     """
     All-in-one startup: Boot game nếu chưa chạy -> chờ load vào Lobby.
     Nếu game đang chạy rồi -> dùng back_to_lobby() để mò về Lobby từ bất kỳ state nào.
@@ -314,7 +452,7 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
     
     if not was_running:
         print(f"[{serial}] App was not running. Waiting for game to load into Lobby...")
-        lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout)
+        lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout, package_name=package_name)
         if not lobby:
             print(f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s.")
             return _fail(f"TIMEOUT_LOAD: Game did not load into Lobby after {load_timeout}s")
@@ -326,10 +464,14 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
 
 def wait_for_state(serial: str, detector: GameStateDetector, target_states: list, timeout_sec: int = 60, package_name: str = "", check_mode: str = "state") -> str:
     """Blocks and loops until the emulator reaches one of the target_states."""
+    NETWORK_ISSUE_STATE = "LOADING SCREEN (NETWORK ISSUE)"
+    NETWORK_CONFIRM_XY = (500, 325)
+
     start_time = time.time()
     print(f"[{serial}] Waiting for one of states: {target_states} (Timeout: {timeout_sec}s)")
     
     last_crash_check = time.time()
+    network_dismiss_count = 0
     
     while True:
         if time.time() - start_time > timeout_sec:
@@ -354,18 +496,68 @@ def wait_for_state(serial: str, detector: GameStateDetector, target_states: list
             current_state = detector.check_state(serial)
             
         print(f"[{serial}] Current detected state: {current_state}")
+
+        # ── GLOBAL INTERRUPT: Network Issue popup ──────────────────────
+        # "Connection lost due to Network instability" can appear at ANY
+        # time during ANY workflow. It blocks the entire screen with only
+        # a Confirm button (no back). Must dismiss before continuing.
+        _is_network_issue = False
+        if check_mode == "state" and current_state == NETWORK_ISSUE_STATE:
+            _is_network_issue = True
+        elif check_mode != "state" and current_state is None:
+            # Non-state modes can't detect the popup directly.
+            # Fallback: quick state check to see if popup is blocking.
+            detector._cache.invalidate()
+            fallback_state = detector.check_state(serial)
+            if fallback_state == NETWORK_ISSUE_STATE:
+                _is_network_issue = True
+
+        if _is_network_issue:
+            network_dismiss_count += 1
+            print(f"[{serial}] -> Network Issue detected mid-workflow ({network_dismiss_count}x). Tapping Confirm {NETWORK_CONFIRM_XY}...")
+            adb_helper.tap(serial, *NETWORK_CONFIRM_XY)
+            _human_delay(3)
+            detector._cache.invalidate()
+            continue
+
+        network_dismiss_count = 0
         
         if current_state in target_states:
             print(f"[{serial}] -> Target Reached '{current_state}'")
             return current_state
             
+        if current_state == "ERROR_CAPTURE":
+            print(f"[{serial}] -> ADB screencap failed. Checking whether app is truly crashed...")
+            if package_name and check_app_crash(serial, package_name, current_state=current_state):
+                return None
+            _human_delay(1.5)
+            continue
+
         if current_state == "LOADING SCREEN":
             print(f"[{serial}] -> Game is loading. Waiting 3 seconds...")
             _human_delay(3)
+        elif current_state == "UNKNOWN / TRANSITION":
+            # ── GLOBAL INTERRUPT: Popup blocking lobby ─────────────────
+            # After loading, popups (events/ads) can appear over the lobby,
+            # causing state to read as UNKNOWN. Check for X button to dismiss.
+            popup_match = detector.check_special_state(serial, target="POPUP_X_BTN")
+            if popup_match:
+                print(f"[{serial}] -> Popup X button detected. Pressing BACK to dismiss...")
+                adb_helper.press_back(serial)
+                _human_delay(1.5)
+                detector._cache.invalidate()
+                continue
+            else:
+                # Check for crash every 10 seconds to avoid ADB spam
+                if package_name and (time.time() - last_crash_check > 10):
+                    if check_app_crash(serial, package_name, current_state=current_state):
+                        return None
+                    last_crash_check = time.time()
+                _human_delay(0.5)
         else:
             # Check for crash every 10 seconds to avoid ADB spam
-            if time.time() - last_crash_check > 10:
-                if check_app_crash(serial, package_name):
+            if package_name and (time.time() - last_crash_check > 10):
+                if check_app_crash(serial, package_name, current_state=current_state):
                     return None
                 last_crash_check = time.time()
                 
@@ -439,6 +631,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
     """
     import numpy as np
     BLACK_SCREEN_THRESHOLD = 15  # Mean brightness below this = black screen (game booting)
+    NETWORK_ISSUE_STATE = "LOADING SCREEN (NETWORK ISSUE)"
+    NETWORK_CONFIRM_XY = (500, 325)
+    NETWORK_FALLBACK_THRESHOLD = 0.72
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
 
     # Debug mode: save UNKNOWN screenshots for template creation
@@ -484,6 +679,7 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
     loading_screen_count = 0
     start_time = time.time()
     iteration = 0
+    last_crash_check = time.time()
 
     while time.time() - start_time < timeout_sec:
         iteration += 1
@@ -512,6 +708,19 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                 print(f"[{serial}] -> Swapped to {target_lobby}.")
             return _ok()
 
+        if current_state == "ERROR_CAPTURE":
+            print(f"[{serial}] -> Screencap failed inside back_to_lobby. Verifying crash state...")
+            if check_app_crash(serial, package_name, current_state=current_state):
+                return _recover_game_from_crash(
+                    serial,
+                    detector,
+                    package_name,
+                    target_lobby=target_lobby,
+                    load_timeout=180,
+                )
+            _human_delay(1.5)
+            continue
+
         # === CASE 1: LOADING SCREEN — Wait patiently ===
         if current_state == "LOADING SCREEN":
             loading_screen_count += 1
@@ -532,9 +741,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
         loading_screen_count = 0
 
         # === CASE 2: NETWORK ISSUE — Tap confirm ===
-        if current_state == "LOADING SCREEN (NETWORK ISSUE)":
+        if current_state == NETWORK_ISSUE_STATE:
             print(f"[{serial}] -> Network issue detected. Tapping Confirm...")
-            adb_helper.tap(serial, 500, 325)
+            adb_helper.tap(serial, *NETWORK_CONFIRM_XY)
             _human_delay(2)
             continue
 
@@ -559,6 +768,25 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
         # Pressing BACK here kills the app → ensure_app_running restarts it → infinite loop!
         screen = result["screen"]
         if current_state == "UNKNOWN / TRANSITION" and screen is not None:
+            # Fallback: the network popup can sometimes miss the normal state pass
+            # if the template confidence is slightly below the default threshold.
+            network_fallback = detector._find_name_only(
+                screen,
+                detector.templates,
+                target=NETWORK_ISSUE_STATE,
+                threshold=NETWORK_FALLBACK_THRESHOLD,
+                _caller="back_to_lobby_network_fallback",
+            )
+            if network_fallback == NETWORK_ISSUE_STATE:
+                print(
+                    f"[{serial}] -> Network issue recovered via UNKNOWN fallback "
+                    f"(threshold={NETWORK_FALLBACK_THRESHOLD:.2f}). Tapping Confirm..."
+                )
+                unknown_start_time = None
+                adb_helper.tap(serial, *NETWORK_CONFIRM_XY)
+                _human_delay(2)
+                continue
+
             mean_brightness = np.mean(screen)
             if mean_brightness < BLACK_SCREEN_THRESHOLD:
                 print(f"[{serial}] -> BLACK SCREEN detected (brightness={mean_brightness:.1f}). Game booting. Waiting 5s...")
@@ -582,6 +810,19 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                 _human_delay(1.5)
                 continue
 
+            # Crash/freeze detection must run aggressively in UNKNOWN state.
+            # Rare engine-dead cases can stay foreground/alive but never leave
+            # UNKNOWN, so waiting 10s before checking causes endless back loops.
+            if check_app_crash(serial, package_name, current_state=current_state):
+                print(f"[{serial}] [WARNING] {_get_crash_reason(serial)} detected while stuck in UNKNOWN state. Attempting crash recovery...")
+                return _recover_game_from_crash(
+                    serial,
+                    detector,
+                    package_name,
+                    target_lobby=target_lobby,
+                    load_timeout=180,
+                )
+
             grace_elapsed = time.time() - unknown_start_time
             if grace_elapsed < 5:
                 remaining = 5 - grace_elapsed
@@ -589,6 +830,7 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                 _human_delay(1.5)
                 continue
             else:
+                last_crash_check = time.time()
                 print(f"[{serial}] -> Unknown for >5s. Pressing BACK...")
                 adb_helper.press_back(serial)
                 _human_delay(1.5)
@@ -604,10 +846,32 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
             known_state_back_count = 1
 
         if known_state_back_count <= 3:
+            if time.time() - last_crash_check > 10:
+                if check_app_crash(serial, package_name, current_state=current_state):
+                    print(f"[{serial}] [WARNING] {_get_crash_reason(serial)} detected while stuck in state '{current_state}'. Attempting crash recovery...")
+                    return _recover_game_from_crash(
+                        serial,
+                        detector,
+                        package_name,
+                        target_lobby=target_lobby,
+                        load_timeout=180,
+                    )
+                last_crash_check = time.time()
             print(f"[{serial}] -> Known state '{current_state}'. Pressing BACK ({known_state_back_count}/3)...")
             adb_helper.press_back(serial)
             _human_delay(1.5)
         else:
+            if time.time() - last_crash_check > 10:
+                if check_app_crash(serial, package_name, current_state=current_state):
+                    print(f"[{serial}] [WARNING] {_get_crash_reason(serial)} detected while stuck in state '{current_state}'. Attempting crash recovery...")
+                    return _recover_game_from_crash(
+                        serial,
+                        detector,
+                        package_name,
+                        target_lobby=target_lobby,
+                        load_timeout=180,
+                    )
+                last_crash_check = time.time()
             print(f"[{serial}] -> [WARNING] State '{current_state}' stuck after 3 backs. Extra wait 3s...")
             _human_delay(3)
             known_state_back_count = 0
@@ -1179,7 +1443,14 @@ def _detect_with_retry(serial, detector, target, threshold=0.8, attempts=3, dela
     return None
 
 
-def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str = "wood") -> dict:
+def go_to_farming(
+    serial: str,
+    detector: GameStateDetector,
+    farming_mode: str = "legacy",
+    resource_type: str = "wood",
+    rotation_shuffle: bool = False,
+    legion_resource_plan: list[str] | None = None,
+) -> dict:
     """
     Farming Workflow (Anti-Detection Enhanced):
     1. Back to OUT_CITY
@@ -1202,13 +1473,33 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
     LEGION_TAPS = [
         (695, 90), (735, 90), (780, 90), (825, 90), (865, 90),
     ]
+    ROTATION_ORDER = ["gold", "wood", "stone", "mana"]
+    VALID_RESOURCES = set(RESOURCE_TAPS.keys())
+
+    mode = str(farming_mode or "legacy").strip().lower()
+    if mode not in {"legacy", "manual"}:
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown farming_mode '{farming_mode}'")
 
     r_type = resource_type.lower()
-    if r_type not in RESOURCE_TAPS:
+    if r_type != "rotation" and r_type not in RESOURCE_TAPS:
         print(f"[{serial}] [ERROR] Unknown resource type: {resource_type}")
         return _fail(f"CONFIG_INVALID_PARAM: Unknown resource type '{resource_type}'")
 
-    print(f"[{serial}] Starting Farming Workflow for: {resource_type.upper()}")
+    normalized_legion_plan = None
+    if legion_resource_plan:
+        normalized_legion_plan = []
+        for idx, raw_value in enumerate(legion_resource_plan, start=1):
+            value = str(raw_value or "wood").strip().lower()
+            if value == "skip":
+                normalized_legion_plan.append("skip")
+                continue
+            if value not in VALID_RESOURCES:
+                return _fail(
+                    f"CONFIG_INVALID_PARAM: Unknown legion_{idx}_resource '{raw_value}'"
+                )
+            normalized_legion_plan.append(value)
+
+    print(f"[{serial}] Starting Farming Workflow mode={mode} resource_type={resource_type.upper()}")
 
     # 1. Back to lobby OUT_CITY
     result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
@@ -1219,21 +1510,38 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
     # 2. Pre-compute random search methods for each dispatch
     methods = _plan_search_methods(len(LEGION_TAPS))
     search_k_values = _plan_search_clicks(len(LEGION_TAPS))
+    resource_plan = (
+        normalized_legion_plan[:len(LEGION_TAPS)]
+        if mode == "manual" and normalized_legion_plan
+        else (
+            _build_resource_plan(len(LEGION_TAPS), ROTATION_ORDER, shuffle=rotation_shuffle)
+            if r_type == "rotation"
+            else [r_type] * len(LEGION_TAPS)
+        )
+    )
     print(f"[{serial}] Search plan: {methods}, K values: {search_k_values}")
+    print(
+        f"[{serial}] Resource plan: {resource_plan} "
+        f"(mode={mode}, shuffle={rotation_shuffle})"
+    )
 
     # 3. Dispatch loop
     for idx, legion_tap in enumerate(LEGION_TAPS):
         method = methods[idx]
         k_val = search_k_values[idx]
-        print(f"\n[{serial}] --- Dispatch #{idx+1} ({method} search, K={k_val}) ---")
+        dispatch_resource = resource_plan[idx]
+        if dispatch_resource == "skip":
+            print(f"\n[{serial}] --- Dispatch #{idx+1} skipped by config ---")
+            continue
+        print(f"\n[{serial}] --- Dispatch #{idx+1} ({method} search, K={k_val}, resource={dispatch_resource.upper()}) ---")
 
         if method == "menu":
             mine_result = _search_mine_via_menu(
-                serial, detector, r_type, RESOURCE_TAPS, SEARCH_TAPS,
+                serial, detector, dispatch_resource, RESOURCE_TAPS, SEARCH_TAPS,
                 search_clicks=k_val,
             )
         else:
-            mine_result = _search_mine_manual(serial, detector, r_type)
+            mine_result = _search_mine_manual(serial, detector, dispatch_resource)
 
         if mine_result is None:
             # No mine found — stop dispatching
@@ -1243,8 +1551,8 @@ def go_to_farming(serial: str, detector: GameStateDetector, resource_type: str =
             # Mine was occupied (View), continue to next dispatch
             continue
 
-        # mine_result is the actual resource type used (may differ from input if fallback)
-        r_type = mine_result
+        # mine_result is the actual resource type used (may differ from dispatch plan if fallback)
+        print(f"[{serial}] Dispatch #{idx+1} locked mine type: {mine_result.upper()}")
 
         # ── Gather -> Create Legion -> Preset -> Dispatch ──
         gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=1)
@@ -1319,6 +1627,21 @@ def _plan_search_methods(total: int) -> list:
             methods[pos] = "manual"
 
     return methods
+
+
+def _build_resource_plan(total: int, rotation_order: list[str], shuffle: bool = False) -> list[str]:
+    """Build per-dispatch resource plan.
+
+    Rotation guarantees coverage of all resource types before repeating.
+    When shuffle=True, each 4-resource cycle is randomized to avoid a fixed pattern.
+    """
+    plan = []
+    while len(plan) < total:
+        cycle = list(rotation_order)
+        if shuffle:
+            random.shuffle(cycle)
+        plan.extend(cycle)
+    return plan[:total]
 
 
 def _plan_search_clicks(total: int) -> list:
@@ -1503,6 +1826,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
       - Dispatch legion + CD = remaining_time + buffer
     """
     RSS_12H_SEC = 43200
+    EDGE_RECHECK_SEC = 7200  # 2 hours for "no actionable button" edge case
     BUFFER_SEC = 300  # 5 minutes
     ROI_BUILDER_COUNT = (750, 265, 800, 290)
     ROI_BUILDING_TIME = (725, 350, 800, 370)
@@ -1516,7 +1840,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
 
     print(f"[{serial}] Tapping Markers Icon (180, 16)...")
     adb_helper.tap(serial, 180, 16)
-    _human_delay(3)
+    #_human_delay(2)
 
     # Wait for Markers Menu
     state = wait_for_state(serial, detector, ["MARKERS_MENU"], timeout_sec=10, check_mode="construction")
@@ -1535,12 +1859,12 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         # Scroll down to reveal hidden markers
         print(f"[{serial}] Marker not visible, scrolling down... (attempt {attempt + 1}/5)")
         adb_helper.swipe(serial, 480, 400, 480, 250, 300)
-        _human_delay(2)
+        #_human_delay(2)
 
     if not rss_marker:
         print(f"[{serial}] Resource Center not found in markers! Aborting.")
         adb_helper.press_back(serial)
-        _human_delay(2)
+        #_human_delay(2)
         return _fail("TEMPLATE_NO_MATCH: Resource Center marker not found")
 
     # Navigate to RSS Center on map
@@ -1548,11 +1872,11 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     go_x, go_y = center_x + 570, center_y
     print(f"[{serial}] Found RSS Center. Tapping GO ({go_x}, {go_y})...")
     adb_helper.tap(serial, go_x, go_y)
-    _human_delay(6)
+    _human_delay(5)
 
     print(f"[{serial}] Tapping RSS Center on map (479, 254)...")
     adb_helper.tap(serial, 479, 254)
-    _human_delay(3)
+    _human_delay(1)
 
     # --- Detect state: View / Gather(Build) ---
     print(f"[{serial}] Checking RSS Center state...")
@@ -1572,7 +1896,8 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         print(f"[{serial}] Neither Gather nor Build button found. Aborting.")
         adb_helper.tap(serial, 50, 500)
         _human_delay(2)
-        return _ok()
+        print(f"[{serial}] [EDGE] No actionable RSS Center button detected. Dynamic CD = 2h")
+        return {"ok": False, "dynamic_cooldown_sec": EDGE_RECHECK_SEC}
 
     g_x, g_y = gather_state[1], gather_state[2]
 
@@ -1600,7 +1925,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     # --- Now tap the button ---
     print(f"[{serial}] Tapping Gather/Build ({g_x}, {g_y})...")
     adb_helper.tap(serial, g_x, g_y)
-    _human_delay(3)
+    #_human_delay(3)
 
     # --- Branch on TH1 vs TH2 ---
     if building_sec > 0:
@@ -1608,7 +1933,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         if builder_count >= 36:
             print(f"[{serial}] [TH1] Builders FULL (36/36). Setting CD = building_time to retry gather.")
             adb_helper.press_back(serial)
-            _human_delay(1.0)
+            #_human_delay(1.0)
             return {"ok": False, "dynamic_cooldown_sec": building_sec + BUFFER_SEC}
 
         # Not full — send troops to build (Create Legion -> Dispatch)
@@ -1620,7 +1945,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
             _, rx, ry = rss_create
             print(f"[{serial}] [TH1] RSS Create Legion found at ({rx}, {ry}). Tapping...")
             adb_helper.tap(serial, rx, ry)
-            _human_delay(2.0)
+            #_human_delay(2.0)
 
         create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
         if not create_result:
@@ -1631,21 +1956,21 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         _, cl_x, cl_y = create_result
         print(f"[{serial}] [TH1] Tapping Create Legion at ({cl_x}, {cl_y})...")
         adb_helper.tap(serial, cl_x, cl_y)
-        _human_delay(2.0)
+        #_human_delay(2.0)
 
         print(f"[{serial}] Setting up legion (755, 115)...")
         adb_helper.tap(serial, 755, 115)
-        _human_delay(2.0)
+        #_human_delay(2.0)
 
         LEGION_5_TAP = (865, 90)
         print(f"[{serial}] Selecting Legion Preset #5 at {LEGION_5_TAP}...")
         adb_helper.tap(serial, LEGION_5_TAP[0], LEGION_5_TAP[1])
-        _human_delay(1.0)
+        #_human_delay(1.0)
 
         dispatch_loc = (850, 480)
         print(f"[{serial}] Tapping Dispatch {dispatch_loc}...")
         adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
-        _human_delay(3.0)
+        #_human_delay(3.0)
 
         dynamic_cd = building_sec + RSS_12H_SEC + BUFFER_SEC
         print(f"[{serial}] [TH1] Build dispatched. Dynamic CD = {building_sec}s + 12h + 5min = {dynamic_cd}s")
@@ -2031,6 +2356,9 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
     if not _is_ok(lobby_result):
         print(f"[{serial}] [FAILED] Could not reach IN_CITY lobby.")
         return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY lobby")
+
+    # Recenter the city camera before touching any troop buildings.
+    reset_position(serial)
         
     all_success = True
         
@@ -2275,7 +2603,7 @@ def swap_account(serial: str, account_detector: AccountDetector, detector: GameS
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
     print(f"[{serial}] === SWAP ACCOUNT: {target_account} ===")
 
-    result = startup_to_lobby(serial, detector, package_name=get_package_for_provider(detect_provider_from_emulator(serial)), load_timeout=120)
+    result = startup_to_lobby(serial, detector, package_name=get_package_for_provider(detect_provider_from_emulator(serial)), load_timeout=180)
     if not _is_ok(result):
         print(f"[{serial}] swap_account failed: Could not reach lobby.")
         return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach lobby")
@@ -2754,7 +3082,7 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
 
     if outcome is None:
         print(f"[{serial}] Dispatch started & game pushed to map! Attack successful.")
-        _human_delay(60)
+        _human_delay(120)
         return _ok()
 
     if outcome == "AUTO_PEACEKEEPING":
@@ -2878,18 +3206,6 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     _human_delay(1.5)
 
     # 2. Scan for Alliance Help buttons (already researching, need help)
-    # ── DEBUG: save frame before scanning ──
-    _dbg_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_debug_research")
-    os.makedirs(_dbg_dir, exist_ok=True)
-    detector._screen_cache = None
-    _dbg_frame = detector.get_frame(serial)
-    if _dbg_frame is not None:
-        import cv2 as _cv2
-        _dbg_path = os.path.join(_dbg_dir, f"alliance_help_scan_{serial}.png")
-        _cv2.imwrite(_dbg_path, _dbg_frame)
-        print(f"[{serial}] [DEBUG] Saved pre-scan frame: {_dbg_path}")
-    # ── END DEBUG ──
-
     alliance_help_count = 0
     for scan in range(2):
         detector._screen_cache = None
@@ -3008,15 +3324,6 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
 
         # 3g. Handle Alliance Help popup after confirming
         _human_delay(2)
-        # ── DEBUG: save post-confirm frame ──
-        detector._screen_cache = None
-        _dbg_post = detector.get_frame(serial)
-        if _dbg_post is not None:
-            import cv2 as _cv2
-            _dbg_post_path = os.path.join(_dbg_dir, f"post_confirm_slot{slot_idx+1}_{serial}.png")
-            _cv2.imwrite(_dbg_post_path, _dbg_post)
-            print(f"[{serial}] [DEBUG] Saved post-confirm frame: {_dbg_post_path}")
-        # ── END DEBUG ──
         detector._screen_cache = None
         print(f"[{serial}] [DEBUG] Post-confirm Alliance Help scan (threshold=0.8)...")
         post_help = detector.check_activity(serial, target="RESEARCH_ALLIANCE_HELP", threshold=0.8)
@@ -4354,9 +4661,6 @@ def _scan_and_buy_rss_items(
     MAX_PASSES = 2
     TAP_DELAY = 0.4  # Fast tap between items
 
-    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_merchant_debug")
-    os.makedirs(debug_dir, exist_ok=True)
-
     bought = 0
 
     for pass_idx in range(MAX_PASSES):
@@ -4366,11 +4670,6 @@ def _scan_and_buy_rss_items(
         if frame is None:
             print(f"[{serial}] [{grid_half}] Screencap failed.")
             break
-
-        # Save debug frame
-        ts = time.strftime("%H%M%S")
-        dbg_path = os.path.join(debug_dir, f"{serial}_{grid_half}_{pass_label}_{ts}.png")
-        cv2.imwrite(dbg_path, frame)
 
         # Collect ALL matches across all RSS targets
         all_hits = []
