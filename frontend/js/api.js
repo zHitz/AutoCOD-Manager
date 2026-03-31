@@ -45,10 +45,17 @@ const API = {
     getHistory(limit) { return this.get(`/api/tasks/history?limit=${limit || 50}`); },
     getQueueHistory(limit) { return this.get(`/api/tasks/history/queue?limit=${limit || 50}`); },
     getExecutionRuns() { return this.get('/api/execution/runs'); },
-    getDebugLogs(serial, limit) {
+    getDebugLogs(serial, limit, status) {
         let url = `/api/debug/logs?limit=${limit || 100}`;
         if (serial) url += `&serial=${serial}`;
+        if (status) url += `&status=${encodeURIComponent(status)}`;
         return this.get(url);
+    },
+    resolveDebugLog(id, payload) {
+        return this.post(`/api/debug/logs/${id}/resolve`, payload || {});
+    },
+    unresolveDebugLog(id) {
+        return this.post(`/api/debug/logs/${id}/unresolve`, {});
     },
     getWorkflowLogSummary(serial, date) {
         const params = new URLSearchParams();
@@ -80,9 +87,12 @@ const API = {
             return res.json();
         });
     },
-    clearDebugLogs(serial) {
+    clearDebugLogs(serial, status) {
         let url = '/api/debug/logs';
-        if (serial) url += `?serial=${serial}`;
+        const params = new URLSearchParams();
+        if (serial) params.set('serial', serial);
+        if (status) params.set('status', status);
+        if (params.toString()) url += `?${params.toString()}`;
         return fetch(url, { method: 'DELETE' }).then(r => r.json());
     },
 

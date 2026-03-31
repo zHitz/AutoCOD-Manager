@@ -6,7 +6,12 @@ const HistoryPage = {
         activeTab: 'history',
         debugLogs: [],
         debugLoading: false,
+        debugStatusFilter: 'active',
         debugFilter: 'all',
+        debugResolveDraft: null,
+        debugResolveSaving: false,
+        debugDetailLog: null,
+        debugDetailClosing: false,
         lightboxSrc: null,
         logsSummary: { serials: [], dates: [], files: [], grouped_files: {} },
         logsLoading: false,
@@ -82,13 +87,21 @@ const HistoryPage = {
         `;
     },
 
-    async init() { this.bindEvents(); await this.load(); },
+    async init() {
+        this.bindEvents();
+        this.ensureDebugModalRoot();
+        await this.load();
+    },
     destroy() {
         this.stopLogsPolling();
         if (this.state.logsSearchTimer) {
             clearTimeout(this.state.logsSearchTimer);
             this.state.logsSearchTimer = null;
         }
+        this._unlockDebugModalScroll();
+        this._unbindDebugDetailKeyboard();
+        clearTimeout(this._debugDetailCloseTimer);
+        document.getElementById('history-debug-modal-root')?.remove();
     },
 
     bindEvents() {
@@ -98,6 +111,13 @@ const HistoryPage = {
             if (this.state.activeTab === 'history') this.renderContent();
         });
         document.querySelectorAll('#history-tabs [data-tab]').forEach(btn => btn.addEventListener('click', () => this.switchTab(btn.dataset.tab)));
+    },
+
+    ensureDebugModalRoot() {
+        if (document.getElementById('history-debug-modal-root')) return;
+        const host = document.createElement('div');
+        host.id = 'history-debug-modal-root';
+        document.body.appendChild(host);
     },
 
     async refreshActiveTab() {
@@ -137,8 +157,7 @@ const HistoryPage = {
         this.state.debugLoading = true;
         panel.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted-foreground);">Loading debug logs...</div>';
         try {
-            const serial = this.state.debugFilter === 'all' ? null : this.state.debugFilter;
-            this.state.debugLogs = await API.getDebugLogs(serial, 100);
+            this.state.debugLogs = await API.getDebugLogs(null, 200, this.state.debugStatusFilter);
         } catch (e) {
             this.state.debugLogs = [];
             console.warn('[Debug] Failed to load logs:', e);
@@ -148,33 +167,65 @@ const HistoryPage = {
         }
     },
 
+    getVisibleDebugLogs() {
+        if (this.state.debugFilter === 'all') return this.state.debugLogs;
+        return this.state.debugLogs.filter((log) => log.serial === this.state.debugFilter);
+    },
+
     renderDebugPanel() {
         const panel = document.getElementById('debug-panel');
         const footer = document.getElementById('history-footer');
         if (!panel) return;
         const devices = ['all', ...new Set(this.state.debugLogs.map(l => l.serial).filter(Boolean))];
+        const visibleLogs = this.getVisibleDebugLogs();
+        const isResolvedView = this.state.debugStatusFilter === 'resolved';
         const filterHtml = `
-            <div class="debug-filter-row">
-                <label>Device:</label>
-                <select id="debug-device-filter" class="form-select" style="max-width:220px;">
-                    ${devices.map(d => `<option value="${d}" ${d === this.state.debugFilter ? 'selected' : ''}>${d === 'all' ? 'All devices' : d}</option>`).join('')}
-                </select>
-                <div style="margin-left:auto;display:flex;gap:8px;">
-                    <button class="btn btn-outline btn-sm" onclick="HistoryPage.loadDebugLogs()">Refresh</button>
-                    <button class="btn btn-outline btn-sm" onclick="HistoryPage.exportDebugLogs()">Export</button>
-                    <button class="btn btn-outline btn-sm" onclick="HistoryPage.clearDebugLogs()" style="color:var(--red-500);border-color:var(--red-300);">Clear</button>
+            <div class="debug-toolbar card">
+                <div class="debug-toolbar__identity">
+                    <div class="debug-toolbar__kicker">Issue Review Console</div>
+                    <div class="debug-toolbar__title-row">
+                        <h3 class="debug-toolbar__title">Debug</h3>
+                        <span class="debug-toolbar__pill">${isResolvedView ? 'Resolved' : 'Active'}</span>
+                        <span class="debug-toolbar__pill">${visibleLogs.length} item${visibleLogs.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <p class="debug-toolbar__subtitle">Review failure screenshots, mark fixed issues, and keep active problems separated from resolved ones.</p>
+                </div>
+                <div class="debug-toolbar__controls">
+                    <div class="debug-toolbar__group">
+                        <label class="debug-toolbar__label">View</label>
+                        <div class="debug-segmented">
+                            <button class="debug-segmented__btn ${this.state.debugStatusFilter === 'active' ? 'is-active' : ''}" data-debug-status="active">Active</button>
+                            <button class="debug-segmented__btn ${this.state.debugStatusFilter === 'resolved' ? 'is-active' : ''}" data-debug-status="resolved">Resolved</button>
+                        </div>
+                    </div>
+                    <div class="debug-toolbar__group">
+                        <label class="debug-toolbar__label">Device</label>
+                        <select id="debug-device-filter" class="form-select debug-device-filter">
+                            ${devices.map(d => `<option value="${d}" ${d === this.state.debugFilter ? 'selected' : ''}>${d === 'all' ? 'All devices' : d}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="debug-toolbar__actions">
+                        <button class="btn btn-outline btn-sm" onclick="HistoryPage.loadDebugLogs()">Refresh</button>
+                        <button class="btn btn-outline btn-sm" onclick="HistoryPage.exportDebugLogs()">Export</button>
+                        <button class="btn btn-outline btn-sm" onclick="HistoryPage.clearDebugLogs()" style="color:var(--red-500);border-color:var(--red-300);">Clear</button>
+                    </div>
                 </div>
             </div>
         `;
-        if (!this.state.debugLogs.length) {
-            panel.innerHTML = filterHtml + `<div class="card debug-empty"><div class="debug-empty__title">No debug logs yet</div><p class="debug-empty__desc">Error screenshots will appear here when workflow functions fail.</p></div>`;
-            if (footer) footer.textContent = '0 debug entries';
+        if (!visibleLogs.length) {
+            const emptyTitle = isResolvedView ? 'No resolved issues' : 'No active issues';
+            const emptyDesc = isResolvedView
+                ? 'Resolved debug entries will appear here after you mark issues as fixed.'
+                : 'Error screenshots will appear here when workflow functions fail.';
+            panel.innerHTML = filterHtml + `<div class="card debug-empty"><div class="debug-empty__title">${emptyTitle}</div><p class="debug-empty__desc">${emptyDesc}</p></div>`;
+            if (footer) footer.textContent = `0 ${this.state.debugStatusFilter} debug entries`;
             this._bindDebugFilter();
             return;
         }
-        panel.innerHTML = filterHtml + `<div class="debug-grid">${this.state.debugLogs.map(log => this._renderDebugCard(log)).join('')}</div>`;
-        if (footer) footer.textContent = `${this.state.debugLogs.length} debug entries`;
+        panel.innerHTML = filterHtml + `<div class="debug-grid">${visibleLogs.map(log => this._renderDebugCard(log)).join('')}</div>`;
+        if (footer) footer.textContent = `${visibleLogs.length} ${this.state.debugStatusFilter} debug entr${visibleLogs.length === 1 ? 'y' : 'ies'}`;
         this._bindDebugFilter();
+        this.renderDebugModalPortal();
     },
 
     _getErrorCodeClass(code) {
@@ -191,22 +242,152 @@ const HistoryPage = {
         const code = log.error_code || 'UNKNOWN';
         const fn = log.function_name || '--';
         const serial = log.serial || '--';
+        const isResolved = !!log.is_resolved;
         const screenshotPath = log.screenshot_path || '';
+        const resolvedNote = log.resolved_note || '';
         let imgUrl = '';
         if (screenshotPath) {
             const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
             if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
         }
         return `
-            <div class="debug-card">
+            <div class="debug-card ${isResolved ? 'debug-card--resolved' : ''}">
                 ${imgUrl ? `<div class="debug-card__image" onclick="HistoryPage.openLightbox('${imgUrl}')"><img src="${imgUrl}" onerror="this.parentElement.style.display='none'" /><button class="debug-card__copy-btn" onclick="event.stopPropagation(); HistoryPage.copyDebugImage('${imgUrl}', this)"><span>Copy</span></button></div>` : `<div class="debug-card__no-image">No screenshot</div>`}
                 <div class="debug-card__body">
                     <div class="debug-card__header">
                         <span class="debug-card__code ${this._getErrorCodeClass(code)}">${code}</span>
+                        ${isResolved ? '<span class="debug-card__status">Resolved</span>' : '<span class="debug-card__status debug-card__status--active">Active</span>'}
                         <span class="debug-card__time">${time}</span>
                     </div>
                     <div class="debug-card__message">${log.error_message || 'No message'}</div>
-                    <div class="debug-card__meta"><span>${serial}</span><span>${fn}</span></div>
+                    <div class="debug-card__meta"><span>${serial}</span><span>${fn}</span><span>${log.activity_id || '--'}</span></div>
+                    ${isResolved ? `<div class="debug-card__resolved-note">${this.escapeHtml(resolvedNote)}</div>` : ''}
+                    <div class="debug-card__actions">
+                        ${isResolved
+                            ? `<button class="btn btn-outline btn-sm" onclick="HistoryPage.unresolveDebugLog(${log.id})">Unresolve</button>`
+                            : `<button class="btn btn-primary btn-sm" onclick="HistoryPage.openDebugResolve(${log.id})">Resolve</button>`}
+                        <button class="btn btn-outline btn-sm" onclick="HistoryPage.openDebugDetails(${log.id})">View details</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    _renderDebugResolveModal() {
+        const draft = this.state.debugResolveDraft;
+        if (!draft) return '';
+        const time = draft.created_at ? this.formatVietnamDateTime(draft.created_at) : '--';
+        const screenshotPath = draft.screenshot_path || '';
+        let imgUrl = '';
+        if (screenshotPath) {
+            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
+            if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
+        }
+        return `
+            <div class="debug-detail-overlay" id="debug-resolve-overlay" role="presentation">
+                <div class="debug-detail-modal debug-resolve-surface" id="debug-resolve-dialog" role="dialog" aria-modal="true" aria-labelledby="debug-resolve-title" onclick="event.stopPropagation()" tabindex="-1">
+                    <div class="debug-detail-head">
+                        <div class="debug-detail-head__copy">
+                            <div class="debug-detail-kicker">Resolve Inspector</div>
+                            <div class="confirm-modal-title" id="debug-resolve-title">Resolve debug issue</div>
+                            <div class="debug-detail-subtitle">Capture what was fixed, who resolved it, and keep the original issue context attached to this entry.</div>
+                        </div>
+                        <div class="debug-detail-badges">
+                            <span class="debug-card__status debug-card__status--active">Resolve</span>
+                            <button class="debug-detail-close" id="debug-resolve-close-icon" aria-label="Close resolve dialog">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="debug-detail-code-row">
+                        <span class="debug-card__code ${this._getErrorCodeClass(draft.error_code || 'UNKNOWN')}">${this.escapeHtml(draft.error_code || 'UNKNOWN')}</span>
+                        <span class="debug-detail-code-row__hint">${this.escapeHtml(draft.function_name || '--')}</span>
+                    </div>
+                    ${imgUrl ? `<button class="debug-detail-preview" onclick="HistoryPage.openLightbox('${imgUrl}')"><img src="${imgUrl}" alt="Debug screenshot preview"></button>` : ''}
+                    <div class="debug-detail-meta-grid debug-resolve-meta-grid">
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Time</span><span class="debug-detail-stat__value">${this.escapeHtml(time)}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Serial</span><span class="debug-detail-stat__value">${this.escapeHtml(draft.serial || '--')}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Function</span><span class="debug-detail-stat__value">${this.escapeHtml(draft.function_name || '--')}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Activity</span><span class="debug-detail-stat__value">${this.escapeHtml(draft.activity_id || '--')}</span></div>
+                    </div>
+                    <div class="debug-resolve-form">
+                        <label class="debug-resolve-field" for="debug-resolve-note">
+                            <span class="debug-resolve-field__label">Resolve note</span>
+                            <textarea id="debug-resolve-note" class="form-input debug-resolve-textarea" rows="5" placeholder="Describe what was fixed or why this issue is resolved...">${this.escapeHtml(draft.resolved_note || '')}</textarea>
+                        </label>
+                        <label class="debug-resolve-field" for="debug-resolve-by">
+                            <span class="debug-resolve-field__label">Resolved by</span>
+                            <input id="debug-resolve-by" class="form-input" type="text" placeholder="Name or alias" value="${this.escapeHtml(draft.resolved_by || '')}">
+                        </label>
+                    </div>
+                    <section class="debug-detail-panel debug-detail-panel--message">
+                        <div class="debug-detail-panel__title"><span class="debug-detail-panel__icon">!</span>Error message</div>
+                        <div class="debug-detail-panel__body">${this.escapeHtml(draft.error_message || '--')}</div>
+                    </section>
+                    <div class="confirm-modal-actions debug-detail-actions">
+                        <button class="btn btn-outline" id="debug-resolve-cancel">Cancel</button>
+                        <button class="btn btn-primary" id="debug-resolve-save" ${this.state.debugResolveSaving ? 'disabled' : ''}>${this.state.debugResolveSaving ? 'Saving...' : 'Save resolve'}</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    _renderDebugDetailModal() {
+        const log = this.state.debugDetailLog;
+        if (!log) return '';
+        const time = log.created_at ? this.formatVietnamDateTime(log.created_at) : '--';
+        const resolvedAt = log.resolved_at ? this.formatVietnamDateTime(log.resolved_at) : '--';
+        const screenshotPath = log.screenshot_path || '';
+        const isResolved = !!log.is_resolved;
+        let imgUrl = '';
+        if (screenshotPath) {
+            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
+            if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
+        }
+        return `
+            <div class="debug-detail-overlay ${this.state.debugDetailClosing ? 'is-closing' : ''}" id="debug-detail-overlay" role="presentation">
+                <div class="debug-detail-modal ${this.state.debugDetailClosing ? 'is-closing' : ''}" id="debug-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="debug-detail-title" onclick="event.stopPropagation()" tabindex="-1">
+                    <div class="debug-detail-head">
+                        <div class="debug-detail-head__copy">
+                            <div class="debug-detail-kicker">Issue Inspector</div>
+                            <div class="confirm-modal-title" id="debug-detail-title">Debug issue details</div>
+                            <div class="debug-detail-subtitle">Review the captured state, compare metadata, and copy the issue summary without leaving the viewport.</div>
+                        </div>
+                        <div class="debug-detail-badges">
+                            <span class="debug-card__status ${isResolved ? '' : 'debug-card__status--active'}">${isResolved ? 'Resolved' : 'Active'}</span>
+                            <button class="debug-detail-close" id="debug-detail-close-icon" aria-label="Close issue details">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="debug-detail-code-row">
+                        <span class="debug-card__code ${this._getErrorCodeClass(log.error_code || 'UNKNOWN')}">${this.escapeHtml(log.error_code || 'UNKNOWN')}</span>
+                        <span class="debug-detail-code-row__hint">${this.escapeHtml(log.function_name || '--')}</span>
+                    </div>
+                    ${imgUrl ? `<button class="debug-detail-preview" onclick="HistoryPage.openLightbox('${imgUrl}')"><img src="${imgUrl}" alt="Debug screenshot preview"></button>` : ''}
+                    <div class="debug-detail-meta-grid">
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Function</span><span class="debug-detail-stat__value">${this.escapeHtml(log.function_name || '--')}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Serial</span><span class="debug-detail-stat__value">${this.escapeHtml(log.serial || '--')}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Activity</span><span class="debug-detail-stat__value">${this.escapeHtml(log.activity_id || '--')}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Created</span><span class="debug-detail-stat__value">${this.escapeHtml(time)}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Resolved at</span><span class="debug-detail-stat__value">${this.escapeHtml(resolvedAt)}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Resolved by</span><span class="debug-detail-stat__value">${this.escapeHtml(log.resolved_by || '--')}</span></div>
+                    </div>
+                    <div class="debug-detail-panels">
+                        <section class="debug-detail-panel">
+                            <div class="debug-detail-panel__title">Resolve note</div>
+                            <div class="debug-detail-panel__body">${this.escapeHtml(log.resolved_note || '--')}</div>
+                        </section>
+                        <section class="debug-detail-panel debug-detail-panel--message">
+                            <div class="debug-detail-panel__title"><span class="debug-detail-panel__icon">!</span>Error message</div>
+                            <div class="debug-detail-panel__body">${this.escapeHtml(log.error_message || '--')}</div>
+                        </section>
+                    </div>
+                    <div class="confirm-modal-actions debug-detail-actions">
+                        <button class="btn btn-outline" id="debug-detail-copy">Copy details</button>
+                        <button class="btn btn-primary" id="debug-detail-close">Close</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -258,15 +439,220 @@ const HistoryPage = {
     _bindDebugFilter() {
         const sel = document.getElementById('debug-device-filter');
         if (sel) sel.onchange = (e) => { this.state.debugFilter = e.target.value; this.loadDebugLogs(); };
+        document.querySelectorAll('[data-debug-status]').forEach((btn) => {
+            btn.onclick = () => {
+                this.state.debugStatusFilter = btn.dataset.debugStatus || 'active';
+                this.state.debugResolveDraft = null;
+                this.closeDebugDetails(true);
+                this.loadDebugLogs();
+            };
+        });
+    },
+
+    _bindDebugResolveModal() {
+        const overlay = document.getElementById('debug-resolve-overlay');
+        const cancelBtn = document.getElementById('debug-resolve-cancel');
+        const saveBtn = document.getElementById('debug-resolve-save');
+        const closeIconBtn = document.getElementById('debug-resolve-close-icon');
+        if (overlay) overlay.onclick = (event) => { if (event.target === overlay) this.closeDebugResolve(); };
+        if (cancelBtn) cancelBtn.onclick = () => this.closeDebugResolve();
+        if (saveBtn) saveBtn.onclick = () => this.submitDebugResolve();
+        if (closeIconBtn) closeIconBtn.onclick = () => this.closeDebugResolve();
+    },
+
+    renderDebugModalPortal() {
+        this.ensureDebugModalRoot();
+        const host = document.getElementById('history-debug-modal-root');
+        if (!host) return;
+        if (!this.state.debugDetailLog && !this.state.debugResolveDraft) {
+            host.innerHTML = '';
+            this._unlockDebugModalScroll();
+            this._unbindDebugDetailKeyboard();
+            return;
+        }
+        host.innerHTML = this.state.debugResolveDraft ? this._renderDebugResolveModal() : this._renderDebugDetailModal();
+        this._lockDebugModalScroll();
+        if (this.state.debugResolveDraft) {
+            this._bindDebugResolveModal();
+        } else {
+            this._bindDebugDetailModal();
+        }
+        this._bindDebugDetailKeyboard();
+        requestAnimationFrame(() => (document.getElementById('debug-resolve-dialog') || document.getElementById('debug-detail-dialog'))?.focus());
+    },
+
+    _bindDebugDetailModal() {
+        const overlay = document.getElementById('debug-detail-overlay');
+        const closeBtn = document.getElementById('debug-detail-close');
+        const closeIconBtn = document.getElementById('debug-detail-close-icon');
+        const copyBtn = document.getElementById('debug-detail-copy');
+        if (overlay) overlay.onclick = (event) => { if (event.target === overlay) this.closeDebugDetails(); };
+        if (closeBtn) closeBtn.onclick = () => this.closeDebugDetails();
+        if (closeIconBtn) closeIconBtn.onclick = () => this.closeDebugDetails();
+        if (copyBtn) copyBtn.onclick = () => this.copyDebugDetails();
+    },
+
+    _bindDebugDetailKeyboard() {
+        this._unbindDebugDetailKeyboard();
+        this._debugDetailKeyHandler = (event) => {
+            if (!this.state.debugDetailLog && !this.state.debugResolveDraft) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                if (this.state.debugResolveDraft) this.closeDebugResolve();
+                else this.closeDebugDetails();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const dialog = document.getElementById('debug-resolve-dialog') || document.getElementById('debug-detail-dialog');
+            if (!dialog) return;
+            const focusable = Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((el) => !el.hasAttribute('disabled'));
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener('keydown', this._debugDetailKeyHandler);
+    },
+
+    _unbindDebugDetailKeyboard() {
+        if (this._debugDetailKeyHandler) {
+            document.removeEventListener('keydown', this._debugDetailKeyHandler);
+            this._debugDetailKeyHandler = null;
+        }
+    },
+
+    _lockDebugModalScroll() {
+        if (this._debugModalScrollLocked) return;
+        this._debugPreviousBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        this._debugModalScrollLocked = true;
+    },
+
+    _unlockDebugModalScroll() {
+        if (!this._debugModalScrollLocked) return;
+        document.body.style.overflow = this._debugPreviousBodyOverflow || '';
+        this._debugPreviousBodyOverflow = '';
+        this._debugModalScrollLocked = false;
+    },
+
+    async copyDebugDetails() {
+        const log = this.state.debugDetailLog;
+        if (!log) return;
+        const text = [
+            `Error code: ${log.error_code || 'UNKNOWN'}`,
+            `Function: ${log.function_name || '--'}`,
+            `Activity: ${log.activity_id || '--'}`,
+            `Serial: ${log.serial || '--'}`,
+            `Created: ${log.created_at ? this.formatVietnamDateTime(log.created_at) : '--'}`,
+            `Resolved at: ${log.resolved_at ? this.formatVietnamDateTime(log.resolved_at) : '--'}`,
+            `Resolved by: ${log.resolved_by || '--'}`,
+            `Resolve note: ${log.resolved_note || '--'}`,
+            `Error message: ${log.error_message || '--'}`,
+        ].join('\n');
+        try {
+            await navigator.clipboard.writeText(text);
+            Toast.success('Copied', 'Issue details copied');
+        } catch (e) {
+            console.warn('[Debug] Copy details failed:', e);
+            Toast.error('Copy failed', 'Could not copy issue details');
+        }
+    },
+
+    openDebugResolve(logId) {
+        const found = this.state.debugLogs.find((log) => String(log.id) === String(logId));
+        if (!found) return;
+        this.state.debugResolveDraft = { ...found };
+        this.state.debugResolveSaving = false;
+        this.renderDebugModalPortal();
+        requestAnimationFrame(() => document.getElementById('debug-resolve-note')?.focus());
+    },
+
+    closeDebugResolve() {
+        this.state.debugResolveDraft = null;
+        this.state.debugResolveSaving = false;
+        this.renderDebugModalPortal();
+    },
+
+    async submitDebugResolve() {
+        const draft = this.state.debugResolveDraft;
+        if (!draft) return;
+        const noteEl = document.getElementById('debug-resolve-note');
+        const byEl = document.getElementById('debug-resolve-by');
+        const note = String(noteEl?.value || '').trim();
+        const resolvedBy = String(byEl?.value || '').trim();
+        if (!note) {
+            Toast.error('Resolve note required', 'Please enter a short resolve note');
+            noteEl?.focus();
+            return;
+        }
+        this.state.debugResolveSaving = true;
+        this.renderDebugModalPortal();
+        try {
+            await API.resolveDebugLog(draft.id, { resolved_note: note, resolved_by: resolvedBy });
+            Toast.success('Resolved', 'Debug issue marked as resolved');
+            this.state.debugResolveDraft = null;
+            this.state.debugResolveSaving = false;
+            await this.loadDebugLogs();
+        } catch (e) {
+            console.warn('[Debug] Resolve failed:', e);
+            this.state.debugResolveSaving = false;
+            Toast.error('Resolve failed', e.message || 'Could not resolve debug issue');
+            this.renderDebugModalPortal();
+        }
+    },
+
+    async unresolveDebugLog(logId) {
+        try {
+            await API.unresolveDebugLog(logId);
+            Toast.success('Reopened', 'Debug issue moved back to active');
+            if (this.state.debugDetailLog && String(this.state.debugDetailLog.id) === String(logId)) this.closeDebugDetails(true);
+            await this.loadDebugLogs();
+        } catch (e) {
+            console.warn('[Debug] Unresolve failed:', e);
+            Toast.error('Unresolve failed', e.message || 'Could not reopen debug issue');
+        }
+    },
+
+    openDebugDetails(logId) {
+        const found = this.state.debugLogs.find((log) => String(log.id) === String(logId));
+        if (!found) return;
+        this.state.debugDetailClosing = false;
+        this.state.debugDetailLog = { ...found };
+        this.renderDebugModalPortal();
+    },
+
+    closeDebugDetails(immediate = false) {
+        if (!this.state.debugDetailLog) return;
+        if (immediate) {
+            this.state.debugDetailClosing = false;
+            this.state.debugDetailLog = null;
+            this.renderDebugModalPortal();
+            return;
+        }
+        this.state.debugDetailClosing = true;
+        this.renderDebugModalPortal();
+        clearTimeout(this._debugDetailCloseTimer);
+        this._debugDetailCloseTimer = setTimeout(() => {
+            this.state.debugDetailClosing = false;
+            this.state.debugDetailLog = null;
+            this.renderDebugModalPortal();
+        }, 180);
     },
 
     async clearDebugLogs() {
-        const count = this.state.debugLogs.length;
+        const count = this.getVisibleDebugLogs().length;
         if (!count) return;
         const serial = this.state.debugFilter === 'all' ? null : this.state.debugFilter;
-        if (!confirm(`Clear ${count} debug log(s)${serial ? ` for ${serial}` : ''}? This also deletes screenshot files.`)) return;
+        const statusLabel = this.state.debugStatusFilter === 'resolved' ? 'resolved' : 'active';
+        if (!confirm(`Clear ${count} ${statusLabel} debug log(s)${serial ? ` for ${serial}` : ''}? This also deletes screenshot files.`)) return;
         try {
-            const res = await API.clearDebugLogs(serial);
+            const res = await API.clearDebugLogs(serial, this.state.debugStatusFilter);
             Toast.success('Cleared', `${res.deleted} debug log(s) deleted`);
         } catch (e) {
             console.warn('[Debug] Clear failed:', e);
@@ -276,9 +662,21 @@ const HistoryPage = {
     },
 
     exportDebugLogs() {
-        if (!this.state.debugLogs.length) return;
-        const headers = ['time', 'serial', 'error_code', 'error_message', 'function_name', 'activity_id'];
-        const rows = this.state.debugLogs.map(log => [log.created_at || '', log.serial || '', log.error_code || '', (log.error_message || '').replace(/"/g, '""'), log.function_name || '', log.activity_id || '']);
+        const visibleLogs = this.getVisibleDebugLogs();
+        if (!visibleLogs.length) return;
+        const headers = ['time', 'serial', 'error_code', 'error_message', 'function_name', 'activity_id', 'is_resolved', 'resolved_at', 'resolved_note', 'resolved_by'];
+        const rows = visibleLogs.map(log => [
+            log.created_at || '',
+            log.serial || '',
+            log.error_code || '',
+            (log.error_message || '').replace(/"/g, '""'),
+            log.function_name || '',
+            log.activity_id || '',
+            log.is_resolved ? '1' : '0',
+            log.resolved_at || '',
+            (log.resolved_note || '').replace(/"/g, '""'),
+            log.resolved_by || '',
+        ]);
         const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);

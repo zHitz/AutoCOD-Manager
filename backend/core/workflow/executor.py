@@ -63,6 +63,11 @@ async def execute_recipe(
     # Set debug context so _fail() can capture screenshots
     core_actions._set_debug_context(serial, detector)
 
+    def _run_core_action(fn, *fn_args, **fn_kwargs):
+        """Bind this worker thread to the active emulator before calling core_actions."""
+        core_actions._activate_debug_serial(serial)
+        return fn(*fn_args, **fn_kwargs)
+
     async def log(msg: str, log_type: str = "info"):
         print(f"[{emulator_name}] {msg}")
         if ws_callback:
@@ -159,7 +164,7 @@ async def execute_recipe(
                     core_actions.detect_provider_from_emulator(serial)
                 )
                 was_running = await asyncio.to_thread(
-                    core_actions.ensure_app_running, serial, pkg
+                    _run_core_action, core_actions.ensure_app_running, serial, pkg
                 )
                 if was_running is None:
                     ok = False  # App launch failed entirely
@@ -184,6 +189,7 @@ async def execute_recipe(
                     core_actions.detect_provider_from_emulator(serial)
                 )
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.startup_to_lobby,
                     serial,
                     detector,
@@ -419,17 +425,17 @@ async def execute_recipe(
             # Game Navigation Macros
             elif fn_id == "nav_to_lobby":
                 ok = await asyncio.to_thread(
-                    core_actions.back_to_lobby, serial, detector
+                    _run_core_action, core_actions.back_to_lobby, serial, detector
                 )
 
             elif fn_id == "nav_to_profile":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_profile, serial, detector
+                    _run_core_action, core_actions.go_to_profile, serial, detector
                 )
 
             elif fn_id == "nav_to_items":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_resources, serial, detector
+                    _run_core_action, core_actions.go_to_resources, serial, detector
                 )
 
             # Advanced / State Dependent
@@ -439,7 +445,7 @@ async def execute_recipe(
 
             elif fn_id == "adv_copy_id":
                 player_id = await asyncio.to_thread(
-                    core_actions.extract_player_id, serial, detector
+                    _run_core_action, core_actions.extract_player_id, serial, detector
                 )
                 if player_id:
                     await log(f"  Successfully copied Player ID: {player_id}", "ok")
@@ -449,30 +455,32 @@ async def execute_recipe(
 
             elif fn_id == "nav_to_pet_token":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_pet_token, serial, detector
+                    _run_core_action, core_actions.go_to_pet_token, serial, detector
                 )
 
             elif fn_id == "nav_to_capture_pet":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_capture_pet, serial, detector
+                    _run_core_action, core_actions.go_to_capture_pet, serial, detector
                 )
 
             elif fn_id == "nav_to_market":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_market, serial, detector
+                    _run_core_action, core_actions.go_to_market, serial, detector
                 )
 
             elif fn_id == "nav_to_resources":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_resources, serial, detector
+                    _run_core_action, core_actions.go_to_resources, serial, detector
                 )
 
             elif fn_id == "nav_to_hall":
-                ok = await asyncio.to_thread(core_actions.go_to_hall, serial, detector)
+                ok = await asyncio.to_thread(
+                    _run_core_action, core_actions.go_to_hall, serial, detector
+                )
 
             elif fn_id == "nav_to_rss_center_farm":
                 ok = await asyncio.to_thread(
-                    core_actions.go_to_rss_center_farm, serial, detector
+                    _run_core_action, core_actions.go_to_rss_center_farm, serial, detector
                 )
 
             elif fn_id == "nav_to_farming":
@@ -491,6 +499,7 @@ async def execute_recipe(
                 )
 
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.go_to_farming,
                     serial,
                     detector,
@@ -503,12 +512,12 @@ async def execute_recipe(
             elif fn_id == "check_mail":
                 mail_type = (config or {}).get("mail_type", "all")
                 ok = await asyncio.to_thread(
-                    core_actions.check_mail, serial, detector, mail_type=mail_type
+                    _run_core_action, core_actions.check_mail, serial, detector, mail_type=mail_type
                 )
 
             elif fn_id == "claim_city_resources":
                 claimed = await asyncio.to_thread(
-                    core_actions.claim_city_resources, serial, detector
+                    _run_core_action, core_actions.claim_city_resources, serial, detector
                 )
                 # claim_city_resources returns int (count), not bool.
                 # 0 claimed is still a success (nothing to collect).
@@ -524,18 +533,18 @@ async def execute_recipe(
                         training_list.append((house, tier))
 
                 ok = await asyncio.to_thread(
-                    core_actions.train_troops, serial, detector, training_list=training_list
+                    _run_core_action, core_actions.train_troops, serial, detector, training_list=training_list
                 )
 
             elif fn_id == "claim_alliance_resource":
                 ok = await asyncio.to_thread(
-                    core_actions.claim_alliance_resource, serial, detector
+                    _run_core_action, core_actions.claim_alliance_resource, serial, detector
                 )
 
             # ── Merged Workflow Mappings ──
             elif fn_id == "nav_to_alliance_help":
                 ok = await asyncio.to_thread(
-                    core_actions.alliance_help, serial, detector
+                    _run_core_action, core_actions.alliance_help, serial, detector
                 )
 
             elif fn_id == "nav_to_tavern_chest":
@@ -543,6 +552,7 @@ async def execute_recipe(
                 draw_x10_gold = str((config or {}).get("draw_x10_gold", "false")).lower() == "true"
                 draw_x10_artifact = str((config or {}).get("draw_x10_artifact", "false")).lower() == "true"
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.claim_daily_chests, serial, detector,
                     draw_x10_silver=draw_x10_silver,
                     draw_x10_gold=draw_x10_gold,
@@ -551,12 +561,12 @@ async def execute_recipe(
 
             elif fn_id == "nav_to_heal_troops":
                 ok = await asyncio.to_thread(
-                    core_actions.heal_troops, serial, detector
+                    _run_core_action, core_actions.heal_troops, serial, detector
                 )
 
             elif fn_id == "nav_to_darkling_legions":
                 ok = await asyncio.to_thread(
-                    core_actions.attack_darkling_legions_v1_basic, serial, detector
+                    _run_core_action, core_actions.attack_darkling_legions_v1_basic, serial, detector
                 )
 
             elif fn_id == "nav_to_chat_hero":
@@ -568,7 +578,7 @@ async def execute_recipe(
                 if _os.path.exists(chat_module_path):
                     from backend.core.workflow import chat_with_hero
                     ok = await asyncio.to_thread(
-                        chat_with_hero.run_chat_with_hero, serial, detector
+                        _run_core_action, chat_with_hero.run_chat_with_hero, serial, detector
                     )
                 else:
                     await log(f"  chat_with_hero.py not found at {chat_module_path}", "warn")
@@ -587,6 +597,7 @@ async def execute_recipe(
                         continue
 
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.research_technology, serial, detector,
                     research_type=research_type,
                     max_power=max_power
@@ -595,24 +606,26 @@ async def execute_recipe(
             elif fn_id == "nav_to_buy_merchant":
                 max_refreshes = int((config or {}).get("max_refreshes", 5))
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.buy_merchant_items, serial, detector,
                     max_refreshes=max_refreshes
                 )
 
             elif fn_id == "nav_to_claim_vip_gift":
                 ok = await asyncio.to_thread(
-                    core_actions.claim_daily_vip_gift, serial, detector
+                    _run_core_action, core_actions.claim_daily_vip_gift, serial, detector
                 )
 
             elif fn_id == "nav_to_festival_of_fortitude":
                 ok = await asyncio.to_thread(
-                    core_actions.process_festival_of_fortitude_event, serial, detector
+                    _run_core_action, core_actions.process_festival_of_fortitude_event, serial, detector
                 )
 
             elif fn_id == "nav_to_clean_trash":
                 duration = float((config or {}).get("duration", 60))
                 score_threshold = float((config or {}).get("score_threshold", 0.30))
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.clean_trash_pet_sanctuary, serial, detector,
                     duration=duration, score_threshold=score_threshold
                 )
@@ -620,6 +633,7 @@ async def execute_recipe(
             elif fn_id == "nav_to_season_policies":
                 policy_account_id = (config or {}).get("account_id", "default")
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.process_season_policies, serial, detector,
                     account_id=policy_account_id
                 )
@@ -640,6 +654,7 @@ async def execute_recipe(
                         continue
 
                 ok = await asyncio.to_thread(
+                    _run_core_action,
                     core_actions.upgrade_construction, serial, detector,
                     max_depth=max_depth,
                     max_power=max_power,
@@ -648,22 +663,22 @@ async def execute_recipe(
 
             elif fn_id == "nav_to_claim_quest_reward":
                 ok = await asyncio.to_thread(
-                    core_actions.claim_quest_reward, serial, detector
+                    _run_core_action, core_actions.claim_quest_reward, serial, detector
                 )
 
             elif fn_id == "nav_to_donate_alliance_tech":
                 ok = await asyncio.to_thread(
-                    core_actions.donate_alliance_technology, serial, detector
+                    _run_core_action, core_actions.donate_alliance_technology, serial, detector
                 )
 
             elif fn_id == "nav_to_claim_scout_sentry":
                 ok = await asyncio.to_thread(
-                    core_actions.claim_scout_sentry_post, serial, detector
+                    _run_core_action, core_actions.claim_scout_sentry_post, serial, detector
                 )
 
             elif fn_id == "nav_to_claim_vip_reward":
                 ok = await asyncio.to_thread(
-                    core_actions.claim_daily_vip_reward, serial, detector
+                    _run_core_action, core_actions.claim_daily_vip_reward, serial, detector
                 )
 
             else:

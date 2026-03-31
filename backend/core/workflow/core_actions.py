@@ -171,24 +171,32 @@ def _exit_with_log(serial: str, level: str, message: str):
 # worker threads where threading.local won't have the serial.
 
 _debug_detectors = {}          # {serial: detector}
-_debug_last_serial = ""        # fallback for worker threads
+_debug_last_serial = ""        # process-wide fallback
+_debug_thread_ctx = threading.local()
+
+
+def _get_active_debug_serial() -> str:
+    """Resolve debug serial from the current thread first, then fallback globally."""
+    return getattr(_debug_thread_ctx, "serial", "") or _debug_last_serial
 
 def _set_debug_context(serial: str, detector):
     """Called by executor at the start of each workflow execution."""
     global _debug_last_serial
     _debug_detectors[serial] = detector
     _debug_last_serial = serial
+    _debug_thread_ctx.serial = serial
 
 
 def _activate_debug_serial(serial: str):
     """Explicitly set serial for current thread (optional, for concurrency)."""
     global _debug_last_serial
     _debug_last_serial = serial
+    _debug_thread_ctx.serial = serial
 
 
 def _capture_debug_screenshot(error_code: str) -> str:
     """Capture screenshot at moment of failure. Returns saved file path or empty string."""
-    serial = _debug_last_serial
+    serial = _get_active_debug_serial()
     detector = _debug_detectors.get(serial) if serial else None
     if not serial or not detector or not config.debug_screenshots:
         return ""
@@ -287,6 +295,37 @@ def _is_package_foreground(serial: str, package_name: str) -> bool:
                 return True
 
     return False
+
+
+def _log_capture_failure_diagnostics(serial: str, package_name: str = "", source: str = "capture") -> None:
+    """Emit compact diagnostics when screencap/ERROR_CAPTURE happens repeatedly."""
+    try:
+        get_state = adb_helper._run_adb(["get-state"], serial=serial, timeout=5) or ""
+        pid_raw = adb_helper._run_adb(["shell", "pidof", package_name], serial=serial, timeout=5) if package_name else ""
+        pids = _parse_pid_output(pid_raw)
+        is_foreground = _is_package_foreground(serial, package_name) if package_name else False
+
+        current_focus = adb_helper._run_adb(
+            ["shell", "dumpsys", "window", "windows"], serial=serial, timeout=5
+        ) or ""
+        focus_line = ""
+        for line in current_focus.splitlines():
+            if any(marker in line for marker in ("mCurrentFocus", "mFocusedApp")):
+                focus_line = " ".join(line.strip().split())
+                break
+
+        print(
+            f"[{serial}] [CAPTURE_DIAG] source={source} adb_state='{get_state.strip() or 'EMPTY'}' "
+            f"pid_count={len(pids)} foreground={is_foreground}"
+        )
+        if package_name:
+            print(
+                f"[{serial}] [CAPTURE_DIAG] package='{package_name}' pid_raw='{(pid_raw or '').strip() or 'EMPTY'}'"
+            )
+        if focus_line:
+            print(f"[{serial}] [CAPTURE_DIAG] focus={focus_line[:240]}")
+    except Exception as e:
+        print(f"[{serial}] [CAPTURE_DIAG] failed to collect diagnostics: {e}")
 
 
 def check_app_crash(serial: str, package_name: str = "", adb_path: str = config.adb_path, current_state: str = "") -> bool:
@@ -528,6 +567,9 @@ def wait_for_state(serial: str, detector: GameStateDetector, target_states: list
             
         if current_state == "ERROR_CAPTURE":
             print(f"[{serial}] -> ADB screencap failed. Checking whether app is truly crashed...")
+            if time.time() - last_crash_check > 10:
+                _log_capture_failure_diagnostics(serial, package_name, source="wait_for_state")
+                last_crash_check = time.time()
             if package_name and check_app_crash(serial, package_name, current_state=current_state):
                 return None
             _human_delay(1.5)
@@ -637,7 +679,6 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
     LOBBY_STATES = ["IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"]
 
     # Debug mode: save UNKNOWN screenshots for template creation
-    debug = True
     debug_dir = None
     debug_count = 0
     if debug:
@@ -710,6 +751,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
 
         if current_state == "ERROR_CAPTURE":
             print(f"[{serial}] -> Screencap failed inside back_to_lobby. Verifying crash state...")
+            if time.time() - last_crash_check > 10:
+                _log_capture_failure_diagnostics(serial, package_name, source="back_to_lobby")
+                last_crash_check = time.time()
             if check_app_crash(serial, package_name, current_state=current_state):
                 return _recover_game_from_crash(
                     serial,
@@ -1876,24 +1920,32 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
 
     print(f"[{serial}] Tapping RSS Center on map (479, 254)...")
     adb_helper.tap(serial, 479, 254)
-    _human_delay(1)
+    _human_delay(2)
 
     # --- Detect state: View / Gather(Build) ---
     print(f"[{serial}] Checking RSS Center state...")
-    view_state = detector.check_activity(serial, target="RSS_VIEW", threshold=0.8)
+    view_state = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=3, delay=1)
     if view_state:
         print(f"[{serial}] 'View' detected. Legion already farming. Aborting.")
         adb_helper.tap(serial, 50, 500)
         _human_delay(2)
         return {"ok": False}
 
-    gather_state = detector.check_activity(serial, target="RSS_GATHER", threshold=0.8)
+    gather_state = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=1)
     if not gather_state:
         # RSS Center may be in Build state — button shows as "Build" instead of "Gather"
-        gather_state = detector.check_activity(serial, target="RSS_BUILD", threshold=0.8)
+        gather_state = _detect_with_retry(serial, detector, "RSS_BUILD", threshold=0.8, attempts=3, delay=1)
 
     if not gather_state:
         print(f"[{serial}] Neither Gather nor Build button found. Aborting.")
+        save_unknown_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_unknown_captures")
+        os.makedirs(save_unknown_dir, exist_ok=True)
+        detector._screen_cache = None
+        frame = detector.get_frame(serial)
+        if frame is not None:
+            debug_path = os.path.join(save_unknown_dir, f"rss_center_no_action_{serial}_{int(time.time())}.png")
+            cv2.imwrite(debug_path, frame)
+            print(f"[{serial}] [DEBUG] Saved no-action RSS Center screen: {debug_path}")
         adb_helper.tap(serial, 50, 500)
         _human_delay(2)
         print(f"[{serial}] [EDGE] No actionable RSS Center button detected. Dynamic CD = 2h")
@@ -1925,7 +1977,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     # --- Now tap the button ---
     print(f"[{serial}] Tapping Gather/Build ({g_x}, {g_y})...")
     adb_helper.tap(serial, g_x, g_y)
-    #_human_delay(3)
+    _human_delay(3)
 
     # --- Branch on TH1 vs TH2 ---
     if building_sec > 0:
@@ -1933,7 +1985,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         if builder_count >= 36:
             print(f"[{serial}] [TH1] Builders FULL (36/36). Setting CD = building_time to retry gather.")
             adb_helper.press_back(serial)
-            #_human_delay(1.0)
+            _human_delay(1.0)
             return {"ok": False, "dynamic_cooldown_sec": building_sec + BUFFER_SEC}
 
         # Not full — send troops to build (Create Legion -> Dispatch)
@@ -1945,7 +1997,7 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
             _, rx, ry = rss_create
             print(f"[{serial}] [TH1] RSS Create Legion found at ({rx}, {ry}). Tapping...")
             adb_helper.tap(serial, rx, ry)
-            #_human_delay(2.0)
+            _human_delay(2.0)
 
         create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
         if not create_result:
@@ -1956,21 +2008,21 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         _, cl_x, cl_y = create_result
         print(f"[{serial}] [TH1] Tapping Create Legion at ({cl_x}, {cl_y})...")
         adb_helper.tap(serial, cl_x, cl_y)
-        #_human_delay(2.0)
+        _human_delay(2.0)
 
         print(f"[{serial}] Setting up legion (755, 115)...")
         adb_helper.tap(serial, 755, 115)
-        #_human_delay(2.0)
+        _human_delay(2.0)
 
         LEGION_5_TAP = (865, 90)
         print(f"[{serial}] Selecting Legion Preset #5 at {LEGION_5_TAP}...")
         adb_helper.tap(serial, LEGION_5_TAP[0], LEGION_5_TAP[1])
-        #_human_delay(1.0)
+        _human_delay(1.0)
 
         dispatch_loc = (850, 480)
         print(f"[{serial}] Tapping Dispatch {dispatch_loc}...")
         adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
-        #_human_delay(3.0)
+        _human_delay(3.0)
 
         dynamic_cd = building_sec + RSS_12H_SEC + BUFFER_SEC
         print(f"[{serial}] [TH1] Build dispatched. Dynamic CD = {building_sec}s + 12h + 5min = {dynamic_cd}s")
@@ -4331,18 +4383,32 @@ def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
     # ── Phase 2: Open Quest Menu ──
     print(f"[{serial}] Opening Events menu (35, 100)...")
     adb_helper.tap(serial, 35, 100)
-    _human_delay(2.0)
 
-    # Verify Quest Menu opened
-    detector._screen_cache = None
-    quest_screen = detector.check_special_state(serial, target="QUEST_MENU")
+    # Poll a few frames before retrying. A second tap on the same spot can
+    # close the Quest menu if it already opened but the first frame missed it.
+    quest_screen = wait_for_state(
+        serial,
+        detector,
+        ["QUEST_MENU"],
+        timeout_sec=5,
+        check_mode="special",
+    )
     if not quest_screen:
-        # Retry once — tap may have missed or overlay dismissed
-        print(f"[{serial}] QUEST_MENU not detected. Retrying tap (35, 100)...")
-        adb_helper.tap(serial, 35, 100)
-        _human_delay(2.0)
-        detector._screen_cache = None
-        quest_screen = detector.check_special_state(serial, target="QUEST_MENU")
+        detector._cache.invalidate()
+        current_state = detector.check_state(serial)
+        if current_state == "IN-GAME LOBBY (IN_CITY)":
+            print(f"[{serial}] QUEST_MENU not detected. Still in IN_CITY, retrying tap (35, 100)...")
+            adb_helper.tap(serial, 35, 100)
+            quest_screen = wait_for_state(
+                serial,
+                detector,
+                ["QUEST_MENU"],
+                timeout_sec=5,
+                check_mode="special",
+            )
+        else:
+            print(f"[{serial}] QUEST_MENU not detected, but current state is {current_state}. Skipping retry tap to avoid closing an opened menu.")
+
         if not quest_screen:
             print(f"[{serial}] [FAILED] Could not open Quest Menu.")
             return _fail("NAV_TARGET_NOT_REACHED: Could not open Quest Menu")

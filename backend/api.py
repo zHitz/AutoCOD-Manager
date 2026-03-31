@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 # MUST load config BEFORE any other backend imports
 from backend.config import config
@@ -794,16 +795,48 @@ async def get_task_history(limit: int = 200):
 # ──────────────────────────────────────────────
 
 
+class DebugResolveRequest(BaseModel):
+    resolved_note: str
+    resolved_by: str = ""
+
+
 @app.get("/api/debug/logs")
-async def get_debug_logs(serial: str = None, limit: int = 100):
+async def get_debug_logs(serial: str = None, limit: int = 100, status: str = "active"):
     """Get debug error logs with screenshot paths."""
-    return await database.get_debug_logs(serial=serial, limit=limit)
+    status = (status or "active").strip().lower()
+    if status not in {"active", "resolved", "all"}:
+        raise HTTPException(status_code=400, detail="Invalid debug log status")
+    return await database.get_debug_logs(serial=serial, limit=limit, status=status)
+
+
+@app.post("/api/debug/logs/{log_id}/resolve")
+async def resolve_debug_log(log_id: int, payload: DebugResolveRequest):
+    """Mark one debug log entry as resolved."""
+    note = (payload.resolved_note or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="resolved_note is required")
+    updated = await database.resolve_debug_log(log_id, note, payload.resolved_by)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Debug log not found")
+    return {"ok": True, "id": log_id, "is_resolved": True}
+
+
+@app.post("/api/debug/logs/{log_id}/unresolve")
+async def unresolve_debug_log(log_id: int):
+    """Return one debug log entry back to active state."""
+    updated = await database.unresolve_debug_log(log_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Debug log not found")
+    return {"ok": True, "id": log_id, "is_resolved": False}
 
 
 @app.delete("/api/debug/logs")
-async def clear_debug_logs(serial: str = None):
+async def clear_debug_logs(serial: str = None, status: str = "active"):
     """Clear debug logs and screenshots, optionally for a specific serial."""
-    deleted = await database.clear_debug_logs(serial=serial)
+    status = (status or "active").strip().lower()
+    if status not in {"active", "resolved", "all"}:
+        raise HTTPException(status_code=400, detail="Invalid debug log status")
+    deleted = await database.clear_debug_logs(serial=serial, status=status)
     return {"deleted": deleted}
 
 

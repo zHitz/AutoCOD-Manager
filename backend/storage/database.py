@@ -276,6 +276,10 @@ CREATE TABLE IF NOT EXISTS debug_logs (
     function_name   TEXT DEFAULT '',
     activity_id     TEXT DEFAULT '',
     screenshot_path TEXT DEFAULT '',
+    is_resolved     INTEGER NOT NULL DEFAULT 0,
+    resolved_at     TEXT,
+    resolved_note   TEXT DEFAULT '',
+    resolved_by     TEXT DEFAULT '',
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_debug_serial_time ON debug_logs(serial, created_at DESC);
@@ -446,6 +450,29 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
         )  # ──────────────────────────────────────────────
 
 
+def _ensure_debug_logs_resolve_columns(conn: sqlite3.Connection):
+    """Add resolve-tracking columns to debug_logs if they are missing."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(debug_logs)").fetchall()]
+    added_any = False
+
+    if "is_resolved" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN is_resolved INTEGER NOT NULL DEFAULT 0")
+        added_any = True
+    if "resolved_at" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN resolved_at TEXT")
+        added_any = True
+    if "resolved_note" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN resolved_note TEXT DEFAULT ''")
+        added_any = True
+    if "resolved_by" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN resolved_by TEXT DEFAULT ''")
+        added_any = True
+
+    if added_any:
+        conn.commit()
+        print("[DB Migration] Added resolve columns to debug_logs")
+
+
 # Database class
 # ──────────────────────────────────────────────
 
@@ -469,6 +496,7 @@ class Database:
         # Migrate v1 data if needed
         _migrate_v1_to_v2(conn)
         _migrate_v2_to_v3(conn)
+        _ensure_debug_logs_resolve_columns(conn)
 
         # Add required_runs column if missing (KPI support)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(task_template_items)").fetchall()]
@@ -2145,25 +2173,69 @@ class Database:
         return log_id
 
     async def get_debug_logs(
-        self, serial: str = None, limit: int = 100
+        self, serial: str = None, limit: int = 100, status: str = "active"
     ) -> list[dict]:
-        """Get debug log entries, optionally filtered by serial."""
+        """Get debug log entries, optionally filtered by serial and resolve state."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
+            where_parts = []
+            params: list = []
+
             if serial:
-                cursor = await db.execute(
-                    """SELECT * FROM debug_logs
-                       WHERE serial = ?
-                       ORDER BY created_at DESC LIMIT ?""",
-                    (serial, limit),
-                )
-            else:
-                cursor = await db.execute(
-                    """SELECT * FROM debug_logs
-                       ORDER BY created_at DESC LIMIT ?""",
-                    (limit,),
-                )
+                where_parts.append("serial = ?")
+                params.append(serial)
+
+            if status == "active":
+                where_parts.append("is_resolved = 0")
+            elif status == "resolved":
+                where_parts.append("is_resolved = 1")
+
+            where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+            params.append(limit)
+            cursor = await db.execute(
+                f"""SELECT * FROM debug_logs
+                    {where_sql}
+                    ORDER BY is_resolved ASC, datetime(created_at) DESC
+                    LIMIT ?""",
+                tuple(params),
+            )
             return [dict(row) for row in await cursor.fetchall()]
+
+    async def resolve_debug_log(
+        self, log_id: int, resolved_note: str, resolved_by: str = ""
+    ) -> bool:
+        note = str(resolved_note or "").strip()
+        if not note:
+            raise ValueError("resolved_note is required")
+        resolver = str(resolved_by or "").strip()
+        resolved_at = datetime.utcnow().isoformat()
+
+        async with self._get_conn() as db:
+            result = await db.execute(
+                """UPDATE debug_logs
+                   SET is_resolved = 1,
+                       resolved_at = ?,
+                       resolved_note = ?,
+                       resolved_by = ?
+                   WHERE id = ?""",
+                (resolved_at, note, resolver, int(log_id)),
+            )
+            await db.commit()
+            return result.rowcount > 0
+
+    async def unresolve_debug_log(self, log_id: int) -> bool:
+        async with self._get_conn() as db:
+            result = await db.execute(
+                """UPDATE debug_logs
+                   SET is_resolved = 0,
+                       resolved_at = NULL,
+                       resolved_note = '',
+                       resolved_by = ''
+                   WHERE id = ?""",
+                (int(log_id),),
+            )
+            await db.commit()
+            return result.rowcount > 0
 
     async def prune_debug_logs(self, serial: str, keep: int = 50):
         """Keep only the latest N debug logs per serial. Deletes old screenshot files."""
@@ -2200,24 +2272,34 @@ class Database:
                 except OSError:
                     pass
 
-    async def clear_debug_logs(self, serial: str = None) -> int:
-        """Delete all debug logs (and their screenshot files), optionally for a specific serial."""
+    async def clear_debug_logs(self, serial: str = None, status: str = "active") -> int:
+        """Delete debug logs (and screenshot files), optionally filtered by serial and resolve state."""
         async with self._get_conn() as db:
-            if serial:
-                cursor = await db.execute(
-                    "SELECT screenshot_path FROM debug_logs WHERE serial = ? AND screenshot_path != ''",
-                    (serial,),
-                )
-            else:
-                cursor = await db.execute(
-                    "SELECT screenshot_path FROM debug_logs WHERE screenshot_path != ''"
-                )
-            paths = [row[0] for row in await cursor.fetchall()]
+            where_parts = ["screenshot_path != ''"]
+            params: list = []
+            delete_where_parts = []
+            delete_params: list = []
 
             if serial:
-                result = await db.execute("DELETE FROM debug_logs WHERE serial = ?", (serial,))
-            else:
-                result = await db.execute("DELETE FROM debug_logs")
+                where_parts.append("serial = ?")
+                delete_where_parts.append("serial = ?")
+                params.append(serial)
+                delete_params.append(serial)
+            if status == "active":
+                where_parts.append("is_resolved = 0")
+                delete_where_parts.append("is_resolved = 0")
+            elif status == "resolved":
+                where_parts.append("is_resolved = 1")
+                delete_where_parts.append("is_resolved = 1")
+
+            cursor = await db.execute(
+                f"SELECT screenshot_path FROM debug_logs WHERE {' AND '.join(where_parts)}",
+                tuple(params),
+            )
+            paths = [row[0] for row in await cursor.fetchall()]
+
+            delete_sql = f"DELETE FROM debug_logs WHERE {' AND '.join(delete_where_parts)}" if delete_where_parts else "DELETE FROM debug_logs"
+            result = await db.execute(delete_sql, tuple(delete_params))
             await db.commit()
             deleted = result.rowcount
 

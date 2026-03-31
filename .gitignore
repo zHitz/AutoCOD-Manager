@@ -14,8 +14,22 @@ data/
 logs/
 *.log
 
+# Heavy debug/binary folders (Antigravity indexing optimization)
+data/apks/
+data/debug_captures/
+data/scan_captures/
+data/pet_releases/
+data/workflow_logs/
+backend/core/workflow/templates/_unknown_captures/
+
 # Test and Debug folders
-TEST/
+TEST/*
+!TEST/game_state_reader/
+!TEST/game_state_reader/**
+TEST/game_state_reader/__pycache__/
+TEST/game_state_reader/**/*.pyc
+TEST/game_state_reader/artifacts/*
+!TEST/game_state_reader/artifacts/.gitkeep
 tests/
 debug/
 merge/

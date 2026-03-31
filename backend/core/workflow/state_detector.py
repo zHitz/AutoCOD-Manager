@@ -271,10 +271,27 @@ class GameStateDetector:
         try:
             result = subprocess.run(cmd, capture_output=True, startupinfo=startupinfo, timeout=SCREENCAP_TIMEOUT_SEC)
             if not result.stdout:
+                stderr_text = (result.stderr or b"").decode("utf-8", errors="ignore").strip()
+                logger.warning(
+                    "Screencap empty on %s | returncode=%s | stderr=%s",
+                    serial,
+                    result.returncode,
+                    stderr_text[:240] or "<empty>",
+                )
                 return None
 
             image_array = np.frombuffer(result.stdout, np.uint8)
             img = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+            if img is None:
+                stderr_text = (result.stderr or b"").decode("utf-8", errors="ignore").strip()
+                logger.warning(
+                    "Screencap decode failed on %s | bytes=%d | returncode=%s | stderr=%s",
+                    serial,
+                    len(result.stdout),
+                    result.returncode,
+                    stderr_text[:240] or "<empty>",
+                )
+                return None
             self._cache.update(img)
             return img
         except subprocess.TimeoutExpired:
