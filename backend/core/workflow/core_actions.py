@@ -490,7 +490,28 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
         return _fail("CRASH_LAUNCH_FAILED: Could not launch app")
     
     if not was_running:
-        print(f"[{serial}] App was not running. Waiting for game to load into Lobby...")
+        print(f"[{serial}] App was not in foreground. Checking current state before waiting for Lobby...")
+        current_state = detector.check_state(serial)
+        print(f"[{serial}] Startup state after foreground check: {current_state}")
+
+        non_recoverable_states = {
+            None,
+            "UNKNOWN / TRANSITION",
+            "LOADING SCREEN",
+            "LOADING SCREEN (NETWORK ISSUE)",
+            "ERROR_CAPTURE",
+        }
+
+        if current_state in LOBBY_STATES:
+            print(f"[{serial}] Already in Lobby after app foreground restore.")
+            return _ok()
+
+        if current_state not in non_recoverable_states:
+            print(f"[{serial}] Known in-game state '{current_state}' detected. Recovering via back_to_lobby()...")
+            result = back_to_lobby(serial, detector)
+            return result if isinstance(result, dict) else (_ok() if result else _fail("NAV_LOBBY_UNREACHABLE: back_to_lobby failed after app foreground restore"))
+
+        print(f"[{serial}] State is transitional/loading. Waiting for game to load into Lobby...")
         lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout, package_name=package_name)
         if not lobby:
             print(f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s.")

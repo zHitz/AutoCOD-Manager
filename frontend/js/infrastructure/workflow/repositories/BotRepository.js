@@ -54,4 +54,28 @@ export class BotRepository {
 
         return Result.fail(new Error(response.data?.error || 'Failed to fetch status'));
     }
+
+    async resetActivityCooldown(payload) {
+        const response = await this.http.post('/api/workflow/activity-cooldown/reset', payload);
+        if (!response.ok) {
+            const err = response.error;
+            return Result.fail(err instanceof Error ? err : new Error(err?.error || err?.detail || 'Failed to reset cooldown'));
+        }
+
+        if (response.data?.status === 'ok') {
+            return Result.ok(response.data);
+        }
+
+        const err = new Error(response.data?.error || 'Failed to reset cooldown');
+        if (response.data?.blocked_accounts) err.blocked_accounts = response.data.blocked_accounts;
+        if (response.data?.invalid_account_ids) err.invalid_account_ids = response.data.invalid_account_ids;
+        return Result.fail(err);
+    }
+
+    async getActivityCooldownTargets(groupId, activityId) {
+        const response = await this.http.get(`/api/workflow/activity-cooldown/targets?group_id=${groupId}&activity_id=${encodeURIComponent(activityId)}`);
+        if (!response.ok) return Result.fail(response.error instanceof Error ? response.error : new Error(response.error?.error || response.error?.detail || 'Failed to load cooldown targets'));
+        if (response.data?.status === 'ok') return Result.ok(response.data);
+        return Result.fail(new Error(response.data?.error || 'Failed to load cooldown targets'));
+    }
 }

@@ -193,29 +193,124 @@ async def get_effective_cooldown_sec(
         async with db.execute(
             f"""SELECT started_at, result_json, status FROM account_activity_logs
                WHERE account_id = ? AND activity_id = ? AND {status_filter}
-               ORDER BY started_at DESC LIMIT 1""",
+               ORDER BY started_at DESC""",
             (account_id, activity_id),
         ) as cursor:
-            row = await cursor.fetchone()
-            if not row or not row[0]:
-                return (0, 0)
+            rows = await cursor.fetchall()
+            for row in rows:
+                if not row or not row[0]:
+                    continue
 
-            try:
-                last_run = datetime.fromisoformat(row[0]).timestamp()
-            except ValueError:
-                return (0, 0)
+                dynamic_cd = 0
+                result = {}
+                if row[1]:
+                    try:
+                        result = json.loads(row[1])
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        result = {}
 
-            # FAILED runs: no dynamic cooldown, caller uses static config
-            row_status = row[2] if row[2] else "SUCCESS"
-            if row_status == "FAILED":
-                return (last_run, 0)
+                if result.get("ignore_for_cooldown"):
+                    continue
 
-            dynamic_cd = 0
-            if row[1]:
                 try:
-                    result = json.loads(row[1])
-                    dynamic_cd = int(result.get("dynamic_cooldown_sec", 0))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    pass
+                    last_run = datetime.fromisoformat(row[0]).timestamp()
+                except ValueError:
+                    continue
 
-            return (last_run, dynamic_cd)
+                # FAILED runs: no dynamic cooldown, caller uses static config
+                row_status = row[2] if row[2] else "SUCCESS"
+                if row_status == "FAILED":
+                    return (last_run, 0)
+
+                try:
+                    dynamic_cd = int(result.get("dynamic_cooldown_sec", 0))
+                except (TypeError, ValueError):
+                    dynamic_cd = 0
+
+                return (last_run, dynamic_cd)
+
+            return (0, 0)
+
+
+async def reset_activity_cooldown(account_ids: list[int], activity_id: str) -> dict:
+    """Mark the latest cooldown-driving activity log as ignored for cooldown.
+
+    This preserves history while making the activity immediately runnable again.
+    Only the latest SUCCESS/FAILED row per account is touched.
+    """
+    normalized_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for raw in account_ids or []:
+        try:
+            account_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if account_id <= 0 or account_id in seen_ids:
+            continue
+        normalized_ids.append(account_id)
+        seen_ids.add(account_id)
+
+    if not normalized_ids or not activity_id:
+        return {"affected_rows": 0, "affected_account_ids": []}
+
+    affected_rows = 0
+    affected_account_ids: list[int] = []
+
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("BEGIN")
+        try:
+            for account_id in normalized_ids:
+                async with db.execute(
+                    """SELECT id, result_json
+                       FROM account_activity_logs
+                       WHERE account_id = ? AND activity_id = ?
+                         AND status IN ('SUCCESS', 'FAILED')
+                       ORDER BY started_at DESC""",
+                    (account_id, activity_id),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+
+                if not rows:
+                    continue
+
+                log_id = None
+                result = {}
+                for row in rows:
+                    candidate_result = {}
+                    if row[1]:
+                        try:
+                            candidate_result = json.loads(row[1])
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            candidate_result = {}
+                    if candidate_result.get("ignore_for_cooldown"):
+                        continue
+                    log_id = int(row[0])
+                    result = candidate_result
+                    break
+
+                if log_id is None:
+                    continue
+
+                result["ignore_for_cooldown"] = True
+                result["cooldown_reset_at"] = datetime.now().isoformat()
+
+                update_cursor = await db.execute(
+                    """UPDATE account_activity_logs
+                       SET result_json = ?
+                       WHERE id = ?""",
+                    (json.dumps(result), log_id),
+                )
+                rowcount = max(update_cursor.rowcount or 0, 0)
+                if rowcount > 0:
+                    affected_rows += rowcount
+                    affected_account_ids.append(account_id)
+
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    return {
+        "affected_rows": affected_rows,
+        "affected_account_ids": affected_account_ids,
+    }

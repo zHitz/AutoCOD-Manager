@@ -11,6 +11,7 @@ const AccountsPage = {
     _pageState: 'loading',  // 'loading' | 'ready' | 'error' | 'empty'
     _errorMessage: '',
     _actionLoading: {},     // { [actionKey]: true }
+    _pendingDeleteTarget: null,
     _comparisonCache: {},
     _sortField: null,
     _sortDirection: 'asc',
@@ -1242,19 +1243,106 @@ const AccountsPage = {
         }
     },
 
+    _showToast(message, type = 'error') {
+        if (window.app && app.showUtilsToast) app.showUtilsToast(message, type);
+    },
+
+    _deleteActionKey(gameId) {
+        return `delete:${gameId}`;
+    },
+
+    _renderDeleteModal() {
+        const target = this._pendingDeleteTarget;
+        if (!target) return '';
+
+        const actionKey = this._deleteActionKey(target.gameId);
+        const isDeleting = !!this._actionLoading[actionKey];
+
+        return `
+            <div id="custom-delete-modal" class="active" role="dialog" aria-modal="true" aria-labelledby="account-delete-title">
+                <div class="modal-overlay" onclick="AccountsPage.closeDeleteModal()"></div>
+                <div class="modal-content">
+                    <div class="modal-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6l-1 14H6L5 6"></path>
+                            <path d="M10 11v6"></path>
+                            <path d="M14 11v6"></path>
+                            <path d="M9 6V4h6v2"></path>
+                        </svg>
+                    </div>
+                    <h3 id="account-delete-title" class="modal-title">Delete account?</h3>
+                    <p class="modal-desc">This will permanently remove the account and purge its snapshots, resource history, task history, pending rows, and group memberships.</p>
+                    <div class="modal-target">
+                        <div class="modal-target-label">Account</div>
+                        <div class="modal-target-value">${target.name || 'Unknown'}${target.gameId ? ` · ${target.gameId}` : ''}</div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;">
+                        <button class="btn btn-ghost" onclick="AccountsPage.closeDeleteModal()" ${isDeleting ? 'disabled' : ''}>Cancel</button>
+                        <button class="btn btn-primary" style="background:var(--red-500);border-color:var(--red-500);" onclick="AccountsPage.deleteAccount('${String(target.gameId).replace(/'/g, "\\'")}')" ${isDeleting ? 'disabled' : ''}>
+                            ${isDeleting ? 'Deleting...' : 'Delete Account'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    _mountDeleteModal() {
+        const container = document.getElementById('delete-modal-container');
+        if (!container) return;
+        container.innerHTML = this._renderDeleteModal();
+    },
+
+    promptDeleteAccount(gameId, ingameName) {
+        if (!gameId) return;
+        this._pendingDeleteTarget = {
+            gameId,
+            name: ingameName || 'Unknown',
+        };
+        this._mountDeleteModal();
+    },
+
+    closeDeleteModal(force = false) {
+        const target = this._pendingDeleteTarget;
+        if (!force && target) {
+            const actionKey = this._deleteActionKey(target.gameId);
+            if (this._actionLoading[actionKey]) return;
+        }
+        this._pendingDeleteTarget = null;
+        const container = document.getElementById('delete-modal-container');
+        if (container) container.innerHTML = '';
+    },
+
     async deleteAccount(gameId) {
-        if (!confirm('Are you sure you want to delete this account? This action cannot be undone.')) return;
+        if (!gameId) return;
+        const actionKey = this._deleteActionKey(gameId);
+        if (this._actionLoading[actionKey]) return;
+        this._actionLoading[actionKey] = true;
+        this._mountDeleteModal();
+
         try {
             const res = await fetch(`/api/accounts/${encodeURIComponent(gameId)}`, { method: 'DELETE' });
             const data = await res.json();
             if (data.status === 'deleted') {
+                delete this._comparisonCache[gameId];
+                delete this._actionLoading[actionKey];
+                this.closeDeleteModal(true);
                 this.closeDetail();
-                this.fetchData();
+                await this.fetchData();
+                this._showToast(`Deleted account ${data.lord_name || gameId}`, 'success');
             } else {
-                if (window.app && app.showUtilsToast) app.showUtilsToast('Delete Failed: ' + data.error);
+                this._showToast('Delete Failed: ' + (data.error || 'Unknown error'));
             }
         } catch (err) {
-            if (window.app && app.showUtilsToast) app.showUtilsToast('Network error deleting account');
+            this._showToast('Network error deleting account');
+        } finally {
+            if (this._actionLoading[actionKey]) {
+                delete this._actionLoading[actionKey];
+            }
+            if (this._pendingDeleteTarget && this._pendingDeleteTarget.gameId === gameId) {
+                this._mountDeleteModal();
+            }
         }
     },
 

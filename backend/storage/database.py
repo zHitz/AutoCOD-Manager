@@ -1903,15 +1903,134 @@ class Database:
             await db.commit()
             return cursor.rowcount > 0
 
-    async def delete_account(self, game_id: str) -> bool:
-        """Delete account by game_id."""
+    async def delete_account(self, game_id: str) -> dict:
+        """Purge an account and related data by game_id."""
         async with self._get_conn() as db:
-            cursor = await db.execute(
-                "DELETE FROM accounts WHERE game_id = ?",
-                (game_id,),
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+            db.row_factory = aiosqlite.Row
+            await db.execute("BEGIN")
+            try:
+                cursor = await db.execute(
+                    "SELECT id, game_id, lord_name FROM accounts WHERE game_id = ?",
+                    (game_id,),
+                )
+                account_row = await cursor.fetchone()
+                if not account_row:
+                    await db.rollback()
+                    return {
+                        "deleted": False,
+                        "error": "Account not found",
+                        "game_id": game_id,
+                    }
+
+                account_id = int(account_row["id"])
+                resolved_game_id = str(account_row["game_id"])
+                lord_name = account_row["lord_name"] or ""
+
+                snapshot_cursor = await db.execute(
+                    "SELECT id FROM scan_snapshots WHERE game_id = ?",
+                    (resolved_game_id,),
+                )
+                snapshot_ids = [
+                    int(row["id"]) for row in await snapshot_cursor.fetchall()
+                ]
+
+                deleted_scan_resources = 0
+                if snapshot_ids:
+                    placeholders = ",".join("?" for _ in snapshot_ids)
+                    res_cursor = await db.execute(
+                        f"DELETE FROM scan_resources WHERE snapshot_id IN ({placeholders})",
+                        snapshot_ids,
+                    )
+                    deleted_scan_resources = max(res_cursor.rowcount, 0)
+
+                pending_cursor = await db.execute(
+                    "DELETE FROM pending_accounts WHERE game_id = ?",
+                    (resolved_game_id,),
+                )
+                deleted_pending = max(pending_cursor.rowcount, 0)
+
+                snap_delete_cursor = await db.execute(
+                    "DELETE FROM scan_snapshots WHERE game_id = ?",
+                    (resolved_game_id,),
+                )
+                deleted_snapshots = max(snap_delete_cursor.rowcount, 0)
+
+                activity_cursor = await db.execute(
+                    """DELETE FROM account_activity_logs
+                       WHERE account_id = ? OR game_id = ?""",
+                    (account_id, resolved_game_id),
+                )
+                deleted_activity_logs = max(activity_cursor.rowcount, 0)
+
+                daily_cursor = await db.execute(
+                    """DELETE FROM task_daily_state
+                       WHERE account_id = ? OR game_id = ?""",
+                    (account_id, resolved_game_id),
+                )
+                deleted_task_daily_state = max(daily_cursor.rowcount, 0)
+
+                groups_cursor = await db.execute(
+                    "SELECT id, account_ids FROM account_groups"
+                )
+                groups = await groups_cursor.fetchall()
+                groups_updated = 0
+                memberships_removed = 0
+                for group in groups:
+                    raw_ids = group["account_ids"] or "[]"
+                    try:
+                        parsed_ids = json.loads(raw_ids)
+                    except Exception:
+                        parsed_ids = []
+
+                    if not isinstance(parsed_ids, list):
+                        parsed_ids = []
+
+                    normalized_ids = []
+                    removed_here = 0
+                    for value in parsed_ids:
+                        try:
+                            parsed_value = int(value)
+                        except (TypeError, ValueError):
+                            continue
+                        if parsed_value == account_id:
+                            removed_here += 1
+                            continue
+                        normalized_ids.append(parsed_value)
+
+                    if removed_here:
+                        await db.execute(
+                            "UPDATE account_groups SET account_ids = ? WHERE id = ?",
+                            (json.dumps(normalized_ids), int(group["id"])),
+                        )
+                        groups_updated += 1
+                        memberships_removed += removed_here
+
+                account_delete_cursor = await db.execute(
+                    "DELETE FROM accounts WHERE id = ?",
+                    (account_id,),
+                )
+                deleted_accounts = max(account_delete_cursor.rowcount, 0)
+
+                await db.commit()
+                return {
+                    "deleted": deleted_accounts > 0,
+                    "account_id": account_id,
+                    "game_id": resolved_game_id,
+                    "lord_name": lord_name,
+                    "counts": {
+                        "accounts": deleted_accounts,
+                        "scan_snapshots": deleted_snapshots,
+                        "scan_resources": deleted_scan_resources,
+                        "pending_accounts": deleted_pending,
+                        "account_activity_logs": deleted_activity_logs,
+                        "task_daily_state": deleted_task_daily_state,
+                        "groups_updated": groups_updated,
+                        "group_memberships_removed": memberships_removed,
+                    },
+                }
+            except Exception:
+                await db.rollback()
+                raise
 
     # ── Pending Account CRUD ────────────────────────
 

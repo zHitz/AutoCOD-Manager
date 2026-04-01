@@ -766,10 +766,42 @@ async def update_account(game_id: str, body: dict):
 @app.delete("/api/accounts/{game_id}")
 async def delete_account(game_id: str):
     """Delete an account record."""
-    ok = await database.delete_account(game_id)
-    if ok:
-        return {"status": "deleted", "game_id": game_id}
-    return {"error": "Account not found", "game_id": game_id}
+    account = await database.get_account_by_game_id(game_id)
+    if not account:
+        return {"error": "Account not found", "game_id": game_id}
+
+    from backend.core.workflow.bot_orchestrator import _active_orchestrators
+
+    target_account_id = int(account.get("account_id") or 0)
+    target_game_id = str(account.get("game_id") or game_id)
+
+    for group_id, orch in _active_orchestrators.items():
+        if not orch:
+            continue
+        is_active = bool(getattr(orch, "is_running", False) or getattr(orch, "stop_requested", False))
+        if not is_active:
+            continue
+
+        for queued_account in getattr(orch, "queue", []):
+            queued_account_id = int(queued_account.get("id") or 0)
+            queued_game_id = str(queued_account.get("game_id") or "")
+            if queued_account_id == target_account_id or queued_game_id == target_game_id:
+                return {
+                    "error": f"Cannot delete account while workflow group {group_id} is active",
+                    "game_id": target_game_id,
+                    "group_id": group_id,
+                }
+
+    result = await database.delete_account(target_game_id)
+    if result.get("deleted"):
+        return {
+            "status": "deleted",
+            "game_id": target_game_id,
+            "account_id": result.get("account_id"),
+            "lord_name": result.get("lord_name", ""),
+            "deleted": result.get("counts", {}),
+        }
+    return {"error": result.get("error", "Account not found"), "game_id": target_game_id}
 
 
 @app.get("/api/accounts/{game_id}/comparison")
@@ -1459,6 +1491,204 @@ async def get_bot_status(group_id: int = None):
 # ──────────────────────────────────────────────
 
 
+async def _get_group_account_ids(group_id: int) -> list[int]:
+    import json as json_mod
+    import aiosqlite
+
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT account_ids FROM account_groups WHERE id = ?",
+            (int(group_id),),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return []
+
+    try:
+        raw_ids = json_mod.loads(row["account_ids"] or "[]")
+    except Exception:
+        raw_ids = []
+
+    account_ids: list[int] = []
+    for value in raw_ids if isinstance(raw_ids, list) else []:
+        try:
+            account_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return account_ids
+
+
+@app.post("/api/workflow/activity-cooldown/reset")
+async def reset_activity_cooldown(body: dict):
+    """Reset cooldown for one activity across all or selected accounts in a group."""
+    from backend.core.workflow import execution_log, workflow_registry
+    from backend.core.workflow.bot_orchestrator import _active_orchestrators
+
+    try:
+        group_id = int(body.get("group_id") or 0)
+    except (TypeError, ValueError):
+        group_id = 0
+    activity_id = str(body.get("activity_id") or "").strip()
+    scope = str(body.get("scope") or "").strip()
+    requested_account_ids = body.get("account_ids") or []
+
+    if group_id <= 0 or not activity_id or scope not in {"group_all", "selected_accounts"}:
+        return {"status": "error", "error": "Missing or invalid reset payload"}
+
+    group_account_ids = await _get_group_account_ids(group_id)
+    if not group_account_ids:
+        return {"status": "error", "error": "Group not found or has no accounts"}
+
+    reg_activity = workflow_registry.get_activity_by_id(activity_id)
+    config_file = _ACTIVITY_CONFIG_DIR / f"{group_id}.json"
+    config_activity_exists = False
+    if config_file.exists():
+        try:
+            import json as json_mod
+            cfg = json_mod.loads(config_file.read_text(encoding="utf-8"))
+            config_activity_exists = activity_id in (cfg.get("activities") or {})
+        except Exception:
+            config_activity_exists = False
+    if not reg_activity and not config_activity_exists:
+        return {"status": "error", "error": f"Unknown activity '{activity_id}'"}
+
+    if scope == "group_all":
+        target_account_ids = list(group_account_ids)
+    else:
+        normalized_requested: list[int] = []
+        for value in requested_account_ids if isinstance(requested_account_ids, list) else []:
+            try:
+                normalized_requested.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        if not normalized_requested:
+            return {"status": "error", "error": "No target accounts selected"}
+        invalid_account_ids = sorted(set(normalized_requested) - set(group_account_ids))
+        if invalid_account_ids:
+            return {
+                "status": "error",
+                "error": "Some accounts are not part of this group",
+                "invalid_account_ids": invalid_account_ids,
+            }
+        target_account_ids = sorted(set(normalized_requested))
+
+    orch = _active_orchestrators.get(group_id)
+    blocked_accounts: list[int] = []
+    if orch and getattr(orch, "is_running", False):
+        current_activity = getattr(orch, "current_activity", None) or {}
+        current_activity_id = str(current_activity.get("id") or "")
+        current_idx = int(getattr(orch, "current_idx", 0) or 0)
+        current_account_id = None
+        queue = getattr(orch, "queue", []) or []
+        if 0 <= current_idx < len(queue):
+            try:
+                current_account_id = int(queue[current_idx].get("id"))
+            except (TypeError, ValueError, AttributeError):
+                current_account_id = None
+
+        if current_activity_id == activity_id:
+            if current_account_id and current_account_id in target_account_ids:
+                blocked_accounts.append(current_account_id)
+            for acc in target_account_ids:
+                if str((getattr(orch, "account_statuses", {}) or {}).get(str(acc), "")) == "running":
+                    blocked_accounts.append(acc)
+
+        if current_account_id and current_account_id in target_account_ids:
+            blocked_accounts.append(current_account_id)
+
+    blocked_accounts = sorted(set(int(acc) for acc in blocked_accounts))
+    if blocked_accounts:
+        return {
+            "status": "error",
+            "error": "Cannot reset cooldown while the target account/activity is running",
+            "group_id": group_id,
+            "activity_id": activity_id,
+            "scope": scope,
+            "blocked_accounts": blocked_accounts,
+        }
+
+    result = await execution_log.reset_activity_cooldown(target_account_ids, activity_id)
+    return {
+        "status": "ok",
+        "group_id": group_id,
+        "activity_id": activity_id,
+        "scope": scope,
+        "affected_account_ids": result.get("affected_account_ids", []),
+        "affected_rows": int(result.get("affected_rows", 0) or 0),
+        "blocked_accounts": [],
+    }
+
+
+@app.get("/api/workflow/activity-cooldown/targets")
+async def get_activity_cooldown_targets(group_id: int, activity_id: str):
+    """Return all accounts in a group with effective cooldown state for one activity."""
+    import json as json_mod
+    import time as time_mod
+    from backend.core.workflow import execution_log, workflow_registry
+    from backend.core.workflow.cooldown_utils import apply_daily_reset_cap
+
+    group_account_ids = await _get_group_account_ids(group_id)
+    if not group_account_ids:
+        return {"status": "error", "error": "Group not found or has no accounts"}
+
+    config_file = _ACTIVITY_CONFIG_DIR / f"{group_id}.json"
+    if not config_file.exists():
+        return {"status": "error", "error": "Group activity config not found"}
+
+    try:
+        cfg = json_mod.loads(config_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"status": "error", "error": f"Failed to load group config: {exc}"}
+
+    act_node = (cfg.get("activities") or {}).get(activity_id)
+    reg_activity = workflow_registry.get_activity_by_id(activity_id)
+    if not act_node and not reg_activity:
+        return {"status": "error", "error": f"Unknown activity '{activity_id}'"}
+
+    accounts = await database.get_all_accounts()
+    account_map = {
+        int(acc.get("account_id")): acc
+        for acc in accounts
+        if acc.get("account_id") is not None
+    }
+
+    cd_enabled = bool((act_node or {}).get("cooldown_enabled", reg_activity.get("defaults", {}).get("cooldown_enabled", False) if reg_activity else False))
+    cd_minutes = int((act_node or {}).get("cooldown_minutes", reg_activity.get("defaults", {}).get("cooldown_minutes", 0) if reg_activity else 0) or 0)
+    cd_reset_daily_utc = bool((act_node or {}).get("cooldown_reset_daily_utc", reg_activity.get("defaults", {}).get("cooldown_reset_daily_utc", False) if reg_activity else False))
+
+    rows = []
+    now_epoch = time_mod.time()
+    for account_id in group_account_ids:
+        acc = account_map.get(int(account_id), {})
+        last_run_epoch, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(account_id), activity_id)
+        effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+        cooldown_remaining_sec = 0
+        if cd_enabled and effective_cd > 0 and last_run_epoch > 0:
+            cooldown_remaining_sec = apply_daily_reset_cap(
+                last_run_epoch=last_run_epoch,
+                effective_cooldown_sec=effective_cd,
+                now_epoch=now_epoch,
+                reset_at_utc_midnight=cd_reset_daily_utc,
+            )
+        rows.append({
+            "account_id": int(account_id),
+            "lord_name": acc.get("lord_name") or acc.get("acc_lord_name") or "Unknown Account",
+            "game_id": acc.get("game_id", ""),
+            "cooldown_remaining_sec": int(cooldown_remaining_sec or 0),
+            "is_ready": int(cooldown_remaining_sec or 0) <= 0,
+        })
+
+    rows.sort(key=lambda item: ((not item["is_ready"]), item["cooldown_remaining_sec"], (item["lord_name"] or "").lower()))
+    return {
+        "status": "ok",
+        "group_id": group_id,
+        "activity_id": activity_id,
+        "cooldown_enabled": cd_enabled,
+        "accounts": rows,
+    }
+
+
 @app.get("/api/monitor/kpi-summary")
 async def get_kpi_summary(group_id: int):
     """Get real-time KPI summary metrics for a target group."""
@@ -1554,13 +1784,16 @@ async def get_monitor_account_activities(account_id: int, group_id: int = None):
                 # Enrich ALL activities with cooldown info from config
                 import time as time_mod
                 from backend.core.workflow import execution_log as exec_log_mod
+                from backend.core.workflow.cooldown_utils import apply_daily_reset_cap
 
                 for act_id, act_node in cfg.get("activities", {}).items():
                     if act_id in summary:
                         cd_enabled = act_node.get("cooldown_enabled", False)
                         cd_minutes = act_node.get("cooldown_minutes", 0)
+                        cd_reset_daily_utc = act_node.get("cooldown_reset_daily_utc", False)
                         summary[act_id]["cooldown_enabled"] = cd_enabled
                         summary[act_id]["cooldown_minutes"] = cd_minutes
+                        summary[act_id]["cooldown_reset_daily_utc"] = cd_reset_daily_utc
 
                         # Compute remaining cooldown seconds (per-account from DB)
                         # Dynamic cooldown override: if result_json has dynamic_cooldown_sec, use it
@@ -1581,9 +1814,11 @@ async def get_monitor_account_activities(account_id: int, group_id: int = None):
 
                                 if last_run_epoch > 0:
                                     effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
-                                    elapsed = time_mod.time() - last_run_epoch
-                                    cd_remaining = max(
-                                        0, int(effective_cd - elapsed)
+                                    cd_remaining = apply_daily_reset_cap(
+                                        last_run_epoch=last_run_epoch,
+                                        effective_cooldown_sec=effective_cd,
+                                        now_epoch=time_mod.time(),
+                                        reset_at_utc_midnight=bool(cd_reset_daily_utc),
                                     )
                             except (ValueError, TypeError, Exception):
                                 pass
@@ -1686,6 +1921,7 @@ def _migrate_config_v1_to_v2(group_id: int, v1_config: dict) -> dict:
             "config": {},
             "cooldown_enabled": act.get("defaults", {}).get("cooldown_enabled", False),
             "cooldown_minutes": act.get("defaults", {}).get("cooldown_minutes", 60),
+            "cooldown_reset_daily_utc": act.get("defaults", {}).get("cooldown_reset_daily_utc", False),
             "last_run": None,
         }
 
@@ -1803,30 +2039,41 @@ async def get_activity_config(group_id: int):
             today_prefix = datetime.now().strftime('%Y-%m-%d')
             async with aiosqlite.connect(app_config.db_path) as db:
                 for act_id, act_node in data.get("activities", {}).items():
-                    # Get Last Run
+                    # Get Last Run while skipping logs manually ignored for cooldown
                     async with db.execute(
-                        """SELECT started_at FROM account_activity_logs 
+                        """SELECT started_at, result_json FROM account_activity_logs 
                            WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
-                           ORDER BY started_at DESC LIMIT 1""", 
+                           ORDER BY started_at DESC""",
                         (group_id, act_id)
                     ) as cursor:
-                        row = await cursor.fetchone()
-                        if row and row[0]:
-                            act_node["last_run"] = row[0]
-                            # Get Runs Today
-                            async with db.execute(
-                                """SELECT COUNT(*) FROM account_activity_logs 
-                                   WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
-                                   AND started_at LIKE ?""", 
-                                (group_id, act_id, f"{today_prefix}%")
-                            ) as cursor2:
-                                count_row = await cursor2.fetchone()
-                                act_node["runs_today"] = count_row[0] if count_row else 0
-                                # Force JS date string match
-                                import time
-                                # In JS, toLocaleDateString() on windows is typically M/D/YYYY
-                                d = datetime.now()
-                                act_node["runs_today_date"] = f"{d.month}/{d.day}/{d.year}"
+                        rows = await cursor.fetchall()
+                        for row in rows:
+                            result_payload = {}
+                            if row[1]:
+                                try:
+                                    result_payload = json.loads(row[1])
+                                except Exception:
+                                    result_payload = {}
+                            if result_payload.get("ignore_for_cooldown"):
+                                continue
+                            if row[0]:
+                                act_node["last_run"] = row[0]
+                            break
+
+                    # Get Runs Today
+                    async with db.execute(
+                        """SELECT COUNT(*) FROM account_activity_logs 
+                           WHERE group_id = ? AND activity_id = ? AND status = 'SUCCESS'
+                           AND started_at LIKE ?""",
+                        (group_id, act_id, f"{today_prefix}%")
+                    ) as cursor2:
+                        count_row = await cursor2.fetchone()
+                        act_node["runs_today"] = count_row[0] if count_row else 0
+                        # Force JS date string match
+                        import time
+                        # In JS, toLocaleDateString() on windows is typically M/D/YYYY
+                        d = datetime.now()
+                        act_node["runs_today_date"] = f"{d.month}/{d.day}/{d.year}"
         except Exception as db_err:
             print(f"Error enriching activity config: {db_err}")
 

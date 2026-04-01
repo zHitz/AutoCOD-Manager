@@ -2307,6 +2307,7 @@ const WF3 = {
             cooldown_enabled: actConf.cooldown_enabled ?? defaults.cooldown_enabled,
             cooldown_minutes: actConf.cooldown_minutes ?? defaults.cooldown_minutes,
             cooldown_minutes_max: actConf.cooldown_minutes_max ?? defaults.cooldown_minutes_max ?? 0,
+            cooldown_reset_daily_utc: actConf.cooldown_reset_daily_utc ?? defaults.cooldown_reset_daily_utc ?? false,
             last_run: actConf.last_run || null
         };
     },
@@ -2317,7 +2318,7 @@ const WF3 = {
 
         if (!this._groupConfigs[groupId]) this._groupConfigs[groupId] = { version: 2, activities: {}, misc: {} };
         if (!this._groupConfigs[groupId].activities[activityId]) {
-            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60, cooldown_minutes_max: 0 };
+            this._groupConfigs[groupId].activities[activityId] = { enabled: false, config: {}, cooldown_enabled: false, cooldown_minutes: 60, cooldown_minutes_max: 0, cooldown_reset_daily_utc: false };
         }
 
         const actConf = this._groupConfigs[groupId].activities[activityId];
@@ -2328,7 +2329,7 @@ const WF3 = {
             const val = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? +el.value : el.value);
 
             // Map top-level cooldown fields to their proper places
-            if (key === 'cooldown_enabled' || key === 'cooldown_minutes' || key === 'cooldown_minutes_max') {
+            if (key === 'cooldown_enabled' || key === 'cooldown_minutes' || key === 'cooldown_minutes_max' || key === 'cooldown_reset_daily_utc') {
                 actConf[key] = val;
             } else {
                 actConf.config[key] = val;
@@ -2561,6 +2562,7 @@ const WF3 = {
         const cdEnabled = saved.cooldown_enabled || false;
         const cdMinutes = saved.cooldown_minutes !== undefined ? saved.cooldown_minutes : 60;
         const cdMinutesMax = saved.cooldown_minutes_max || 0;
+        const cdResetDailyUtc = !!saved.cooldown_reset_daily_utc;
         const lastRun = this._getLastRun(activityId, groupId);
         const lastRunStr = lastRun ? new Date(lastRun).toLocaleString() : 'Never';
         const runsToday = this._getRunsToday(activityId, groupId);
@@ -2573,6 +2575,9 @@ const WF3 = {
         const summaryCooldown = isOnCooldown
             ? this._formatCooldownRemaining(activityId, groupId)
             : (cdEnabled ? `${cdMinutesMax > cdMinutes ? `${cdMinutes}-${cdMinutesMax}` : cdMinutes} min` : 'Disabled');
+        const resetHint = cdResetDailyUtc
+            ? 'Also resets at 00:00 UTC (07:00 Vietnam).'
+            : 'Uses only the normal cooldown timer.';
 
         const cooldownHtml = `
             <section class="acv-cfg-section">
@@ -2609,11 +2614,30 @@ const WF3 = {
                             ${cdMinutesMax > cdMinutes ? `Randomized window between ${cdMinutes} and ${cdMinutesMax} minutes.` : 'Single fixed cooldown duration.'}
                         </div>
                     </div>
+                    <div class="acv-cfg-card acv-cfg-card-control acv-cfg-card-toggle">
+                        <div class="acv-cfg-card-top">
+                            <div>
+                                <div class="acv-cfg-card-label">Reset At 00:00 UTC</div>
+                                <div class="acv-cfg-card-help">Optional cap: when the game day resets at 00:00 UTC, remaining cooldown drops to 0. It does not replace the normal cooldown.</div>
+                            </div>
+                            <label class="acv-switch">
+                                <input type="checkbox" data-cfgkey="cooldown_reset_daily_utc" ${cdResetDailyUtc ? 'checked' : ''} onchange="WF3.savePerActivityConfig('${activityId}',${groupId})">
+                                <span class="acv-switch-track"></span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
                 <div class="acv-cfg-meta-row">
                     <span>Last run: <strong id="acv-cfg-last-run">${lastRunStr}</strong></span>
                     <span>Runs today: <strong id="acv-cfg-runs-today">${runsToday}</strong></span>
                     <span>Effective state: <strong>${summaryCooldown}</strong></span>
+                    <span>${resetHint}</span>
+                </div>
+                <div style="display:flex; justify-content:flex-end; margin-top:12px;">
+                    <button class="btn btn-outline btn-sm" onclick="WF3.openCooldownResetModal('${activityId}', ${groupId})" style="display:inline-flex; align-items:center; gap:6px;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
+                        Reset Cooldown
+                    </button>
                 </div>
             </section>`;
 
@@ -2684,6 +2708,247 @@ const WF3 = {
             ${weightHtml}
         </div>
     </div>`;
+    },
+
+    async openCooldownResetModal(activityId, groupId) {
+        if (!this.di) await this._initDI();
+
+        const sys = this._systemActivities.find(a => a.id === activityId);
+        const groupResult = await this.di.groupRepo.getById(groupId);
+        if (!groupResult.ok) {
+            WfToast.show('e', 'Group Error', groupResult.error.message || 'Failed to load group.');
+            return;
+        }
+
+        const group = groupResult.data || {};
+        let accountIds = [];
+        if (Array.isArray(group.account_ids)) {
+            accountIds = group.account_ids;
+        } else {
+            try {
+                accountIds = JSON.parse(group.account_ids || '[]');
+            } catch (e) {
+                accountIds = [];
+            }
+        }
+        const targetsResult = await this.di.botRepo.getActivityCooldownTargets(groupId, activityId);
+        if (!targetsResult.ok) {
+            WfToast.show('e', 'Cooldown Error', targetsResult.error.message || 'Failed to load cooldown data.');
+            return;
+        }
+
+        const targetsPayload = targetsResult.data || {};
+        const accounts = Array.isArray(targetsPayload.accounts) ? targetsPayload.accounts : [];
+
+        let overlay = document.getElementById('wf-cooldown-reset-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'wf-cooldown-reset-overlay';
+            overlay.className = 'wf-fn-overlay';
+            document.body.appendChild(overlay);
+        }
+
+        const activityName = sys?.name || activityId;
+        const accountRows = accounts.length
+            ? accounts.map(acc => `
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); cursor:pointer;">
+                    <span style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <input type="checkbox" class="wf-reset-account-cb" value="${acc.account_id}" onchange="WF3._updateCooldownResetModalState()">
+                    <span style="display:flex; flex-direction:column; gap:2px; min-width:0;">
+                        <span style="font-size:13px; font-weight:600; color:var(--foreground);">${acc.lord_name || 'Unknown Account'}</span>
+                        <span style="font-size:11px; color:var(--muted-foreground);">ID ${acc.game_id || '—'}</span>
+                    </span>
+                    </span>
+                    <span style="flex-shrink:0; font-size:11px; font-weight:700; color:${acc.is_ready ? 'var(--emerald-600)' : 'var(--amber-600)'}; background:${acc.is_ready ? 'rgba(22, 163, 74, .08)' : 'rgba(245, 158, 11, .10)'}; border:1px solid ${acc.is_ready ? 'rgba(22, 163, 74, .18)' : 'rgba(245, 158, 11, .18)'}; padding:5px 8px; border-radius:999px;">
+                        ${acc.is_ready ? 'Ready' : `CD ${this._formatCD(acc.cooldown_remaining_sec || 0)}`}
+                    </span>
+                </label>
+            `).join('')
+            : '<div class="acv-empty-hint">No accounts found in this group.</div>';
+
+        overlay.innerHTML = `
+            <div class="acv-event-popup" style="width:min(720px, calc(100vw - 32px)); max-height:calc(100vh - 48px); overflow:auto;" onclick="event.stopPropagation()">
+                <div class="acv-event-popup-header">
+                    <div>
+                        <div class="acv-event-popup-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>
+                            Reset Cooldown
+                        </div>
+                        <div class="acv-event-popup-sub">${activityName} • ${group.name || `Group ${groupId}`}</div>
+                    </div>
+                    <button class="acv-event-popup-close" onclick="WF3.closeCooldownResetModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="acv-event-popup-body" style="display:flex; flex-direction:column; gap:14px;">
+                    <input type="hidden" id="wf-reset-activity-id" value="${activityId}">
+                    <input type="hidden" id="wf-reset-group-id" value="${groupId}">
+                    <div style="font-size:12px; color:var(--muted-foreground); line-height:1.5;">
+                        Manual reset only clears cooldown eligibility. It does not change workflow config or remove historical logs.
+                    </div>
+                    <div style="display:grid; gap:10px;">
+                        <label style="display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--surface); cursor:pointer;">
+                            <input type="radio" name="wf-reset-scope" value="group_all" checked onchange="WF3._updateCooldownResetModalState()">
+                            <span style="display:flex; flex-direction:column; gap:2px;">
+                                <span style="font-size:13px; font-weight:600; color:var(--foreground);">All accounts in current group</span>
+                                <span style="font-size:11px; color:var(--muted-foreground);">Reset this activity for every account in the selected group.</span>
+                            </span>
+                        </label>
+                        <label style="display:flex; gap:10px; align-items:flex-start; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--surface); cursor:pointer;">
+                            <input type="radio" name="wf-reset-scope" value="selected_accounts" onchange="WF3._updateCooldownResetModalState()">
+                            <span style="display:flex; flex-direction:column; gap:2px;">
+                                <span style="font-size:13px; font-weight:600; color:var(--foreground);">Selected accounts</span>
+                                <span style="font-size:11px; color:var(--muted-foreground);">Pick only the accounts that should become ready immediately.</span>
+                            </span>
+                        </label>
+                    </div>
+                    <div id="wf-reset-account-picker" style="display:none; border:1px solid var(--border); border-radius:12px; padding:12px; background:var(--card);">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;">
+                            <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600; color:var(--foreground); cursor:pointer;">
+                                <input type="checkbox" id="wf-reset-select-all" onchange="WF3._toggleCooldownResetAll(this.checked)">
+                                Select all
+                            </label>
+                            <span id="wf-reset-selection-count" style="font-size:11px; color:var(--muted-foreground);">0 selected</span>
+                        </div>
+                        <div style="display:grid; gap:8px; max-height:260px; overflow:auto;">
+                            ${accountRows}
+                        </div>
+                    </div>
+                    <div id="wf-reset-summary" style="font-size:12px; color:var(--muted-foreground); line-height:1.5;"></div>
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
+                        <button class="btn btn-ghost btn-sm" onclick="WF3.closeCooldownResetModal()">Cancel</button>
+                        <button class="btn btn-primary btn-sm" id="wf-reset-submit-btn" onclick="WF3.submitCooldownReset()">Reset Cooldown</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        overlay.onclick = (e) => {
+            if (e.target === overlay) this.closeCooldownResetModal();
+        };
+        overlay.classList.add('visible');
+        this._updateCooldownResetModalState();
+    },
+
+    closeCooldownResetModal() {
+        const overlay = document.getElementById('wf-cooldown-reset-overlay');
+        if (overlay) overlay.classList.remove('visible');
+    },
+
+    _toggleCooldownResetAll(checked) {
+        document.querySelectorAll('.wf-reset-account-cb').forEach(cb => {
+            cb.checked = checked;
+        });
+        this._updateCooldownResetModalState();
+    },
+
+    _updateCooldownResetModalState() {
+        const modeEl = document.querySelector('input[name="wf-reset-scope"]:checked');
+        const mode = modeEl ? modeEl.value : 'group_all';
+        const picker = document.getElementById('wf-reset-account-picker');
+        const countEl = document.getElementById('wf-reset-selection-count');
+        const summaryEl = document.getElementById('wf-reset-summary');
+        const submitBtn = document.getElementById('wf-reset-submit-btn');
+        const selectedBoxes = Array.from(document.querySelectorAll('.wf-reset-account-cb:checked'));
+        const selectedCount = selectedBoxes.length;
+
+        if (picker) picker.style.display = mode === 'selected_accounts' ? 'block' : 'none';
+        if (countEl) countEl.textContent = `${selectedCount} selected`;
+        if (submitBtn) submitBtn.disabled = mode === 'selected_accounts' && selectedCount === 0;
+
+        const activityId = document.getElementById('wf-reset-activity-id')?.value || '';
+        const activityName = this._systemActivities.find(a => a.id === activityId)?.name || activityId;
+        if (summaryEl) {
+            summaryEl.textContent = mode === 'group_all'
+                ? `This will reset cooldown for "${activityName}" on every account in the current group.`
+                : `This will reset cooldown for "${activityName}" on ${selectedCount} selected account(s).`;
+        }
+
+        const selectAll = document.getElementById('wf-reset-select-all');
+        const totalBoxes = document.querySelectorAll('.wf-reset-account-cb').length;
+        if (selectAll) {
+            selectAll.checked = totalBoxes > 0 && selectedCount === totalBoxes;
+            selectAll.indeterminate = selectedCount > 0 && selectedCount < totalBoxes;
+        }
+    },
+
+    async submitCooldownReset() {
+        if (!this.di) await this._initDI();
+
+        const activityId = document.getElementById('wf-reset-activity-id')?.value;
+        const groupId = parseInt(document.getElementById('wf-reset-group-id')?.value || '0', 10);
+        const mode = document.querySelector('input[name="wf-reset-scope"]:checked')?.value || 'group_all';
+        const selectedAccountIds = Array.from(document.querySelectorAll('.wf-reset-account-cb:checked'))
+            .map(cb => parseInt(cb.value, 10))
+            .filter(Number.isFinite);
+
+        if (!activityId || !groupId) {
+            WfToast.show('e', 'Reset Failed', 'Missing reset target.');
+            return;
+        }
+        if (mode === 'selected_accounts' && selectedAccountIds.length === 0) {
+            WfToast.show('w', 'No Accounts', 'Select at least one account to reset.');
+            return;
+        }
+
+        const activityName = this._systemActivities.find(a => a.id === activityId)?.name || activityId;
+        const targetText = mode === 'group_all'
+            ? 'all accounts in the current group'
+            : `${selectedAccountIds.length} selected account(s)`;
+        if (!confirm(`Reset cooldown for "${activityName}" on ${targetText}?`)) {
+            return;
+        }
+
+        const result = await this.di.botRepo.resetActivityCooldown({
+            group_id: groupId,
+            activity_id: activityId,
+            scope: mode,
+            account_ids: mode === 'selected_accounts' ? selectedAccountIds : [],
+        });
+
+        if (!result.ok) {
+            let msg = result.error?.message || 'Failed to reset cooldown.';
+            if (Array.isArray(result.error?.blocked_accounts) && result.error.blocked_accounts.length > 0) {
+                msg += ` Blocked accounts: ${result.error.blocked_accounts.join(', ')}`;
+            }
+            WfToast.show('e', 'Reset Failed', msg);
+            this.addBotLog('err', `✕ Reset cooldown failed for ${activityName}: ${msg}`);
+            return;
+        }
+
+        const payload = result.data || {};
+        const affectedAccountIds = payload.affected_account_ids || [];
+        await this._loadConfigFromBackend(groupId);
+        const cfg = this._groupConfigs[groupId];
+        if (mode === 'group_all' && cfg?.activities?.[activityId]) {
+            cfg.activities[activityId].last_run = null;
+        }
+
+        if (this.activitySelectedGroupId === groupId) {
+            this.renderActivitiesForGroup(groupId);
+            this.renderMiscForGroup(groupId);
+            if (this._currentConfigActivityId === activityId) {
+                this.showActivityConfig(activityId, groupId);
+            }
+            await this._refreshSelectedGroupStatus();
+        }
+
+        if (this._monitorGroupId === groupId) {
+            await this._refreshMonitor();
+            if (
+                this._monitorSelectedAccountId &&
+                (mode === 'group_all' || affectedAccountIds.includes(Number(this._monitorSelectedAccountId)))
+            ) {
+                await this._onMonitorAccountClick(this._monitorSelectedAccountId);
+            }
+        }
+
+        this.closeCooldownResetModal();
+        const affectedText = mode === 'group_all'
+            ? `all accounts in group ${groupId}`
+            : `${affectedAccountIds.length} account(s)`;
+        this.addBotLog('ok', `✓ Cooldown reset for ${activityName} on ${affectedText}.`);
+        WfToast.show('s', 'Cooldown Reset', `Reset completed for ${affectedText}.`);
     },
 
     _getEnabledSubEventCount(activityId, groupId) {

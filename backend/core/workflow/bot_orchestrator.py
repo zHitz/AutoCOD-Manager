@@ -9,6 +9,7 @@ from backend.core.workflow import (
     workflow_registry,
     execution_log,
 )
+from backend.core.workflow.cooldown_utils import apply_daily_reset_cap
 from backend.core.workflow.workflow_registry import ACTIVITY_REGISTRY
 import uuid
 from backend.core.workflow.state_detector import GameStateDetector
@@ -303,7 +304,13 @@ class BotOrchestrator:
                 int(acc_id), act_id_or_name
             )
             effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
-            if last_act_run <= 0 or (now - last_act_run) >= effective_cd:
+            remaining_cd = apply_daily_reset_cap(
+                last_run_epoch=last_act_run,
+                effective_cooldown_sec=effective_cd,
+                now_epoch=now,
+                reset_at_utc_midnight=bool(act_cfg.get("cooldown_reset_daily_utc", False)),
+            )
+            if last_act_run <= 0 or remaining_cd <= 0:
                 # Never run before OR cooldown expired → runnable
                 has_any_runnable = True
                 break
@@ -337,7 +344,13 @@ class BotOrchestrator:
                         int(acc_id), act_id
                     )
                     effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
-                    if last_act_run > 0 and (now - last_act_run) < effective_cd:
+                    remaining_cd = apply_daily_reset_cap(
+                        last_run_epoch=last_act_run,
+                        effective_cooldown_sec=effective_cd,
+                        now_epoch=now,
+                        reset_at_utc_midnight=bool(act_cfg.get("cooldown_reset_daily_utc", False)),
+                    )
+                    if last_act_run > 0 and remaining_cd > 0:
                         is_on_cd = True
 
             if weight == "heavy":
@@ -381,7 +394,12 @@ class BotOrchestrator:
                 if last_run <= 0:
                     return 0  # Never run → ready now
                 effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
-                remaining = effective_cd - (now - last_run)
+                remaining = apply_daily_reset_cap(
+                    last_run_epoch=last_run,
+                    effective_cooldown_sec=effective_cd,
+                    now_epoch=now,
+                    reset_at_utc_midnight=bool(act_cfg.get("cooldown_reset_daily_utc", False)),
+                )
                 if remaining <= 0:
                     return 0  # Already expired
                 min_remaining = min(min_remaining, remaining)
@@ -1161,9 +1179,18 @@ class BotOrchestrator:
                         if cd_minutes > 0:
                             last_act_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(acc_id), act_id_or_name)
                             effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
-                            if last_act_run > 0 and (time.time() - last_act_run) < effective_cd:
+                            now_epoch = time.time()
+                            remaining_cd = apply_daily_reset_cap(
+                                last_run_epoch=last_act_run,
+                                effective_cooldown_sec=effective_cd,
+                                now_epoch=now_epoch,
+                                reset_at_utc_midnight=bool(act_cfg.get("cooldown_reset_daily_utc", False)),
+                            )
+                            if last_act_run > 0 and remaining_cd > 0:
                                 cd_src = "dynamic" if dynamic_cd > 0 else "static"
-                                remain_m = round((effective_cd - (time.time() - last_act_run)) / 60, 1)
+                                if act_cfg.get("cooldown_reset_daily_utc"):
+                                    cd_src += "+daily_reset"
+                                remain_m = round(remaining_cd / 60, 1)
                                 print(f"[BotOrchestrator] Activity '{act_id_or_name}' on cooldown ({cd_src}: {effective_cd/60:.0f}m, {remain_m}m left) for Account {acc_id}. Skipping.")
                                 self.activity_statuses[act_id_or_name] = "skipped"
                                 await self.broadcast_state()
