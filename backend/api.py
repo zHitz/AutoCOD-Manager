@@ -8,7 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -444,6 +444,30 @@ async def get_latest_report(serial: str):
     return await database.get_latest_report(serial)
 
 
+@app.get("/api/reports/accounts/timeseries")
+async def get_account_timeseries(
+    game_ids: str = Query(..., description="Comma-separated game IDs"),
+    metric: str = Query(...),
+    from_: str = Query(..., alias="from"),
+    to: str = Query(...),
+    bucket: str = Query("hour"),
+):
+    """Get normalized account timeseries data for the Report page."""
+    parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="game_ids is required")
+    try:
+        return await database.get_account_timeseries(
+            game_ids=parsed_ids,
+            metric=metric,
+            from_iso=from_,
+            to_iso=to,
+            bucket=bucket,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 # ──────────────────────────────────────────────
 # Config Endpoints
 # ──────────────────────────────────────────────
@@ -729,6 +753,7 @@ async def create_account(body: dict):
             game_id=game_id,
             emulator_index=emu_index,
             lord_name=body.get("lord_name", ""),
+            lord_name_locked=1 if body.get("lord_name_locked") else 0,
             power=float(body.get("power", 0)),
             login_method=body.get("login_method", ""),
             email=body.get("email", ""),

@@ -63,6 +63,7 @@ export class ActivitySelectionPolicy {
             cooldown_enabled: actConf.cooldown_enabled ?? defaults.cooldown_enabled,
             cooldown_minutes: actConf.cooldown_minutes ?? defaults.cooldown_minutes,
             cooldown_minutes_max: actConf.cooldown_minutes_max ?? defaults.cooldown_minutes_max ?? 0,
+            cooldown_reset_daily_utc: actConf.cooldown_reset_daily_utc ?? defaults.cooldown_reset_daily_utc ?? false,
             last_run: actConf.last_run || null
         };
     }

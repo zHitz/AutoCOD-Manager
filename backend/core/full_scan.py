@@ -12,11 +12,16 @@ from backend.core.macro_replay import _get_adb_serial
 
 # Track scan state
 _running_scans = {}
+_scan_controls = {}
 _lock = threading.Lock()
 
 WORK_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "scan_captures"
 )
+
+
+class _ScanCancelled(Exception):
+    """Raised when a background scan is asked to stop cooperatively."""
 
 
 def _log_scan(
@@ -42,10 +47,33 @@ def _log_scan(
     print(" ".join(parts + [message]))
 
 
-def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
+def _resource_value(res_entry, key: str = "total") -> int:
+    if isinstance(res_entry, dict):
+        return int(res_entry.get(key, 0) or 0)
+    if isinstance(res_entry, (int, float)):
+        return int(res_entry)
+    return 0
+
+
+def _resolve_ocr_mode(scan_config: dict | None) -> str:
+    mode = str((scan_config or {}).get("ocr_mode") or "local_then_api").strip().lower()
+    if mode in {"local_then_api", "local_only", "api_only"}:
+        return mode
+    return "local_then_api"
+
+
+def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None, scan_config=None):
     """Background thread: runs full scan pipeline for one emulator."""
     serial = _get_adb_serial(emulator_index)
     key = f"scan-{emulator_index}"
+    ocr_mode = _resolve_ocr_mode(scan_config)
+    with _lock:
+        control = _scan_controls.get(key, {})
+    stop_event = control.get("stop_event")
+
+    def _raise_if_stopped(stage: str = ""):
+        if stop_event and stop_event.is_set():
+            raise _ScanCancelled(f"Scan stop requested{f' during {stage}' if stage else ''}.")
 
     try:
         start_time = time.time()
@@ -58,9 +86,11 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
                 "serial": serial,
                 "step": "starting",
                 "start_time": start_time,
+                "ocr_mode": ocr_mode,
             }
 
         def _broadcast(step, detail=""):
+            _raise_if_stopped(step)
             with _lock:
                 if key in _running_scans:
                     _running_scans[key]["step"] = step
@@ -92,6 +122,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
             emulator_name=emulator_name,
         )
 
+        _raise_if_stopped("startup")
         _broadcast("extracting_id", "Extracting Game ID from profile.")
 
         import os
@@ -122,6 +153,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
             )
 
             if core_actions.startup_to_lobby(serial, detector, APP_PACKAGE):
+                _raise_if_stopped("extracting_id")
                 _log_scan(
                     serial,
                     "INFO",
@@ -182,10 +214,12 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
             )
             raise RuntimeError("Game ID extraction failed. Aborting full scan.")
 
+        _raise_if_stopped("capturing")
         _broadcast("capturing", "Navigating and capturing screenshots.")
         from backend.core.screen_capture import run_full_capture_modern
 
         def progress_cb(phase, step, total):
+            _raise_if_stopped(f"capture:{phase}")
             _broadcast(
                 f"capturing ({step}/{total})",
                 f"Capture phase {step}/{total} started: {phase}",
@@ -209,60 +243,103 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
             emulator_name=emulator_name,
         )
 
+        from backend.core.local_scan_ocr import run_local_scan_ocr
         from backend.core.ocr_client import run_ocr
 
+        device_dir = os.path.dirname(pdf_path)
         ocr_result = None
-        max_ocr_retries = 3
-        for ocr_attempt in range(1, max_ocr_retries + 1):
+
+        if ocr_mode != "api_only":
+            _raise_if_stopped("local_ocr")
             _broadcast(
                 "ocr_processing",
-                f"Uploading PDF to OCR API (attempt {ocr_attempt}/{max_ocr_retries}).",
+                f"Running local OCR on captured screenshots (mode={ocr_mode}).",
             )
-            ocr_result = run_ocr(pdf_path)
+            ocr_result = run_local_scan_ocr(device_dir)
             if ocr_result["success"]:
                 _log_scan(
                     serial,
                     "INFO",
-                    f"OCR succeeded on attempt {ocr_attempt}/{max_ocr_retries}.",
+                    "Local OCR succeeded from captured screenshots.",
                     step="ocr_processing",
                     emulator_index=emulator_index,
                     emulator_name=emulator_name,
                 )
-                break
-            _log_scan(
-                serial,
-                "WARNING",
-                f"OCR attempt {ocr_attempt}/{max_ocr_retries} failed: {ocr_result['error']}",
-                step="ocr_processing",
-                emulator_index=emulator_index,
-                emulator_name=emulator_name,
-            )
-            if ocr_attempt < max_ocr_retries:
-                _broadcast(
-                    "ocr_retry",
-                    f"OCR failed, retrying ({ocr_attempt}/{max_ocr_retries}).",
+            elif ocr_mode == "local_only":
+                raise RuntimeError(
+                    f"Local OCR failed in local_only mode: {ocr_result['error']}"
                 )
-                time.sleep(2)
+            else:
+                _log_scan(
+                    serial,
+                    "WARNING",
+                    f"Local OCR failed or incomplete: {ocr_result['error']}. Falling back to OCR API.",
+                    step="ocr_processing",
+                    emulator_index=emulator_index,
+                    emulator_name=emulator_name,
+                )
 
-        if not ocr_result or not ocr_result["success"]:
-            raise RuntimeError(
-                f"OCR failed after {max_ocr_retries} attempts: {ocr_result['error']}"
-            )
+        if ocr_mode == "api_only" or (ocr_mode == "local_then_api" and not ocr_result["success"]):
+            api_result = None
+            max_ocr_retries = 3
+            for ocr_attempt in range(1, max_ocr_retries + 1):
+                _raise_if_stopped(f"ocr_api_attempt_{ocr_attempt}")
+                _broadcast(
+                    "ocr_processing",
+                    f"Uploading PDF to OCR API (attempt {ocr_attempt}/{max_ocr_retries}).",
+                )
+                api_result = run_ocr(pdf_path)
+                if api_result["success"]:
+                    _log_scan(
+                        serial,
+                        "INFO",
+                        f"OCR API succeeded on attempt {ocr_attempt}/{max_ocr_retries}.",
+                        step="ocr_processing",
+                        emulator_index=emulator_index,
+                        emulator_name=emulator_name,
+                    )
+                    break
+                _log_scan(
+                    serial,
+                    "WARNING",
+                    f"OCR API attempt {ocr_attempt}/{max_ocr_retries} failed: {api_result['error']}",
+                    step="ocr_processing",
+                    emulator_index=emulator_index,
+                    emulator_name=emulator_name,
+                )
+                if ocr_attempt < max_ocr_retries:
+                    _broadcast(
+                        "ocr_retry",
+                        f"OCR API failed, retrying ({ocr_attempt}/{max_ocr_retries}).",
+                    )
+                    time.sleep(2)
 
+            if api_result and api_result["success"]:
+                ocr_result = api_result
+            else:
+                fallback_error = api_result["error"] if api_result else (ocr_result or {}).get("error", "unknown OCR error")
+                if ocr_mode == "api_only":
+                    raise RuntimeError(f"OCR API failed in api_only mode: {fallback_error}")
+                raise RuntimeError(
+                    f"Local OCR failed and OCR API fallback failed: {fallback_error}"
+                )
+
+        _raise_if_stopped("parsing")
         _broadcast("parsing", "Parsing OCR results.")
 
         parsed_data = ocr_result["parsed"]
         raw_text = ocr_result["text"]
 
+        _raise_if_stopped("validating")
         _broadcast("validating", "Verifying OCR data integrity.")
 
         res = parsed_data.get("resources", {})
         total_resources = sum(
             [
-                res.get("gold", 0),
-                res.get("wood", 0),
-                res.get("ore", 0),
-                res.get("mana", 0),
+                _resource_value(res.get("gold", 0)),
+                _resource_value(res.get("wood", 0)),
+                _resource_value(res.get("ore", 0)),
+                _resource_value(res.get("mana", 0)),
             ]
         )
         power = parsed_data.get("power", 0)
@@ -343,7 +420,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
 
                 for key in ["gold", "wood", "ore", "mana"]:
                     prev_val = prev.get(key, 0) or 0
-                    if prev_val > 0 and res.get(key, 0) == 0:
+                    if prev_val > 0 and _resource_value(res.get(key, 0)) == 0:
                         _log_scan(
                             serial,
                             "WARNING",
@@ -352,7 +429,12 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
                             emulator_index=emulator_index,
                             emulator_name=emulator_name,
                         )
-                        parsed_data["resources"][key] = prev_val
+                        if isinstance(parsed_data["resources"].get(key), dict):
+                            parsed_data["resources"][key]["total"] = prev_val
+                            if not parsed_data["resources"][key].get("bag"):
+                                parsed_data["resources"][key]["bag"] = prev_val
+                        else:
+                            parsed_data["resources"][key] = prev_val
 
         except Exception as val_err:
             _log_scan(
@@ -364,6 +446,7 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
                 emulator_name=emulator_name,
             )
 
+        _raise_if_stopped("saving")
         _broadcast("saving", "Saving to database.")
         import asyncio
         from backend.storage.database import database
@@ -433,6 +516,25 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
             emulator_name=emulator_name,
         )
 
+    except _ScanCancelled as e:
+        _log_scan(
+            serial,
+            "WARNING",
+            str(e),
+            step="stopped",
+            emulator_index=emulator_index,
+            emulator_name=emulator_name,
+        )
+
+        with _lock:
+            _running_scans[key] = {
+                "status": "stopped",
+                "emulator_index": emulator_index,
+                "serial": serial,
+                "step": "stopped",
+                "error": str(e),
+            }
+
     except Exception as e:
         import traceback
 
@@ -464,17 +566,21 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None):
                     "error": str(e),
                 },
             )
+    finally:
+        with _lock:
+            _scan_controls.pop(key, None)
 
 
 def start_full_scan(
-    emulator_index: int, emulator_name: str = "", ws_callback=None
+    emulator_index: int, emulator_name: str = "", ws_callback=None, scan_config: dict | None = None
 ) -> dict:
     """Start a full scan for one emulator in a background thread."""
     key = f"scan-{emulator_index}"
+    ocr_mode = _resolve_ocr_mode(scan_config)
 
     with _lock:
         existing = _running_scans.get(key)
-        if existing and existing.get("status") == "running":
+        if existing and existing.get("status") in ("running", "stopping"):
             start_t = existing.get("start_time", 0)
             if time.time() - start_t > 1200:  # 20 minutes timeout
                 print(f"[FullScan] ⚠️ Zombie scan detected on #{emulator_index} (>20m). Forcing new scan.")
@@ -483,32 +589,65 @@ def start_full_scan(
                     "success": False,
                     "error": f"Scan already running on #{emulator_index}",
                 }
-        # Clear previous completed/failed scan state for this emulator
-        if existing and existing.get("status") in ("completed", "failed"):
+        # Clear previous terminal scan state for this emulator
+        if existing and existing.get("status") in ("completed", "failed", "stopped"):
             del _running_scans[key]
+        stop_event = threading.Event()
+        _scan_controls[key] = {"stop_event": stop_event, "thread": None}
 
     thread = threading.Thread(
         target=_scan_worker,
-        args=(emulator_index, emulator_name, ws_callback),
+        args=(emulator_index, emulator_name, ws_callback, scan_config),
         daemon=True,
     )
+    with _lock:
+        if key in _scan_controls:
+            _scan_controls[key]["thread"] = thread
     thread.start()
 
     return {
         "success": True,
         "emulator_index": emulator_index,
         "serial": _get_adb_serial(emulator_index),
+        "ocr_mode": ocr_mode,
     }
 
 
-def stop_scan(emulator_index: int) -> dict:
-    """Stop a running scan."""
+def stop_scan(emulator_index: int, wait_timeout: float = 0) -> dict:
+    """Request a running scan to stop cooperatively and optionally wait for exit."""
+    key = f"scan-{emulator_index}"
+    thread = None
+    with _lock:
+        control = _scan_controls.get(key)
+        status = _running_scans.get(key)
+        if control:
+            control["stop_event"].set()
+            thread = control.get("thread")
+        if status and status.get("status") == "running":
+            _running_scans[key]["status"] = "stopping"
+            _running_scans[key]["step"] = "stopping"
+
+    if not control and not status:
+        return {"success": False, "error": "Scan not running"}
+
+    joined = False
+    if thread and wait_timeout > 0:
+        thread.join(wait_timeout)
+        joined = not thread.is_alive()
+
+    return {
+        "success": True,
+        "stopping": True,
+        "joined": joined,
+    }
+
+
+def is_scan_active(emulator_index: int) -> bool:
+    """Return True while the worker thread for this emulator is still alive."""
     key = f"scan-{emulator_index}"
     with _lock:
-        if key in _running_scans:
-            del _running_scans[key]
-            return {"success": True}
-    return {"success": False, "error": "Scan not running"}
+        thread = (_scan_controls.get(key) or {}).get("thread")
+    return bool(thread and thread.is_alive())
 
 
 def get_scan_status() -> list[dict]:

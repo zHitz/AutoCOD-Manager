@@ -409,6 +409,7 @@ class BotOrchestrator:
     async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int) -> bool:
         """Closes old emulator / game and boots new one. Returns True on success."""
         import logging
+        from backend.core import full_scan as full_scan_module
 
         print(
             f"[BotOrchestrator] Cross-Emu Swap: Switching from Emu {old_emu_index} to Emu {new_emu_index}"
@@ -417,6 +418,17 @@ class BotOrchestrator:
             f"Cross-Emu Swap: Switching from Emu {old_emu_index} to Emu {new_emu_index}"
         )
         log_cross_emu_swap(old_emu_index, new_emu_index, "start", True)
+
+        stop_result = await asyncio.to_thread(full_scan_module.stop_scan, old_emu_index, 15.0)
+        if stop_result.get("success"):
+            print(
+                f"[BotOrchestrator] Requested Full Scan stop on Emu {old_emu_index} "
+                f"before swap (joined={stop_result.get('joined', False)})."
+            )
+        else:
+            print(
+                f"[BotOrchestrator] No active Full Scan to stop on Emu {old_emu_index} before swap."
+            )
 
         print(f"[BotOrchestrator] Quitting Emu {old_emu_index}...")
         await asyncio.to_thread(quit_instance, old_emu_index)
@@ -1404,6 +1416,24 @@ class BotOrchestrator:
                 f"[BotOrchestrator] Execution cancelled via stop() for group {self.group_id}."
             )
             self.stop_requested = True  # Ensure this is flagged
+            try:
+                from backend.core import full_scan as full_scan_module
+
+                if 0 <= self.current_idx < len(self.queue):
+                    current_acc = self.queue[self.current_idx]
+                    current_emu = current_acc.get("emu_index")
+                    if current_emu is not None and full_scan_module.is_scan_active(int(current_emu)):
+                        stop_result = await asyncio.to_thread(
+                            full_scan_module.stop_scan,
+                            int(current_emu),
+                            15.0,
+                        )
+                        print(
+                            f"[BotOrchestrator] Requested Full Scan stop on Emu {current_emu} "
+                            f"during cancellation (joined={stop_result.get('joined', False)})."
+                        )
+            except Exception as stop_err:
+                print(f"[BotOrchestrator] Failed to stop Full Scan during cancellation: {stop_err}")
         except Exception as e:
             print(f"[BotOrchestrator] Fatal error in loop: {e}")
         finally:

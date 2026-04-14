@@ -70,7 +70,14 @@ def apply_windows_app_icon(window) -> None:
             "cod.ui.manager.desktop"
         )
 
-        hwnd = int(window.native.Handle)
+        native_handle = window.native.Handle
+        if hasattr(native_handle, "ToInt64"):
+            hwnd = native_handle.ToInt64()
+        elif hasattr(native_handle, "value"):
+            hwnd = native_handle.value
+        else:
+            hwnd = int(native_handle)
+
         image_icon = 1
         load_from_file = 0x00000010
         wm_seticon = 0x0080

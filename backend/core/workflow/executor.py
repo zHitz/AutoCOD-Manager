@@ -111,6 +111,37 @@ async def execute_recipe(
             else:
                 ws_callback("workflow_status", data)
 
+    async def _wait_for_scan_barrier(
+        current_fn_id: str, current_config: dict | None = None
+    ) -> bool:
+        """Block non-scan actions while a Full Scan worker is active on this emulator."""
+        if current_fn_id == "scan_full":
+            return True
+
+        wait_timeout_sec = int((current_config or {}).get("scan_barrier_timeout_sec", 1800))
+        started = asyncio.get_event_loop().time()
+        announced = False
+
+        while full_scan_module.is_scan_active(emulator_index):
+            if not announced:
+                await log(
+                    f"Waiting for active Full Scan on emulator #{emulator_index} before executing {current_fn_id}...",
+                    "warn",
+                )
+                announced = True
+
+            elapsed = asyncio.get_event_loop().time() - started
+            if elapsed > wait_timeout_sec:
+                await log(
+                    f"Timed out waiting for active Full Scan to finish before {current_fn_id}.",
+                    "err",
+                )
+                return False
+
+            await asyncio.sleep(2)
+
+        return True
+
     await status("RUNNING")
     await log(f"▶ Workflow execution started on {emulator_name}", "info")
 
@@ -127,6 +158,12 @@ async def execute_recipe(
 
             await log(f"[{i + 1}/{total_steps}] Executing {fn_id}...", "run")
             await progress(i, total_steps)
+
+            barrier_ok = await _wait_for_scan_barrier(fn_id, config)
+            if not barrier_ok:
+                all_ok = False
+                _activity_meta["error"] = "blocked by active full scan"
+                break
 
             # --- MAP FUNCTION IDS TO REAL ACTIONS ---
             ok = True
@@ -206,6 +243,7 @@ async def execute_recipe(
                     emulator_index,
                     emulator_name,
                     ws_callback=ws_callback,
+                    scan_config=config,
                 )
                 if result and not result.get("success", True):
                     await log(
@@ -215,7 +253,6 @@ async def execute_recipe(
                     ok = False
                 else:
                     await log("  Full Scan started, waiting for completion...", "info")
-                    scan_started_wall = time.time()
                     started_at = _aio.get_event_loop().time()
                     max_wait_sec = int(config.get("max_wait_sec", 900))
                     poll_count = 0
@@ -246,10 +283,10 @@ async def execute_recipe(
 
                         # Status can be inconsistent across producers; use both status and step.
                         if scan_info and (
-                            scan_status in ["completed", "failed", "error"]
-                            or scan_step in ["done", "failed", "error"]
+                            scan_status in ["completed", "failed", "error", "stopped"]
+                            or scan_step in ["done", "failed", "error", "stopped"]
                         ):
-                            if scan_status in ["failed", "error"] or scan_step in ["failed", "error"]:
+                            if scan_status in ["failed", "error", "stopped"] or scan_step in ["failed", "error", "stopped"]:
                                 await log(
                                     f"  Full scan failed: {scan_info.get('error')}",
                                     "err",
@@ -268,11 +305,25 @@ async def execute_recipe(
                             ok = False
                             break
 
-                        # Fallback: trust DB if a fresh completed snapshot exists for this emulator.
-                        # This avoids indefinite "running/validating" loops when in-memory scan state drifts.
-                        if poll_count % 3 == 0:
+                        # If the worker thread is already gone, trust only the final terminal state.
+                        # As a last resort, verify the DB snapshot AFTER the worker has exited.
+                        if seen_scan_entry and not full_scan_module.is_scan_active(emulator_index):
+                            if scan_info:
+                                final_status = str(scan_info.get("status", "")).lower()
+                                final_step = str(scan_info.get("step", "")).lower()
+                                if final_status in {"completed", "failed", "error", "stopped"} or final_step in {"done", "failed", "error", "stopped"}:
+                                    if final_status in {"failed", "error", "stopped"} or final_step in {"failed", "error", "stopped"}:
+                                        await log(
+                                            f"  Full scan ended after worker exit: {scan_info.get('error') or final_status or final_step}",
+                                            "err",
+                                        )
+                                        ok = False
+                                    else:
+                                        await log("  Full Scan completed", "ok")
+                                    break
+
                             try:
-                                from datetime import datetime
+                                from datetime import datetime, timezone
                                 from backend.storage.database import database as _db
 
                                 latest_scan = await _db.get_emulator_data(
@@ -282,26 +333,29 @@ async def execute_recipe(
                                     created_at_raw = latest_scan.get("created_at", "")
                                     created_ts = None
                                     if created_at_raw:
-                                        try:
-                                            from datetime import timezone
-                                            dt_str = str(created_at_raw).replace("Z", "")
-                                            time_obj = datetime.fromisoformat(dt_str)
-                                            if time_obj.tzinfo is None:
-                                                time_obj = time_obj.replace(tzinfo=timezone.utc)
-                                            created_ts = time_obj.timestamp()
-                                        except Exception:
-                                            created_ts = None
+                                        dt_str = str(created_at_raw).replace("Z", "")
+                                        time_obj = datetime.fromisoformat(dt_str)
+                                        if time_obj.tzinfo is None:
+                                            time_obj = time_obj.replace(tzinfo=timezone.utc)
+                                        created_ts = time_obj.timestamp()
 
-                                    if created_ts and created_ts >= (scan_started_wall - 30):
+                                    if created_ts and created_ts >= (time.time() - max_wait_sec - 60):
                                         await log(
-                                            "  Full Scan completed (verified from DB snapshot)",
+                                            "  Full Scan completed (verified after worker exit)",
                                             "ok",
                                         )
                                         break
-                            except Exception as db_check_err:
+                            except Exception as post_exit_db_err:
                                 print(
-                                    f"[{emulator_name}] scan_full DB completion check error: {db_check_err}"
+                                    f"[{emulator_name}] post-exit scan_full DB check error: {post_exit_db_err}"
                                 )
+
+                            await log(
+                                "  Full scan worker exited without a terminal status update.",
+                                "err",
+                            )
+                            ok = False
+                            break
 
                         # Guardrail: don't block workflow forever if scan state gets stuck.
                         elapsed = _aio.get_event_loop().time() - started_at
@@ -330,12 +384,20 @@ async def execute_recipe(
                     scan_key = f"scan-{emulator_index}"
                     with full_scan_module._lock:
                         leftover = full_scan_module._running_scans.get(scan_key)
-                        if leftover and leftover.get("status") == "running":
+                    if leftover and leftover.get("status") == "running":
+                        if full_scan_module.is_scan_active(emulator_index):
+                            print(
+                                f"[{emulator_name}] Scan worker for #{emulator_index} is still alive after poll exit; "
+                                f"keeping scan state until worker stops."
+                            )
+                        else:
                             print(
                                 f"[{emulator_name}] Clearing stale scan state for "
-                                f"#{emulator_index} (was still 'running' after poll exit)"
+                                f"#{emulator_index} (worker already exited)"
                             )
-                            del full_scan_module._running_scans[scan_key]
+                            with full_scan_module._lock:
+                                if scan_key in full_scan_module._running_scans:
+                                    del full_scan_module._running_scans[scan_key]
 
             # ── ADB Tap (registry id: adb_tap) ──
             elif fn_id == "adb_tap":
@@ -752,6 +814,20 @@ async def execute_recipe(
             result["dynamic_cooldown_sec"] = _activity_meta["dynamic_cooldown_sec"]
         return result
 
+    except asyncio.CancelledError:
+        if full_scan_module.is_scan_active(emulator_index):
+            await log("Cancellation requested. Stopping active Full Scan...", "warn")
+            stop_result = await asyncio.to_thread(
+                full_scan_module.stop_scan,
+                emulator_index,
+                15.0,
+            )
+            await log(
+                f"Active Full Scan stop requested (joined={stop_result.get('joined', False)}).",
+                "warn",
+            )
+        await status("ERROR")
+        raise
     except Exception as e:
         import traceback
         tb = traceback.format_exc()

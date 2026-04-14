@@ -102,7 +102,17 @@ const API = {
         if (serial) url += `&serial=${serial}`;
         return this.get(url);
     },
+    getAccounts() { return this.get('/api/accounts'); },
     getLatestReport(serial) { return this.get(`/api/reports/latest/${serial}`); },
+    getAccountTimeseries({ gameIds, metric, from, to, bucket }) {
+        const params = new URLSearchParams();
+        params.set('game_ids', (gameIds || []).join(','));
+        params.set('metric', metric);
+        params.set('from', from);
+        params.set('to', to);
+        params.set('bucket', bucket || 'hour');
+        return this.get(`/api/reports/accounts/timeseries?${params.toString()}`);
+    },
 
     // ── Config ──
     getConfig() { return this.get('/api/config'); },

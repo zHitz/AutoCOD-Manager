@@ -17,10 +17,11 @@ from backend.core.workflow.state_detector import GameStateDetector
 # Crop regions for each scan phase (x1, y1, x2, y2)
 REGIONS_MAP = {
     "profile": {"profile_area": (100, 320, 275, 500)},
-    "resources": {"resources_area": (300, 150, 725, 400)},
+    # Cover the full 4-row resource block used by coordinate-map ROIs.
+    "resources": {"resources_area": (300, 130, 740, 420)},
     "hall": {"hall_area": (500, 200, 750, 275)},
     "market": {"market_area": (500, 200, 750, 275)},
-    "pet_token": {"pet_token_area": (875, 0, 950, 30)},
+    "pet_token": {"pet_token_area": (875, 0, 960, 50)},
 }
 
 

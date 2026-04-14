@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     game_id         TEXT NOT NULL UNIQUE,           -- In-game player ID (primary identity)
     emulator_id     INTEGER,                        -- FK → emulators.id (nullable)
     lord_name       TEXT DEFAULT '',                 -- Synced from latest scan
+    lord_name_locked INTEGER DEFAULT 0,
     login_method    TEXT DEFAULT '',
     email           TEXT DEFAULT '',
     provider        TEXT DEFAULT 'Global',
@@ -473,6 +474,22 @@ def _ensure_debug_logs_resolve_columns(conn: sqlite3.Connection):
         print("[DB Migration] Added resolve columns to debug_logs")
 
 
+def _ensure_accounts_lock_columns(conn: sqlite3.Connection):
+    """Add manual-name lock columns to accounts if they are missing."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()]
+    added_any = False
+
+    if "lord_name_locked" not in cols:
+        conn.execute(
+            "ALTER TABLE accounts ADD COLUMN lord_name_locked INTEGER DEFAULT 0"
+        )
+        added_any = True
+
+    if added_any:
+        conn.commit()
+        print("[DB Migration] Added lord_name_locked column to accounts")
+
+
 # Database class
 # ──────────────────────────────────────────────
 
@@ -497,6 +514,7 @@ class Database:
         _migrate_v1_to_v2(conn)
         _migrate_v2_to_v3(conn)
         _ensure_debug_logs_resolve_columns(conn)
+        _ensure_accounts_lock_columns(conn)
 
         # Add required_runs column if missing (KPI support)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(task_template_items)").fetchall()]
@@ -614,8 +632,8 @@ class Database:
             cursor = await db.execute(
                 """INSERT INTO scan_snapshots
                    (emulator_id, scan_type, lord_name, power, hall_level,
-                    market_level, pet_token, scan_status, duration_ms, raw_ocr_text, game_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    market_level, pet_token, scan_status, duration_ms, raw_ocr_text, game_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     emu_id,
                     scan_type,
@@ -628,6 +646,7 @@ class Database:
                     scan_duration_ms,
                     raw_ocr_text,
                     game_id,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ),
             )
 
@@ -710,7 +729,8 @@ class Database:
             for res in res_rows:
                 res_dict = dict(res)
                 rtype = res_dict["resource_type"]
-                result[rtype] = res_dict.get("bag_value", 0)
+                result[rtype] = res_dict.get("total_value", 0)
+                result[f"{rtype}_bag"] = res_dict.get("bag_value", 0)
                 result[f"{rtype}_total"] = res_dict.get("total_value", 0)
                 result[f"{rtype}_bag_raw"] = res_dict.get("bag_raw", "")
                 result[f"{rtype}_total_raw"] = res_dict.get("total_raw", "")
@@ -746,7 +766,8 @@ class Database:
                 for res in await res_cursor.fetchall():
                     res_dict = dict(res)
                     rtype = res_dict["resource_type"]
-                    result[rtype] = res_dict.get("bag_value", 0)
+                    result[rtype] = res_dict.get("total_value", 0)
+                    result[f"{rtype}_bag"] = res_dict.get("bag_value", 0)
                     result[f"{rtype}_total"] = res_dict.get("total_value", 0)
                 results.append(result)
 
@@ -781,7 +802,8 @@ class Database:
                 for res in await res_cursor.fetchall():
                     res_dict = dict(res)
                     rtype = res_dict["resource_type"]
-                    result[rtype] = res_dict.get("bag_value", 0)
+                    result[rtype] = res_dict.get("total_value", 0)
+                    result[f"{rtype}_bag"] = res_dict.get("bag_value", 0)
                     result[f"{rtype}_total"] = res_dict.get("total_value", 0)
                 results.append(result)
 
@@ -825,7 +847,8 @@ class Database:
             for res in await res_cursor.fetchall():
                 rd = dict(res)
                 rtype = rd["resource_type"]
-                current[rtype] = rd.get("bag_value", 0)
+                current[rtype] = rd.get("total_value", 0)
+                current[f"{rtype}_bag"] = rd.get("bag_value", 0)
                 current[f"{rtype}_total"] = rd.get("total_value", 0)
 
             # 2. Get the closest scan that is AT LEAST 24h older
@@ -854,7 +877,8 @@ class Database:
                 for res in await res_cursor2.fetchall():
                     rd = dict(res)
                     rtype = rd["resource_type"]
-                    previous[rtype] = rd.get("bag_value", 0)
+                    previous[rtype] = rd.get("total_value", 0)
+                    previous[f"{rtype}_bag"] = rd.get("bag_value", 0)
                     previous[f"{rtype}_total"] = rd.get("total_value", 0)
 
                 # 3. Compute deltas
@@ -1547,6 +1571,7 @@ class Database:
         game_id: str,
         emulator_id: int | None = None,
         lord_name: str = "",
+        lord_name_locked: int = 0,
         login_method: str = "",
         email: str = "",
         provider: str = "Global",
@@ -1559,11 +1584,12 @@ class Database:
         async with self._get_conn() as db:
             cursor = await db.execute(
                 """INSERT INTO accounts
-                   (game_id, emulator_id, lord_name, login_method, email, provider, alliance, note, is_active, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   (game_id, emulator_id, lord_name, lord_name_locked, login_method, email, provider, alliance, note, is_active, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(game_id) DO UPDATE SET
                        emulator_id = COALESCE(excluded.emulator_id, accounts.emulator_id),
                        lord_name = CASE WHEN excluded.lord_name != '' THEN excluded.lord_name ELSE accounts.lord_name END,
+                       lord_name_locked = excluded.lord_name_locked,
                        login_method = CASE WHEN excluded.login_method != '' THEN excluded.login_method ELSE accounts.login_method END,
                        email = CASE WHEN excluded.email != '' THEN excluded.email ELSE accounts.email END,
                        provider = excluded.provider,
@@ -1575,6 +1601,7 @@ class Database:
                     game_id,
                     emulator_id,
                     lord_name,
+                    lord_name_locked,
                     login_method,
                     email,
                     provider,
@@ -1597,6 +1624,7 @@ class Database:
         game_id: str,
         emulator_index: int | None = None,
         lord_name: str = "",
+        lord_name_locked: int = 0,
         power: float = 0,
         login_method: str = "",
         email: str = "",
@@ -1621,6 +1649,7 @@ class Database:
             game_id=game_id,
             emulator_id=emu_id,
             lord_name=lord_name,
+            lord_name_locked=lord_name_locked,
             login_method=login_method,
             email=email,
             provider=provider,
@@ -1658,7 +1687,8 @@ class Database:
 
             # Check if game_id exists in accounts
             cursor = await db.execute(
-                "SELECT id FROM accounts WHERE game_id = ?", (game_id,)
+                "SELECT id, lord_name_locked FROM accounts WHERE game_id = ?",
+                (game_id,),
             )
             existing = await cursor.fetchone()
 
@@ -1669,7 +1699,11 @@ class Database:
                 await db.execute(
                     """UPDATE accounts SET
                         emulator_id = ?, is_active = 1,
-                        lord_name = CASE WHEN ? != '' THEN ? ELSE lord_name END,
+                        lord_name = CASE
+                            WHEN lord_name_locked = 1 THEN lord_name
+                            WHEN ? != '' THEN ?
+                            ELSE lord_name
+                        END,
                         provider = ?,
                         updated_at = ?
                        WHERE game_id = ?""",
@@ -1711,6 +1745,7 @@ class Database:
     def _attach_scan_defaults(self, acc: dict):
         """Set default scan fields on an account dict."""
         acc.setdefault("lord_name", acc.get("acc_lord_name", ""))
+        acc["lord_name_locked"] = int(acc.get("lord_name_locked", 0) or 0)
         acc["power"] = acc.get("power", 0)
         acc["hall_level"] = acc.get("hall_level", 0)
         acc["market_level"] = acc.get("market_level", 0)
@@ -1726,6 +1761,7 @@ class Database:
                 """SELECT
                        a.id as account_id, a.game_id,
                        a.lord_name as acc_lord_name,
+                       a.lord_name_locked,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
                        a.is_active,
                        a.created_at as account_created_at, a.updated_at,
@@ -1762,8 +1798,8 @@ class Database:
 
                 if scan_row:
                     scan = dict(scan_row)
-                    acc["lord_name"] = scan.get("lord_name", "") or acc.get(
-                        "acc_lord_name", ""
+                    acc["lord_name"] = acc.get("acc_lord_name", "") or scan.get(
+                        "lord_name", ""
                     )
                     acc["power"] = scan.get("power", 0)
                     acc["hall_level"] = scan.get("hall_level", 0)
@@ -1780,7 +1816,8 @@ class Database:
                     for res in await res_cur.fetchall():
                         rd = dict(res)
                         rtype = rd["resource_type"]
-                        acc[rtype] = rd.get("bag_value", 0)
+                        acc[rtype] = rd.get("total_value", 0)
+                        acc[f"{rtype}_bag"] = rd.get("bag_value", 0)
                         acc[f"{rtype}_total"] = rd.get("total_value", 0)
                 else:
                     acc["lord_name"] = acc.get("acc_lord_name", "")
@@ -1803,6 +1840,7 @@ class Database:
                 """SELECT
                        a.id as account_id, a.game_id,
                        a.lord_name as acc_lord_name,
+                       a.lord_name_locked,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
                        a.is_active,
                        a.created_at as account_created_at, a.updated_at,
@@ -1838,8 +1876,8 @@ class Database:
 
             if scan_row:
                 scan = dict(scan_row)
-                acc["lord_name"] = scan.get("lord_name", "") or acc.get(
-                    "acc_lord_name", ""
+                acc["lord_name"] = acc.get("acc_lord_name", "") or scan.get(
+                    "lord_name", ""
                 )
                 acc["power"] = scan.get("power", 0)
                 acc["hall_level"] = scan.get("hall_level", 0)
@@ -1854,7 +1892,8 @@ class Database:
                 for res in await res_cur.fetchall():
                     rd = dict(res)
                     rtype = rd["resource_type"]
-                    acc[rtype] = rd.get("bag_value", 0)
+                    acc[rtype] = rd.get("total_value", 0)
+                    acc[f"{rtype}_bag"] = rd.get("bag_value", 0)
                     acc[f"{rtype}_total"] = rd.get("total_value", 0)
             else:
                 acc["lord_name"] = acc.get("acc_lord_name", "")
@@ -1886,12 +1925,184 @@ class Database:
                     results.append(acc)
             return results
 
+    async def get_account_timeseries(
+        self,
+        game_ids: list[str],
+        metric: str,
+        from_iso: str,
+        to_iso: str,
+        bucket: str = "hour",
+    ) -> dict:
+        """Get normalized account timeseries data for report charts."""
+        valid_metrics = {
+            "power",
+            "gold",
+            "wood",
+            "ore",
+            "mana",
+            "pet_token",
+            "hall_level",
+            "market_level",
+        }
+        valid_buckets = {"raw", "hour", "day"}
+        metric = str(metric or "").strip().lower()
+        bucket = str(bucket or "").strip().lower()
+        if metric not in valid_metrics:
+            raise ValueError(f"Invalid metric: {metric}")
+        if bucket not in valid_buckets:
+            raise ValueError(f"Invalid bucket: {bucket}")
+
+        requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
+        if not requested_ids:
+            raise ValueError("game_ids is required")
+
+        try:
+            from_dt = datetime.fromisoformat(from_iso)
+            to_dt = datetime.fromisoformat(to_iso)
+        except ValueError as exc:
+            raise ValueError("Invalid from/to datetime") from exc
+
+        if from_dt >= to_dt:
+            raise ValueError("from must be earlier than to")
+
+        placeholders = ",".join("?" for _ in requested_ids)
+        resource_metric = metric in {"gold", "wood", "ore", "mana"}
+        series_by_game_id: dict[str, list[dict]] = {game_id: [] for game_id in requested_ids}
+
+        def bucket_key(created_at: str) -> str:
+            dt = datetime.fromisoformat(created_at)
+            if bucket == "day":
+                return dt.strftime("%Y-%m-%d")
+            if bucket == "hour":
+                return dt.strftime("%Y-%m-%d %H")
+            return created_at
+
+        def bucket_point(raw_points: list[dict]) -> list[dict]:
+            if bucket == "raw":
+                return raw_points
+            latest_by_bucket: dict[str, dict] = {}
+            for point in raw_points:
+                latest_by_bucket[bucket_key(point["timestamp"])] = point
+            return sorted(latest_by_bucket.values(), key=lambda item: item["timestamp"])
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
+            account_cursor = await db.execute(
+                f"""SELECT
+                        a.id AS account_id,
+                        a.game_id,
+                        a.lord_name AS account_lord_name,
+                        e.name AS emulator_name
+                    FROM accounts a
+                    LEFT JOIN emulators e ON a.emulator_id = e.id
+                    WHERE a.game_id IN ({placeholders})""",
+                tuple(requested_ids),
+            )
+            account_map = {row["game_id"]: dict(row) for row in await account_cursor.fetchall()}
+
+            if resource_metric:
+                points_cursor = await db.execute(
+                    f"""SELECT
+                            s.game_id,
+                            s.lord_name,
+                            s.created_at,
+                            COALESCE(r.total_value, 0) AS metric_value
+                        FROM scan_snapshots s
+                        LEFT JOIN scan_resources r
+                          ON r.snapshot_id = s.id
+                         AND r.resource_type = ?
+                        WHERE s.game_id IN ({placeholders})
+                          AND s.created_at >= ?
+                          AND s.created_at <= ?
+                        ORDER BY s.game_id ASC, s.created_at ASC""",
+                    (metric, *requested_ids, from_iso, to_iso),
+                )
+            else:
+                points_cursor = await db.execute(
+                    f"""SELECT
+                            s.game_id,
+                            s.lord_name,
+                            s.created_at,
+                            COALESCE(s.{metric}, 0) AS metric_value
+                        FROM scan_snapshots s
+                        WHERE s.game_id IN ({placeholders})
+                          AND s.created_at >= ?
+                          AND s.created_at <= ?
+                        ORDER BY s.game_id ASC, s.created_at ASC""",
+                    (*requested_ids, from_iso, to_iso),
+                )
+
+            for row in await points_cursor.fetchall():
+                point = dict(row)
+                game_id = point.get("game_id")
+                if game_id not in series_by_game_id:
+                    continue
+                series_by_game_id[game_id].append(
+                    {
+                        "timestamp": point.get("created_at", ""),
+                        "value": int(point.get("metric_value") or 0),
+                        "lord_name": point.get("lord_name") or "",
+                    }
+                )
+
+        series_payload = []
+        for game_id in requested_ids:
+            account = account_map.get(game_id, {})
+            raw_points = series_by_game_id.get(game_id, [])
+            points = bucket_point(raw_points)
+            lord_name = (
+                (points[-1]["lord_name"] if points and points[-1].get("lord_name") else "")
+                or account.get("account_lord_name")
+                or ""
+            )
+            values = [int(point.get("value") or 0) for point in points]
+            latest = values[-1] if values else None
+            first = values[0] if values else None
+
+            series_payload.append(
+                {
+                    "game_id": game_id,
+                    "lord_name": lord_name,
+                    "account_id": account.get("account_id"),
+                    "emulator_name": account.get("emulator_name") or "",
+                    "points": [
+                        {"timestamp": point["timestamp"], "value": int(point.get("value") or 0)}
+                        for point in points
+                    ],
+                    "summary": {
+                        "latest": latest,
+                        "delta_in_range": (latest - first) if latest is not None and first is not None else None,
+                        "min": min(values) if values else None,
+                        "max": max(values) if values else None,
+                        "last_sync_at": points[-1]["timestamp"] if points else None,
+                    },
+                }
+            )
+
+        return {
+            "metric": metric,
+            "bucket": bucket,
+            "range": {"from": from_dt.isoformat(), "to": to_dt.isoformat()},
+            "series": series_payload,
+        }
+
     async def update_account(self, game_id: str, **fields) -> bool:
         """Update specific account fields by game_id."""
-        allowed = {"login_method", "email", "provider", "alliance", "note", "lord_name"}
+        allowed = {
+            "login_method",
+            "email",
+            "provider",
+            "alliance",
+            "note",
+            "lord_name",
+            "lord_name_locked",
+        }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
+        if "lord_name_locked" in updates:
+            updates["lord_name_locked"] = 1 if updates["lord_name_locked"] else 0
         updates["updated_at"] = datetime.now().isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values())

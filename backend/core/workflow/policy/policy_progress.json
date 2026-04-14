@@ -9,40 +9,40 @@
     "last_col": 4
   },
   "2": {
-    "last_col": 4
+    "last_col": 6
   },
   "10": {
-    "last_col": 4
+    "last_col": 7
   },
   "9": {
-    "last_col": 5
+    "last_col": 7
   },
   "3": {
-    "last_col": 4
+    "last_col": 8
   },
   "5": {
-    "last_col": 4
+    "last_col": 5
   },
   "8": {
-    "last_col": 5
+    "last_col": 6
   },
   "6": {
-    "last_col": 4
-  },
-  "7": {
     "last_col": 5
   },
+  "7": {
+    "last_col": 7
+  },
   "4": {
-    "last_col": 4
+    "last_col": 7
   },
   "11": {
-    "last_col": 4
+    "last_col": 5
   },
   "15": {
     "last_col": 5
   },
   "18": {
-    "last_col": 5
+    "last_col": 9
   },
   "25": {
     "last_col": 4
@@ -54,10 +54,10 @@
     "last_col": 3
   },
   "17": {
-    "last_col": 6
+    "last_col": 9
   },
   "19": {
-    "last_col": 0
+    "last_col": 1
   },
   "default": {
     "last_col": 4
@@ -66,10 +66,10 @@
     "last_col": 0
   },
   "24": {
-    "last_col": 4
+    "last_col": 7
   },
   "21": {
-    "last_col": 4
+    "last_col": 9
   },
   "29": {
     "last_col": 0
@@ -84,9 +84,18 @@
     "last_col": 0
   },
   "39": {
-    "last_col": 0
+    "last_col": 6
   },
   "40": {
+    "last_col": 1
+  },
+  "38": {
+    "last_col": 5
+  },
+  "23": {
+    "last_col": 7
+  },
+  "48": {
     "last_col": 0
   }
 }

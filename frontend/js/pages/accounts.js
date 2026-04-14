@@ -15,18 +15,65 @@ const AccountsPage = {
     _comparisonCache: {},
     _sortField: null,
     _sortDirection: 'asc',
+    _displayTimeZone: 'Asia/Ho_Chi_Minh',
+
+    _toDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) {
+            return Number.isNaN(value.getTime()) ? null : value;
+        }
+        if (typeof value === 'string') {
+            const sqliteLocal = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+            if (sqliteLocal) {
+                const [, year, month, day, hour, minute, second] = sqliteLocal;
+                const localDate = new Date(
+                    Number(year),
+                    Number(month) - 1,
+                    Number(day),
+                    Number(hour),
+                    Number(minute),
+                    Number(second)
+                );
+                return Number.isNaN(localDate.getTime()) ? null : localDate;
+            }
+        }
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return null;
+        return dt;
+    },
+
+    _formatInTimeZone(value, options = {}) {
+        const dt = this._toDate(value);
+        if (!dt) return 'Never';
+        return new Intl.DateTimeFormat('vi-VN', {
+            timeZone: this._displayTimeZone,
+            ...options,
+        }).format(dt);
+    },
 
     formatDateTime(value) {
-        if (!value) return 'Never';
-        const dt = new Date(value);
-        if (Number.isNaN(dt.getTime())) return 'Never';
-        return dt.toLocaleString();
+        return this._formatInTimeZone(value, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+        });
+    },
+
+    formatDateOnly(value) {
+        return this._formatInTimeZone(value, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        });
     },
 
     _relativeTime(value) {
-        if (!value) return 'Never';
-        const dt = new Date(value);
-        if (Number.isNaN(dt.getTime())) return 'Never';
+        const dt = this._toDate(value);
+        if (!dt) return 'Never';
         const now = Date.now();
         const diffSec = Math.floor((now - dt.getTime()) / 1000);
         if (diffSec < 0) return 'Just now';
@@ -37,7 +84,7 @@ const AccountsPage = {
         if (diffHr < 24) return `${diffHr}h ago`;
         const diffDay = Math.floor(diffHr / 24);
         if (diffDay < 7) return `${diffDay}d ago`;
-        return dt.toLocaleDateString();
+        return this.formatDateOnly(dt);
     },
 
     _normalizeLoginMethod(method) {
@@ -95,6 +142,11 @@ const AccountsPage = {
             case 'name': return text(row.lord_name || '');
             case 'game_id': return text(row.game_id || '');
             case 'power': return Number(row.power || 0);
+            case 'hall_level': return Number(row.hall_level || 0);
+            case 'last_sync': {
+                const dt = this._toDate(row.last_scan_at);
+                return dt ? dt.getTime() : 0;
+            }
             case 'runtime': {
                 const rank = { '🟢 Running': 4, '🟡 Ready': 3, '⚪ Linked': 2, '🔴 Unlinked': 1 };
                 return rank[this._getRuntimeStatus(row).label] || 0;
@@ -146,8 +198,14 @@ const AccountsPage = {
         return `
             <style>
                 /* ── TABLE CORE ── */
-                .accounts-table { border-collapse: collapse; width: 100%; }
+                .accounts-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
                 .accounts-table th, .accounts-table td { white-space: nowrap; }
+                .accounts-table th:nth-last-child(2), .accounts-table td:nth-last-child(2) { padding-right: 22px !important; }
+                .accounts-table th:last-child, .accounts-table td:last-child {
+                    min-width: 82px;
+                    width: 82px;
+                    padding-right: 24px !important;
+                }
 
                 /* Frozen columns */
                 .freeze-col-1 { position: sticky; left: 0; z-index: 5; background: var(--card); border-right: 1px solid var(--border); }
@@ -364,7 +422,7 @@ const AccountsPage = {
                     display: inline-block; width: 5px; height: 5px; border-radius: 50%;
                     background: var(--primary); margin-bottom: 1px;
                 }
-                .field input, .field select, .field textarea {
+                .field input:not([type="checkbox"]), .field select, .field textarea {
                     background: var(--muted); border: 1px solid var(--border);
                     border-radius: 10px; padding: 11px 14px;
                     font-family: inherit; font-size: 13px; font-weight: 400;
@@ -372,11 +430,21 @@ const AccountsPage = {
                     transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
                     outline: none; appearance: none; -webkit-appearance: none; width: 100%;
                 }
-                .field input::placeholder, .field textarea::placeholder { color: var(--muted-foreground); opacity: 0.6; }
-                .field input:focus, .field select:focus, .field textarea:focus {
+                .field input:not([type="checkbox"])::placeholder, .field textarea::placeholder { color: var(--muted-foreground); opacity: 0.6; }
+                .field input:not([type="checkbox"]):focus, .field select:focus, .field textarea:focus {
                     border-color: rgba(var(--primary-rgb, 99, 102, 241), 0.5);
                     box-shadow: 0 0 0 3px rgba(var(--primary-rgb, 99, 102, 241), 0.1);
                     background: var(--card);
+                }
+                .field input[type="checkbox"] {
+                    appearance: auto;
+                    -webkit-appearance: checkbox;
+                    width: 16px;
+                    height: 16px;
+                    margin: 2px 0 0;
+                    accent-color: var(--primary);
+                    cursor: pointer;
+                    flex-shrink: 0;
                 }
                 .field select {
                     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%2364748b' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
@@ -666,8 +734,8 @@ const AccountsPage = {
                                 <th class="th-col th-sortable freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);" onclick="AccountsPage.sortBy('name')">Name ${this._sortIndicator('name')}</th>
                                 <th class="th-col th-sortable" style="border-left:1px solid var(--border);font-size:11px;" onclick="AccountsPage.sortBy('game_id')">Game ID ${this._sortIndicator('game_id')}</th>
                                 <th class="th-col th-sortable accent" style="text-align:right;" onclick="AccountsPage.sortBy('power')">Power ${this._sortIndicator('power')}</th>
-                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('runtime')">Runtime State ${this._sortIndicator('runtime')}</th>
-                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('provider')">Provider ${this._sortIndicator('provider')}</th>
+                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('hall_level')">Hall Level ${this._sortIndicator('hall_level')}</th>
+                                <th class="th-col th-sortable" style="text-align:center;" onclick="AccountsPage.sortBy('last_sync')">Last Sync ${this._sortIndicator('last_sync')}</th>
                                 <th class="th-col th-sortable" style="text-align:right;color:var(--yellow-600,#d97706);border-left:1px solid var(--border);" onclick="AccountsPage.sortBy('gold')">Gold ${this._sortIndicator('gold')}</th>
                                 <th class="th-col th-sortable" style="text-align:right;color:var(--emerald-600,#059669);" onclick="AccountsPage.sortBy('wood')">Wood ${this._sortIndicator('wood')}</th>
                                 <th class="th-col th-sortable" style="text-align:right;color:var(--indigo-500,#6366f1);" onclick="AccountsPage.sortBy('ore')">Ore ${this._sortIndicator('ore')}</th>
@@ -784,8 +852,9 @@ const AccountsPage = {
                             <span class="delta-icon">${isUp ? '↗' : '↘'}</span>${fmt}
                         </span>`;
             };
-            const runtimeStatus = this._getRuntimeStatus(row);
-            const statusBadge = `<span title="${runtimeStatus.title}" style="${runtimeStatus.style}">${runtimeStatus.label}</span>`;
+            const hallLevel = Number(row.hall_level || 0);
+            const lastSyncRelative = row.last_scan_at ? this._relativeTime(row.last_scan_at) : 'Never';
+            const lastSyncFull = row.last_scan_at ? this.formatDateTime(row.last_scan_at) : 'Never';
 
             return `
             <tr class="account-row${isSelected ? ' selected' : ''}" onclick="AccountsPage.openDetail(${row.account_id})">
@@ -799,8 +868,13 @@ const AccountsPage = {
                 <td class="freeze-col-3" style="padding:11px 14px;font-size:13px;font-weight:700;color:var(--primary);border-right:2px solid var(--border);">${ingameName}</td>
                 <td style="padding:11px 14px;font-size:12px;font-family:monospace;color:var(--muted-foreground);border-left:1px solid var(--border);">${isLegacy ? '<span style="color:var(--yellow-500)" title="Legacy account - needs Game ID">⚠️</span>' : gameId}</td>
                 <td style="padding:11px 14px;text-align:right;font-family:monospace;font-weight:700;font-size:13px;">${powFormatted}</td>
-                <td style="padding:11px 14px;text-align:center;">${statusBadge}</td>
-                <td style="padding:11px 14px;text-align:center;font-size:12px;">${this._normalizeProvider(row.provider)}</td>
+                <td style="padding:11px 14px;text-align:center;">
+                    <span style="display:inline-flex;min-width:38px;justify-content:center;padding:4px 10px;border-radius:999px;background:rgba(59,130,246,0.12);color:var(--primary);font-weight:700;font-size:12px;">${hallLevel}</span>
+                </td>
+                <td style="padding:11px 14px;text-align:center;font-size:12px;line-height:1.35;" title="${lastSyncFull}">
+                    <span style="display:block;font-weight:600;">${lastSyncRelative}</span>
+                    <span style="display:block;color:var(--muted-foreground);font-size:11px;">${lastSyncFull}</span>
+                </td>
                 <td style="padding:11px 14px;text-align:right;border-left:1px solid var(--border);">
                     <span class="resource-cell"><span class="resource-val" style="color:var(--yellow-600,#d97706);font-size:13px;">${goldFormatted}</span>${mkInlineDelta('gold')}</span>
                 </td>
@@ -978,6 +1052,7 @@ const AccountsPage = {
 
         const title = mode === 'add' ? 'Add New Account' : 'Edit Account';
         const isEdit = mode === 'edit';
+        const nameLocked = Number(acc.lord_name_locked || 0) === 1;
 
         return `
             <div class="panel-content-wrap" style="max-width: 780px; margin: 0 auto; padding: 20px;">
@@ -1027,14 +1102,24 @@ const AccountsPage = {
                                 </div>
                                 <div class="field">
                                     <label>In-game Lord Name</label>
-                                    <input type="text" id="form-lord-name" value="${acc.lord_name || ''}" ${isEdit ? 'disabled' : ''} placeholder=""/>
+                                    <input type="text" id="form-lord-name" value="${acc.lord_name || ''}" placeholder="Manual account name"/>
+                                </div>
+                                <div class="field">
+                                    <label>Name Protection</label>
+                                    <label style="display:flex;align-items:flex-start;gap:10px;padding:11px 14px;border:1px solid var(--border);border-radius:10px;background:var(--muted);text-transform:none;letter-spacing:normal;font-size:13px;font-weight:500;color:var(--foreground);">
+                                        <input type="checkbox" id="form-lord-name-locked" ${nameLocked ? 'checked' : ''} style="width:16px;height:16px;margin-top:2px;accent-color:var(--primary);">
+                                        <span style="display:flex;flex-direction:column;gap:4px;">
+                                            <span style="display:flex;align-items:center;gap:6px;">Lock name and ignore OCR overwrite</span>
+                                            <span class="hint" style="margin:0;">When enabled, Full Scan can still read OCR name, but it will not replace your saved account name.</span>
+                                        </span>
+                                    </label>
                                 </div>
                                 <div class="field">
                                     <label>Power (M)</label>
                                     <input type="number" step="0.1" id="form-power" value="${isEdit ? (acc.power ? (acc.power / 1000000).toFixed(1) : '') : ''}" ${isEdit ? 'disabled' : ''} placeholder="e.g. 14.9"/>
                                 </div>
                             </div>
-                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:6px;">Identity metrics synchronize automatically via Full Scan.</p>' : ''}
+                            ${isEdit ? '<p style="font-size:11px;color:var(--muted-foreground); margin-top:6px;">Power and other identity metrics still synchronize automatically via Full Scan. Name sync follows the protection toggle above.</p>' : ''}
                         </div>
 
                         <!-- Section: Login -->
@@ -1123,6 +1208,8 @@ const AccountsPage = {
 
         const gameIdStr = document.getElementById('form-game-id').value.trim();
         const emuIndex = document.getElementById('form-emu-index').value;
+        const lordName = document.getElementById('form-lord-name').value.trim();
+        const lordNameLocked = document.getElementById('form-lord-name-locked').checked;
         const loginMethod = this._normalizeLoginMethod(document.getElementById('form-login-method').value);
         const email = document.getElementById('form-email').value.trim();
         const provider = this._normalizeProvider(document.getElementById('form-provider').value);
@@ -1166,6 +1253,8 @@ const AccountsPage = {
         let payload = {
             game_id: gameIdStr,
             emu_index: emuIndex || null,
+            lord_name: lordName,
+            lord_name_locked: lordNameLocked,
             login_method: loginMethod,
             email: email,
             provider: provider,
@@ -1174,9 +1263,7 @@ const AccountsPage = {
         };
 
         if (mode === 'add') {
-            const lordName = document.getElementById('form-lord-name').value;
             const powerM = document.getElementById('form-power').value;
-            payload.lord_name = lordName;
             payload.power = powerM ? parseFloat(powerM) * 1000000 : 0;
 
             try {
@@ -1393,7 +1480,7 @@ const AccountsPage = {
         const accountsTotal = acc.provider ? 1 : 0;
         const displayAlliance = acc.alliance || 'No alliance';
         const syncRelative = this._relativeTime(acc.last_scan_at);
-        const syncFull = acc.last_scan_at ? new Date(acc.last_scan_at).toLocaleString() : 'Never';
+        const syncFull = acc.last_scan_at ? this.formatDateTime(acc.last_scan_at) : 'Never';
         const gameIdDisplay = acc.game_id || 'Unknown';
         const isLegacyId = gameIdDisplay.startsWith('LEGACY-');
 
@@ -1541,7 +1628,7 @@ const AccountsPage = {
     },
 
     _updateDeltaUI(delta, previous) {
-        const prevTime = previous ? new Date(previous.created_at).toLocaleDateString() : '';
+        const prevTime = previous ? this.formatDateOnly(previous.created_at) : '';
         // Update resource deltas
         ['gold', 'wood', 'ore', 'mana'].forEach(key => {
             const el = document.getElementById(`res-delta-${key}`);
@@ -1656,7 +1743,7 @@ const AccountsPage = {
             const cached = this._comparisonCache[acc.game_id];
             const delta = cached ? cached.delta : null;
             const prevScan = cached ? cached.previous : null;
-            const prevTimeLabel = prevScan ? new Date(prevScan.created_at).toLocaleDateString() : '';
+            const prevTimeLabel = prevScan ? this.formatDateOnly(prevScan.created_at) : '';
 
             const mkDelta = (key) => {
                 if (!delta || !delta[key] || delta[key] === 0) return '<span id="res-delta-' + key + '" class="delta-loading">—</span>';

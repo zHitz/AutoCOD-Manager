@@ -1276,26 +1276,45 @@ const WF3 = {
         }
         return 0;
     },
-    _isOnCooldown(activityId, groupId) {
+    _getCooldownRemainingMs(activityId, groupId) {
         const cfg = this.getPerActivityConfig(activityId, groupId);
-        if (!cfg.cooldown_enabled) return false;
-        const cdMinutes = cfg.cooldown_minutes || 0;
-        if (cdMinutes <= 0) return false;
+        if (!cfg.cooldown_enabled) return 0;
+
+        const cdMinutes = Number(cfg.cooldown_minutes) || 0;
+        if (cdMinutes <= 0) return 0;
+
         const lastRun = this._getLastRun(activityId, groupId);
-        if (!lastRun) return false;
-        const elapsedMs = Date.now() - lastRun;
-        return elapsedMs < cdMinutes * 60 * 1000;
+        if (!lastRun) return 0;
+
+        const nowMs = Date.now();
+        let remainMs = (cdMinutes * 60 * 1000) - (nowMs - lastRun);
+        if (remainMs <= 0) return 0;
+
+        if (cfg.cooldown_reset_daily_utc) {
+            const lastRunDate = new Date(lastRun);
+            const nextUtcResetMs = Date.UTC(
+                lastRunDate.getUTCFullYear(),
+                lastRunDate.getUTCMonth(),
+                lastRunDate.getUTCDate() + 1,
+                0, 0, 0, 0
+            );
+            remainMs = Math.min(remainMs, nextUtcResetMs - nowMs);
+        }
+
+        return Math.max(0, remainMs);
+    },
+    _isOnCooldown(activityId, groupId) {
+        return this._getCooldownRemainingMs(activityId, groupId) > 0;
     },
     _formatCooldownRemaining(activityId, groupId) {
-        const cfg = this.getPerActivityConfig(activityId, groupId);
-        const cdMinutes = cfg.cooldown_minutes || 0;
-        const lastRun = this._getLastRun(activityId, groupId);
-        if (!lastRun || cdMinutes <= 0) return '';
-        const remainMs = (cdMinutes * 60 * 1000) - (Date.now() - lastRun);
+        const remainMs = this._getCooldownRemainingMs(activityId, groupId);
         if (remainMs <= 0) return '';
         const h = Math.floor(remainMs / 3600000);
         const m = Math.floor((remainMs % 3600000) / 60000);
-        return h > 0 ? `${h}h ${m}m remaining` : `${m}m remaining`;
+        const s = Math.floor((remainMs % 60000) / 1000);
+        if (h > 0) return `${h}h ${m}m remaining`;
+        if (m > 0) return `${m}m remaining`;
+        return `${s}s remaining`;
     },
 
     // ── Session timer ──

@@ -12,7 +12,7 @@ ui_manager_dir = os.path.abspath(os.path.join(root_dir, "..", "UI_MANAGER"))
 sys.path.append(ui_manager_dir)
 
 from backend.config import config
-import adb_helper
+from backend.core.workflow import adb_helper
 from workflow import clipper_helper
 from workflow.state_detector import GameStateDetector
 from workflow.account_detector import AccountDetector
@@ -820,10 +820,39 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
             _human_delay(1.5)
             continue
 
-        # === CASE 4: Special screen detected — Press BACK immediately ===
+        # === CASE 4: Special screen detected — mostly BACK immediately ===
         if special:
-            print(f"[{serial}] -> Special screen '{special}' detected. Pressing BACK...")
             unknown_start_time = None
+
+            if special == "NOTE":
+                screen_before_back = result["screen"]
+                print(f"[{serial}] -> Special screen 'NOTE' detected. Trying BACK first...")
+                adb_helper.press_back(serial)
+                _human_delay(1.5)
+                detector._cache.invalidate()
+                note_after_back = detector.check_special_state(serial, target="NOTE")
+                screen_after_back = detector._cache.frame
+                screen_change_score = None
+                if (
+                    note_after_back == "NOTE"
+                    and screen_before_back is not None
+                    and screen_after_back is not None
+                    and screen_before_back.shape == screen_after_back.shape
+                ):
+                    screen_change_score = float(np.mean(cv2.absdiff(screen_before_back, screen_after_back)))
+                    print(
+                        f"[{serial}] -> NOTE persisted after BACK. Screen change score: {screen_change_score:.2f}"
+                    )
+
+                if note_after_back == "NOTE" and screen_change_score is not None and screen_change_score < 4.0:
+                    print(f"[{serial}] -> NOTE remained unchanged after BACK. Treating as network note. Tapping Confirm...")
+                    adb_helper.tap(serial, *NETWORK_CONFIRM_XY)
+                    _human_delay(2)
+                elif note_after_back == "NOTE":
+                    print(f"[{serial}] -> NOTE changed after BACK. Not tapping Confirm to avoid accidental game exit.")
+                continue
+
+            print(f"[{serial}] -> Special screen '{special}' detected. Pressing BACK...")
             adb_helper.press_back(serial)
             _human_delay(1.5)
             continue
@@ -2244,17 +2273,29 @@ def claim_scout_sentry_post(serial: str, detector: GameStateDetector) -> dict:
                 break
 
             _, qx, qy = qh_match
-            round_helps += 1
-            round_had_action = True
-            print(f"[{serial}] Quick Help #{round_helps} at ({qx}, {qy}). Tapping...")
+            print(f"[{serial}] Quick Help candidate #{round_helps + 1} at ({qx}, {qy}). Tapping...")
             adb_helper.tap(serial, qx, qy)
 
+            print(f"[{serial}] Dismissing Quick Help popup immediately at ({qx}, {qy})...")
+            adb_helper.tap(serial, qx, qy)
             _human_delay(5.0)
 
-            # Tap same position to dismiss popup
-            print(f"[{serial}] Dismissing popup at ({qx}, {qy})...")
+            print(f"[{serial}] Dismissing Quick Help popup again at ({qx}, {qy})...")
             adb_helper.tap(serial, qx, qy)
             _human_delay(2.0)
+
+            detector._screen_cache = None
+            qh_after = detector.check_activity(serial, target="SCOUT_QUICK_HELP_BTN", threshold=0.8)
+            if qh_after:
+                print(
+                    f"[{serial}] QUICK HELP still visible after tap. "
+                    "Treating as no-op (likely out of stamina) and stopping help loop."
+                )
+                break
+
+            round_helps += 1
+            round_had_action = True
+            print(f"[{serial}] Quick Help #{round_helps} confirmed by button disappearance.")
 
         total_helps += round_helps
 
@@ -3929,6 +3970,12 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
     print(f"[{serial}]   SEASON POLICIES — COMPLETE ({enacted_count} enacted)")
     print(f"[{serial}] ═══════════════════════════════════════════\n")
 
+    print(f"[{serial}] [POLICY] Cleanup: pressing BACK x2 to return to IN_CITY lobby...")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
+
     if result == "REPLENISH_LOCKED":
         return _ok(dynamic_cooldown_sec=86400)  # 24h — not enough points
 
@@ -4135,7 +4182,15 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
         _human_delay(1.0)
 
         # 3. Recursive upgrade from Hall
-        remaining_slots = _try_upgrade_or_go(serial, detector, remaining_slots, depth=0, max_depth=max_depth, result=result)
+        remaining_slots = _try_upgrade_or_go(
+            serial,
+            detector,
+            remaining_slots,
+            depth=0,
+            max_depth=max_depth,
+            result=result,
+            allow_go_paths=True,
+        )
 
     # 4. Fallback: if slots remain but Hall paths exhausted, try other constructions
     FALLBACK_CONSTRUCTIONS = ["MARKET", "RESEARCH_CENTER"]
@@ -4165,8 +4220,13 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
 
             # Try upgrade (reuse same recursive logic)
             remaining_slots = _try_upgrade_or_go(
-                serial, detector, remaining_slots,
-                depth=0, max_depth=max_depth, result=result
+                serial,
+                detector,
+                remaining_slots,
+                depth=0,
+                max_depth=max_depth,
+                result=result,
+                allow_go_paths=False,
             )
 
             if remaining_slots <= 0:
@@ -4188,6 +4248,7 @@ def _try_upgrade_or_go(
     depth: int,
     max_depth: int,
     result: dict,
+    allow_go_paths: bool = True,
 ) -> int:
     """
     Inner recursive function for upgrade_construction.
@@ -4282,6 +4343,13 @@ def _try_upgrade_or_go(
 
         return remaining_slots
 
+    if not allow_go_paths:
+        print(
+            f"[{serial}] [depth={depth}] No UPGRADE button on fallback construction. "
+            "Skipping GO paths to avoid looping back into Hall requirements."
+        )
+        return remaining_slots
+
     # --- Case 2: Check for GO button(s) ---
     print(f"[{serial}] [depth={depth}] No UPGRADE button. Checking for GO button(s)...")
 
@@ -4329,7 +4397,15 @@ def _try_upgrade_or_go(
         _human_delay(1.0)
 
         # Recurse into sub-construction
-        remaining_slots = _try_upgrade_or_go(serial, detector, remaining_slots, depth + 1, max_depth, result)
+        remaining_slots = _try_upgrade_or_go(
+            serial,
+            detector,
+            remaining_slots,
+            depth + 1,
+            max_depth,
+            result,
+            allow_go_paths=allow_go_paths,
+        )
 
         # If more paths to process AND slots available, go back to Hall
         if go_idx + 1 < len(go_positions) and remaining_slots > 0:
@@ -4842,6 +4918,8 @@ def claim_daily_vip_reward(serial: str, detector: GameStateDetector) -> dict:
 
     # Phase 5: Cleanup
     print(f"[{serial}] === CLAIM DAILY VIP REWARD COMPLETE ===")
+    adb_helper.press_back(serial)
+    _human_delay(1.0)
     adb_helper.press_back(serial)
     _human_delay(1.0)
     return _ok()

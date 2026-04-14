@@ -728,8 +728,21 @@ ACTIVITY_REGISTRY = [
             {"function_id": "startup_to_lobby", "config": {}},
             {"function_id": "scan_full", "config": {}},
         ],
-        "config_fields": [],
-        "defaults": {"cooldown_enabled": False, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
+        "config_fields": [
+            {
+                "key": "ocr_mode",
+                "label": "OCR Mode",
+                "type": "select",
+                "options": ["local_then_api", "local_only", "api_only"],
+                "default": "local_then_api",
+            },
+        ],
+        "defaults": {
+            "cooldown_enabled": False,
+            "cooldown_minutes": 60,
+            "cooldown_minutes_max": 0,
+            "ocr_mode": "local_then_api",
+        },
     },
     {
         "id": "catch_pet",
