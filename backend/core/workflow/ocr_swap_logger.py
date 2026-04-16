@@ -15,6 +15,7 @@ import os
 import time
 import json
 from datetime import datetime
+from backend.core.workflow.log_retention import prune_prefixed_daily_logs
 
 # Log directory: relative to this file → backend/core/workflow/logs/ocr_swap/
 _LOG_DIR = os.path.join(
@@ -24,6 +25,7 @@ _LOG_DIR = os.path.join(
 
 def _ensure_log_dir():
     os.makedirs(_LOG_DIR, exist_ok=True)
+    prune_prefixed_daily_logs(_LOG_DIR, prefix="ocr_swap_", retention_days=7)
 
 
 def log_ocr_swap_attempt(

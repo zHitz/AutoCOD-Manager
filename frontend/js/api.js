@@ -104,15 +104,53 @@ const API = {
     },
     getAccounts() { return this.get('/api/accounts'); },
     getLatestReport(serial) { return this.get(`/api/reports/latest/${serial}`); },
-    getAccountTimeseries({ gameIds, metric, from, to, bucket }) {
+    getAccountTimeseries({ gameIds, metric, from, to, bucket, aggregation, scopeType, scopeId, targetGrowthPct, targetDueAt }) {
         const params = new URLSearchParams();
         params.set('game_ids', (gameIds || []).join(','));
         params.set('metric', metric);
         params.set('from', from);
         params.set('to', to);
         params.set('bucket', bucket || 'hour');
+        if (aggregation) params.set('aggregation', aggregation);
+        if (scopeType) params.set('scope_type', scopeType);
+        if (scopeId != null && scopeId !== '') params.set('scope_id', String(scopeId));
+        if (targetGrowthPct != null && targetGrowthPct !== '') params.set('target_growth_pct', String(targetGrowthPct));
+        if (targetDueAt) params.set('target_due_at', targetDueAt);
         return this.get(`/api/reports/accounts/timeseries?${params.toString()}`);
     },
+    getReportAccountEvents({ gameIds, from, to }) {
+        const params = new URLSearchParams();
+        params.set('game_ids', (gameIds || []).join(','));
+        params.set('from', from);
+        params.set('to', to);
+        return this.get(`/api/reports/accounts/events?${params.toString()}`);
+    },
+    getReportTargets({ scopeType, scopeId, metric } = {}) {
+        const params = new URLSearchParams();
+        if (scopeType) params.set('scope_type', scopeType);
+        if (scopeId != null && scopeId !== '') params.set('scope_id', String(scopeId));
+        if (metric) params.set('metric', metric);
+        const query = params.toString();
+        return this.get(`/api/reports/targets${query ? `?${query}` : ''}`);
+    },
+    upsertReportTarget(payload) { return this.post('/api/reports/targets', payload || {}); },
+    deleteReportTarget(id) {
+        return fetch(`/api/reports/targets/${id}`, { method: 'DELETE' }).then(async (res) => {
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || err.detail || `HTTP Error ${res.status}: ${res.statusText}`);
+            }
+            return res.json();
+        });
+    },
+
+    
+    // ── Proxies ──
+    getProxies() { return this.get('/api/proxies'); },
+    addProxies(raw_lines) { return this.post('/api/proxies', { raw_lines }); },
+    deleteProxy(proxy_id) { return fetch(`${this.BASE}/api/proxies/${proxy_id}`, { method: 'DELETE' }).then(r => r.json()); },
+    assignProxy(proxy_id, emulator_indices) { return this.post('/api/proxies/assign', { proxy_id, emulator_indices }); },
+    deployProxies() { return this.post('/api/proxies/deploy'); },
 
     // ── Config ──
     getConfig() { return this.get('/api/config'); },
@@ -123,6 +161,16 @@ const API = {
     getAllEmulators() { return this.get('/api/emulators/all'); },
     launchEmulator(index) { return this.post(`/api/emulators/launch?index=${index}`); },
     quitEmulator(index) { return this.post(`/api/emulators/quit?index=${index}`); },
+    getWindowLayoutSettings() { return this.get('/api/emulators/window-layout/settings'); },
+    saveWindowLayoutSettings(settings) {
+        return this.post('/api/emulators/window-layout/settings', settings || {});
+    },
+    applyWindowLayout(indices) {
+        return this.post('/api/emulators/window-layout/apply', { indices: indices || null });
+    },
+    captureWindowLayout(indices) {
+        return this.post('/api/emulators/window-layout/capture', { indices: indices || null });
+    },
 
     // ── Macros ──
     getMacros() { return this.get('/api/macros/list'); },

@@ -61,6 +61,13 @@ class BotOrchestrator:
         self.misc_config = misc_config or {}
         self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
         self.continue_on_error = self.misc_config.get("continue_on_error", False)
+        raw_shutdown_threshold = self.misc_config.get("shutdown_emu_wait_threshold_min", 30)
+        self.shutdown_emu_on_long_wait_enabled = bool(
+            self.misc_config.get("shutdown_emu_on_long_wait_enabled", True)
+        )
+        self.shutdown_emu_wait_threshold_min = int(
+            30 if raw_shutdown_threshold is None else raw_shutdown_threshold
+        )
         self.package_name = core_actions.get_package_for_provider()  # default, auto-detected per-emu in _ensure_lobby
 
         self.main_task: asyncio.Task = None
@@ -156,6 +163,8 @@ class BotOrchestrator:
                 "cooldown_min": cooldown_min,
                 "swap_wait_threshold_min": self.misc_config.get("swap_wait_threshold_min", 0),
                 "skip_cooldown": self.skip_cooldown,
+                "shutdown_emu_on_long_wait_enabled": self.shutdown_emu_on_long_wait_enabled,
+                "shutdown_emu_wait_threshold_min": self.shutdown_emu_wait_threshold_min,
             },
             "smart_wait_active": self._smart_wait_info,
         }
@@ -405,6 +414,150 @@ class BotOrchestrator:
                 min_remaining = min(min_remaining, remaining)
 
         return min_remaining if min_remaining < float("inf") else 60
+
+    async def _earliest_activity_ready_sec_for_account(
+        self, acc_id: str, heavy_only: bool = False
+    ) -> float:
+        """Return the shortest remaining activity cooldown for one account."""
+        if self.skip_cooldown:
+            return 0
+
+        now = time.time()
+        min_remaining = float("inf")
+
+        for i, act in enumerate(self.activities):
+            act_cfg = act.get("config", {})
+            act_id = act.get("id", act.get("name", f"act_{i}"))
+            weight = act_cfg.get("weight") or self._weight_map.get(act_id, "heavy")
+            if heavy_only and weight != "heavy":
+                continue
+            if not act_cfg.get("cooldown_enabled"):
+                return 0
+            cd_minutes = act_cfg.get("cooldown_minutes", 0)
+            if cd_minutes <= 0:
+                return 0
+            last_run, dynamic_cd = await execution_log.get_effective_cooldown_sec(int(acc_id), act_id)
+            if last_run <= 0:
+                return 0
+            effective_cd = dynamic_cd if dynamic_cd > 0 else (cd_minutes * 60)
+            remaining = apply_daily_reset_cap(
+                last_run_epoch=last_run,
+                effective_cooldown_sec=effective_cd,
+                now_epoch=now,
+                reset_at_utc_midnight=bool(act_cfg.get("cooldown_reset_daily_utc", False)),
+            )
+            if remaining <= 0:
+                return 0
+            min_remaining = min(min_remaining, remaining)
+
+        return min_remaining if min_remaining < float("inf") else 60
+
+    async def _account_ready_after_sec(self, acc_id: str) -> float:
+        """Return seconds until this account would actually be runnable."""
+        if self.skip_cooldown:
+            return 0
+
+        now = time.time()
+        cooldown_min = int(self.misc_config.get("cooldown_min", 0) or 0)
+        last_run = self.last_run_times.get(str(acc_id), 0)
+        if cooldown_min > 0 and last_run > 0:
+            remaining_account_cd = (cooldown_min * 60) - (now - last_run)
+            if remaining_account_cd > 0:
+                return remaining_account_cd
+
+        if await self._all_activities_on_cooldown(acc_id):
+            return await self._earliest_activity_ready_sec_for_account(acc_id)
+
+        if await self._only_light_tasks_ready(acc_id):
+            return await self._earliest_activity_ready_sec_for_account(acc_id, heavy_only=True)
+
+        return 0
+
+    async def _next_same_emu_ready_sec(
+        self, emu_idx: int, exclude_acc_id: str | None = None
+    ) -> float | None:
+        """Return the earliest runnable time for any other account on the same emulator."""
+        min_remaining = float("inf")
+        found_same_emu = False
+
+        for acc in self.queue:
+            if int(acc.get("emu_index") or -1) != int(emu_idx):
+                continue
+            aid = str(acc.get("id"))
+            if exclude_acc_id is not None and aid == str(exclude_acc_id):
+                continue
+
+            found_same_emu = True
+            remaining = await self._account_ready_after_sec(aid)
+            if remaining <= 0:
+                return 0
+            min_remaining = min(min_remaining, remaining)
+
+        if not found_same_emu:
+            return None
+        return min_remaining if min_remaining < float("inf") else None
+
+    async def _stop_full_scan_for_emu(self, emu_idx: int, context: str) -> None:
+        from backend.core import full_scan as full_scan_module
+
+        if not full_scan_module.is_scan_active(int(emu_idx)):
+            return
+
+        stop_result = await asyncio.to_thread(full_scan_module.stop_scan, int(emu_idx), 15.0)
+        print(
+            f"[BotOrchestrator] Requested Full Scan stop on Emu {emu_idx} "
+            f"before shutdown ({context}) (joined={stop_result.get('joined', False)})."
+        )
+
+    async def _shutdown_emulator_instance(self, emu_idx: int, reason: str) -> None:
+        await self._stop_full_scan_for_emu(emu_idx, reason)
+        print(f"[BotOrchestrator] Shutting down Emu {emu_idx}: {reason}")
+        await asyncio.to_thread(quit_instance, int(emu_idx))
+
+    async def _maybe_shutdown_idle_emu(
+        self,
+        emu_idx: int,
+        exclude_acc_id: str | None = None,
+        context: str = "",
+    ) -> bool:
+        """Shutdown an emulator only when same-emulator work is not worth keeping alive."""
+        if not self.shutdown_emu_on_long_wait_enabled:
+            print(
+                f"[BotOrchestrator] Keeping Emu {emu_idx} alive: shutdown-on-long-wait disabled."
+            )
+            return False
+
+        threshold_sec = max(0, int(self.shutdown_emu_wait_threshold_min or 0)) * 60
+        same_emu_ready_sec = await self._next_same_emu_ready_sec(
+            emu_idx, exclude_acc_id=exclude_acc_id
+        )
+
+        if same_emu_ready_sec == 0:
+            print(
+                f"[BotOrchestrator] Keeping Emu {emu_idx} alive: same-emulator account ready now."
+            )
+            return False
+
+        if same_emu_ready_sec is None:
+            await self._shutdown_emulator_instance(
+                emu_idx,
+                f"{context}: no remaining runnable accounts on this emulator",
+            )
+            return True
+
+        if same_emu_ready_sec <= threshold_sec:
+            print(
+                f"[BotOrchestrator] Keeping Emu {emu_idx} alive: same-emulator account ready in "
+                f"{same_emu_ready_sec / 60:.1f}m (<= {threshold_sec / 60:.0f}m threshold)."
+            )
+            return False
+
+        await self._shutdown_emulator_instance(
+            emu_idx,
+            f"{context}: next same-emulator runnable account in "
+            f"{same_emu_ready_sec / 60:.1f}m (> {threshold_sec / 60:.0f}m threshold)",
+        )
+        return True
 
     async def _handle_cross_emu_swap(self, old_emu_index: int, new_emu_index: int) -> bool:
         """Closes old emulator / game and boots new one. Returns True on success."""
@@ -839,6 +992,15 @@ class BotOrchestrator:
                             print(
                                 f"[BotOrchestrator] All accounts on cooldown. Sleeping {sleep_min}m until next account is ready."
                             )
+                            shut_down = await self._maybe_shutdown_idle_emu(
+                                emu_idx,
+                                exclude_acc_id=acc_id,
+                                context=f"account-level global cooldown sleep {sleep_min}m",
+                            )
+                            if shut_down:
+                                last_emu_index = None
+                                last_account_id = None
+                                self._last_verified_account_id = None
                             await self._emit_timeline("\ud83d\udca4", f"All accounts on cooldown. Sleeping {sleep_min}m")
                             await self.broadcast_state()
 
@@ -874,6 +1036,15 @@ class BotOrchestrator:
                             f"[BotOrchestrator] All accounts on cooldown (activity-level). "
                             f"Sleeping {sleep_min}m until next activity is ready."
                         )
+                        shut_down = await self._maybe_shutdown_idle_emu(
+                            emu_idx,
+                            exclude_acc_id=acc_id,
+                            context=f"activity-level global cooldown sleep {sleep_min}m",
+                        )
+                        if shut_down:
+                            last_emu_index = None
+                            last_account_id = None
+                            self._last_verified_account_id = None
                         await self._emit_timeline("💤", f"All accounts on cooldown. Sleeping {sleep_min}m")
                         await self.broadcast_state()
                         while sleep_sec > 0 and not self.stop_requested:
@@ -1405,9 +1576,19 @@ class BotOrchestrator:
                 else:
                     self.account_statuses[acc_id] = "error"
 
-                last_emu_index = emu_idx
-                last_account_id = verified_account_id
-                self._last_verified_account_id = verified_account_id
+                shut_down = await self._maybe_shutdown_idle_emu(
+                    emu_idx,
+                    exclude_acc_id=acc_id,
+                    context=f"post-account completion for {acc_id}",
+                )
+                if shut_down:
+                    last_emu_index = None
+                    last_account_id = None
+                    self._last_verified_account_id = None
+                else:
+                    last_emu_index = emu_idx
+                    last_account_id = verified_account_id
+                    self._last_verified_account_id = verified_account_id
 
                 self._advance_queue()
 

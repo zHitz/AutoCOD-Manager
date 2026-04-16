@@ -50,16 +50,22 @@ def list_all_instances() -> list[dict]:
         try:
             idx = int(parts[0])
             name = parts[1]
+            top_win = int(parts[2]) if parts[2] not in ("", "-1") else None
+            bind_handle = int(parts[3]) if parts[3] not in ("", "-1") else None
             running = int(parts[4]) == 1
             pid = int(parts[5]) if parts[5] != "-1" else None
+            pid_player = int(parts[6]) if parts[6] != "-1" else None
             w, h, dpi = int(parts[7]), int(parts[8]), int(parts[9])
 
             instances.append(
                 {
                     "index": idx,
                     "name": name,
+                    "top_win": top_win,
+                    "bind_handle": bind_handle,
                     "running": running,
                     "pid": pid,
+                    "pid_player": pid_player,
                     "resolution": f"{w}x{h}",
                     "dpi": dpi,
                 }

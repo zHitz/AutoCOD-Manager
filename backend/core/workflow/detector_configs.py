@@ -78,6 +78,8 @@ ACTIVITY_CONFIGS = {
     "icon_markers/rss_center.png": "RSS_CENTER_MARKER",
     "activities/legion_view.png": "RSS_VIEW",
     "activities/legion_gather.png": "RSS_GATHER",
+    "activities/legion_recall.png": "RSS_RECALL",
+    "activities/legion_attack.png": "RSS_ATTACK",
     "activities/train_icon.png": "TRAINING_ICON",
     "activities/btn_train.png": "BTN_TRAIN",
     "activities/build.png": "RSS_BUILD",
@@ -134,6 +136,10 @@ ICON_CONFIGS = {
     "icon_markers/city_rss_wood_full.png": "CITY_RSS_WOOD",
     "icon_markers/city_rss_ore_full.png": "CITY_RSS_ORE",
     "icon_markers/city_rss_mana_full.png": "CITY_RSS_MANA",
+    "icon_markers/manual_rss_gold.png": "MANUAL_RSS_GOLD",
+    "icon_markers/manual_rss_wood.png": "MANUAL_RSS_WOOD",
+    "icon_markers/manual_rss_ore.png": "MANUAL_RSS_ORE",
+    "icon_markers/manual_rss_mana.png": "MANUAL_RSS_MANA",
     "icon_markers/heal_icon.png": "HEALING_ICON",
 }
 
@@ -210,7 +216,6 @@ ROI_HINTS = {
     "activities/create_legion.png":         (665, 70, 855, 165),
     "activities/create_legion_in_rss_center.png": (665, 70, 855, 165),
     "activities/legion_view.png":           (100, 100, 900, 540),
-    "activities/legion_gather.png":         (500, 300, 800, 500),
     "activities/build.png":                 (100, 100, 900, 540),
     "activities/train_icon.png":            (710, 410, 860, 500),
     "activities/btn_train.png":             (710, 410, 860, 500),

@@ -7,8 +7,9 @@ Schema v2: Normalized 6-table design with migration from v1.
 import aiosqlite
 import sqlite3
 import json
+import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from backend.config import config
 
 
@@ -182,7 +183,19 @@ CREATE TABLE IF NOT EXISTS account_groups (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL UNIQUE,
     account_ids     TEXT DEFAULT '[]',
+    cycle_target_minutes INTEGER DEFAULT 180,
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS account_targets (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_type          TEXT NOT NULL CHECK(scope_type IN ('account', 'group')),
+    scope_id            INTEGER NOT NULL,
+    metric              TEXT NOT NULL,
+    target_growth_pct   REAL NOT NULL DEFAULT 0,
+    due_at              TEXT NOT NULL,
+    created_at          TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes
@@ -194,6 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_macrorun_emu ON macro_runs(emulator_id, started_a
 CREATE INDEX IF NOT EXISTS idx_accounts_emu ON accounts(emulator_id);
 CREATE INDEX IF NOT EXISTS idx_accounts_game_id ON accounts(game_id);
 CREATE INDEX IF NOT EXISTS idx_snap_game_id ON scan_snapshots(game_id);
+CREATE INDEX IF NOT EXISTS idx_account_targets_scope_metric ON account_targets(scope_type, scope_id, metric, due_at);
 
 -- Activity execution history per account (v2 — fact table for Task page)
 CREATE TABLE IF NOT EXISTS account_activity_logs (
@@ -284,7 +298,63 @@ CREATE TABLE IF NOT EXISTS debug_logs (
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_debug_serial_time ON debug_logs(serial, created_at DESC);
+
+-- Proxies Setup
+CREATE TABLE IF NOT EXISTS proxies (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_config      TEXT NOT NULL,
+    generated_config TEXT NOT NULL,
+    name            TEXT DEFAULT '',
+    expiry_date     TEXT,
+    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS proxy_assignments (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    proxy_id        INTEGER NOT NULL,
+    emulator_index  INTEGER NOT NULL,
+    assigned_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (proxy_id) REFERENCES proxies(id) ON DELETE CASCADE,
+    UNIQUE(proxy_id, emulator_index)
+);
+CREATE INDEX IF NOT EXISTS idx_proxy_assignments_emu ON proxy_assignments(emulator_index);
 """
+
+
+def _parse_iso_utc(value: str | None) -> datetime:
+    """Parse ISO datetime and normalize to UTC."""
+    if not value:
+        raise ValueError("Invalid datetime")
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _to_iso_z(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _safe_pct_delta(first: float | int | None, latest: float | int | None) -> float | None:
+    if first is None or latest is None:
+        return None
+    baseline = max(abs(float(first)), 1.0)
+    return ((float(latest) - float(first)) / baseline) * 100.0
+
+
+def _stddev(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    return math.sqrt(variance)
 
 
 # ──────────────────────────────────────────────
@@ -490,6 +560,22 @@ def _ensure_accounts_lock_columns(conn: sqlite3.Connection):
         print("[DB Migration] Added lord_name_locked column to accounts")
 
 
+def _ensure_account_group_kpi_columns(conn: sqlite3.Connection):
+    """Add KPI-related columns to account_groups if they are missing."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(account_groups)").fetchall()]
+    added_any = False
+
+    if "cycle_target_minutes" not in cols:
+        conn.execute(
+            "ALTER TABLE account_groups ADD COLUMN cycle_target_minutes INTEGER DEFAULT 180"
+        )
+        added_any = True
+
+    if added_any:
+        conn.commit()
+        print("[DB Migration] Added cycle_target_minutes column to account_groups")
+
+
 # Database class
 # ──────────────────────────────────────────────
 
@@ -515,6 +601,7 @@ class Database:
         _migrate_v2_to_v3(conn)
         _ensure_debug_logs_resolve_columns(conn)
         _ensure_accounts_lock_columns(conn)
+        _ensure_account_group_kpi_columns(conn)
 
         # Add required_runs column if missing (KPI support)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(task_template_items)").fetchall()]
@@ -1932,6 +2019,11 @@ class Database:
         from_iso: str,
         to_iso: str,
         bucket: str = "hour",
+        aggregation: str = "last",
+        scope_type: str | None = None,
+        scope_id: int | None = None,
+        target_growth_pct: float | None = None,
+        target_due_at: str | None = None,
     ) -> dict:
         """Get normalized account timeseries data for report charts."""
         valid_metrics = {
@@ -1945,20 +2037,24 @@ class Database:
             "market_level",
         }
         valid_buckets = {"raw", "hour", "day"}
+        valid_aggregations = {"last", "avg", "min", "max", "sum", "delta"}
         metric = str(metric or "").strip().lower()
         bucket = str(bucket or "").strip().lower()
+        aggregation = str(aggregation or "").strip().lower() or "last"
         if metric not in valid_metrics:
             raise ValueError(f"Invalid metric: {metric}")
         if bucket not in valid_buckets:
             raise ValueError(f"Invalid bucket: {bucket}")
+        if aggregation not in valid_aggregations:
+            raise ValueError(f"Invalid aggregation: {aggregation}")
 
         requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
         if not requested_ids:
             raise ValueError("game_ids is required")
 
         try:
-            from_dt = datetime.fromisoformat(from_iso)
-            to_dt = datetime.fromisoformat(to_iso)
+            from_dt = _parse_iso_utc(from_iso)
+            to_dt = _parse_iso_utc(to_iso)
         except ValueError as exc:
             raise ValueError("Invalid from/to datetime") from exc
 
@@ -1968,22 +2064,158 @@ class Database:
         placeholders = ",".join("?" for _ in requested_ids)
         resource_metric = metric in {"gold", "wood", "ore", "mana"}
         series_by_game_id: dict[str, list[dict]] = {game_id: [] for game_id in requested_ids}
+        activity_summary: dict[str, dict] = {game_id: {} for game_id in requested_ids}
+        effective_scope_type = str(scope_type or "").strip().lower() or None
+        effective_scope_id = int(scope_id) if scope_id is not None else None
+        temp_target_due_at = _to_iso_z(_parse_iso_utc(target_due_at)) if target_due_at else None
+
+        if effective_scope_type not in {None, "account", "group"}:
+            raise ValueError("Invalid scope_type")
 
         def bucket_key(created_at: str) -> str:
-            dt = datetime.fromisoformat(created_at)
+            dt = _parse_iso_utc(created_at)
             if bucket == "day":
                 return dt.strftime("%Y-%m-%d")
             if bucket == "hour":
                 return dt.strftime("%Y-%m-%d %H")
-            return created_at
+            return _to_iso_z(dt) or created_at
 
-        def bucket_point(raw_points: list[dict]) -> list[dict]:
+        def aggregate_points(raw_points: list[dict]) -> list[dict]:
             if bucket == "raw":
-                return raw_points
-            latest_by_bucket: dict[str, dict] = {}
+                return [
+                    {
+                        "timestamp": point["timestamp"],
+                        "value": int(point.get("value") or 0),
+                        "lord_name": point.get("lord_name") or "",
+                    }
+                    for point in raw_points
+                ]
+
+            grouped: dict[str, list[dict]] = {}
             for point in raw_points:
-                latest_by_bucket[bucket_key(point["timestamp"])] = point
-            return sorted(latest_by_bucket.values(), key=lambda item: item["timestamp"])
+                grouped.setdefault(bucket_key(point["timestamp"]), []).append(point)
+
+            results: list[dict] = []
+            for items in grouped.values():
+                items = sorted(items, key=lambda item: item["timestamp"])
+                first_item = items[0]
+                last_item = items[-1]
+                values = [float(item.get("value") or 0) for item in items]
+                if aggregation == "avg":
+                    value = sum(values) / len(values)
+                elif aggregation == "min":
+                    value = min(values)
+                elif aggregation == "max":
+                    value = max(values)
+                elif aggregation == "sum":
+                    value = sum(values)
+                elif aggregation == "delta":
+                    value = float(last_item.get("value") or 0) - float(first_item.get("value") or 0)
+                else:
+                    value = float(last_item.get("value") or 0)
+
+                results.append(
+                    {
+                        "timestamp": last_item["timestamp"],
+                        "value": int(round(value)),
+                        "lord_name": last_item.get("lord_name") or first_item.get("lord_name") or "",
+                    }
+                )
+            return sorted(results, key=lambda item: item["timestamp"])
+
+        def expected_point_count(total_seconds: float) -> int:
+            if bucket == "day":
+                return max(1, int(math.floor(total_seconds / 86400.0)) + 1)
+            if bucket == "hour":
+                return max(1, int(math.floor(total_seconds / 3600.0)) + 1)
+            return 0
+
+        def build_quality_flags(
+            freshness_seconds: float | None,
+            completeness_ratio: float | None,
+            has_data_gap: bool,
+            is_outlier_candidate: bool,
+            expected_gap_seconds: float,
+        ) -> list[str]:
+            flags: list[str] = []
+            stale_threshold = max(expected_gap_seconds * 2.5, 12 * 3600)
+            if freshness_seconds is not None and freshness_seconds > stale_threshold:
+                flags.append("stale_data")
+            if has_data_gap:
+                flags.append("data_gap")
+            if completeness_ratio is not None and completeness_ratio < 0.6:
+                flags.append("low_coverage")
+            if is_outlier_candidate:
+                flags.append("outlier_jump")
+            return flags
+
+        def build_target_summary(
+            points: list[dict],
+            growth_pct: float | None,
+            coverage_ratio: float | None,
+            freshness_seconds: float | None,
+            effective_target_growth_pct: float | None,
+            effective_target_due_at: str | None,
+        ) -> dict:
+            target_summary = {
+                "target_growth_pct": effective_target_growth_pct,
+                "target_due_at": effective_target_due_at,
+                "target_progress_pct": None,
+                "gap_to_target_pct": None,
+                "projected_completion_date": None,
+                "target_status": "insufficient_data",
+                "forecast_enabled": False,
+                "eta_to_target": None,
+                "forecast_confidence": "low",
+            }
+            if effective_target_growth_pct is None:
+                return target_summary
+
+            target_summary["gap_to_target_pct"] = effective_target_growth_pct - (growth_pct or 0.0)
+            if effective_target_growth_pct != 0:
+                target_summary["target_progress_pct"] = ((growth_pct or 0.0) / effective_target_growth_pct) * 100.0
+
+            if len(points) < 2:
+                return target_summary
+
+            total_seconds = max((_parse_iso_utc(points[-1]["timestamp"]) - _parse_iso_utc(points[0]["timestamp"])).total_seconds(), 1.0)
+            growth_rate_per_second = (growth_pct or 0.0) / total_seconds
+            forecast_enabled = (
+                len(points) >= 3
+                and (coverage_ratio or 0.0) >= 0.5
+                and (freshness_seconds is None or freshness_seconds <= 36 * 3600)
+            )
+            target_summary["forecast_enabled"] = forecast_enabled
+            if (coverage_ratio or 0.0) >= 0.85 and len(points) >= 6:
+                target_summary["forecast_confidence"] = "high"
+            elif (coverage_ratio or 0.0) >= 0.65 and len(points) >= 4:
+                target_summary["forecast_confidence"] = "medium"
+
+            if not forecast_enabled or growth_rate_per_second <= 0:
+                if growth_pct is not None and effective_target_growth_pct <= growth_pct:
+                    target_summary["target_status"] = "on_track"
+                elif freshness_seconds is not None and freshness_seconds > 48 * 3600:
+                    target_summary["target_status"] = "off_track"
+                elif (coverage_ratio or 0.0) < 0.5:
+                    target_summary["target_status"] = "at_risk"
+                return target_summary
+
+            remaining_pct = effective_target_growth_pct - (growth_pct or 0.0)
+            if remaining_pct <= 0:
+                target_summary["target_status"] = "on_track"
+                return target_summary
+
+            eta_seconds = remaining_pct / growth_rate_per_second
+            eta_at = datetime.now(timezone.utc) + timedelta(seconds=eta_seconds)
+            target_summary["eta_to_target"] = int(round(eta_seconds))
+            target_summary["projected_completion_date"] = _to_iso_z(eta_at)
+
+            if effective_target_due_at:
+                due_at_dt = _parse_iso_utc(effective_target_due_at)
+                target_summary["target_status"] = "on_track" if eta_at <= due_at_dt else "at_risk"
+            else:
+                target_summary["target_status"] = "on_track"
+            return target_summary
 
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -2040,17 +2272,52 @@ class Database:
                     continue
                 series_by_game_id[game_id].append(
                     {
-                        "timestamp": point.get("created_at", ""),
+                        "timestamp": _to_iso_z(_parse_iso_utc(point.get("created_at", ""))) or point.get("created_at", ""),
                         "value": int(point.get("metric_value") or 0),
                         "lord_name": point.get("lord_name") or "",
                     }
                 )
 
+            activity_cursor = await db.execute(
+                f"""SELECT
+                        game_id,
+                        COUNT(*) AS run_count,
+                        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS fail_count,
+                        SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                        MAX(started_at) AS last_activity_at,
+                        MAX(CASE WHEN status = 'FAILED' THEN started_at ELSE NULL END) AS last_failure_at,
+                        MAX(CASE WHEN status = 'FAILED' THEN error_message ELSE '' END) AS last_failure_message
+                    FROM account_activity_logs
+                    WHERE game_id IN ({placeholders})
+                      AND started_at >= ?
+                      AND started_at <= ?
+                    GROUP BY game_id""",
+                (*requested_ids, _to_iso_z(from_dt) or from_iso, _to_iso_z(to_dt) or to_iso),
+            )
+            for row in await activity_cursor.fetchall():
+                activity_summary[row["game_id"]] = dict(row)
+
+            resolved_target = None
+            if effective_scope_type and effective_scope_id is not None:
+                target_cursor = await db.execute(
+                    """SELECT *
+                       FROM account_targets
+                       WHERE scope_type = ? AND scope_id = ? AND metric = ?
+                       ORDER BY due_at ASC, updated_at DESC
+                       LIMIT 1""",
+                    (effective_scope_type, effective_scope_id, metric),
+                )
+                target_row = await target_cursor.fetchone()
+                resolved_target = dict(target_row) if target_row else None
+
         series_payload = []
+        risk_feed: list[dict] = []
+        total_seconds = max((to_dt - from_dt).total_seconds(), 1.0)
+        expected_points = expected_point_count(total_seconds)
         for game_id in requested_ids:
             account = account_map.get(game_id, {})
             raw_points = series_by_game_id.get(game_id, [])
-            points = bucket_point(raw_points)
+            points = aggregate_points(raw_points)
             lord_name = (
                 (points[-1]["lord_name"] if points and points[-1].get("lord_name") else "")
                 or account.get("account_lord_name")
@@ -2059,6 +2326,100 @@ class Database:
             values = [int(point.get("value") or 0) for point in points]
             latest = values[-1] if values else None
             first = values[0] if values else None
+            deltas = [float(values[index] - values[index - 1]) for index in range(1, len(values))]
+            growth_pct = _safe_pct_delta(first, latest)
+            growth_rate_per_day = ((latest - first) / max(total_seconds / 86400.0, 1e-6)) if latest is not None and first is not None else None
+            growth_rate_per_hour = ((latest - first) / max(total_seconds / 3600.0, 1e-6)) if latest is not None and first is not None else None
+            last_sync_at = points[-1]["timestamp"] if points else None
+            freshness_seconds = None
+            if last_sync_at:
+                freshness_seconds = max((datetime.now(timezone.utc) - _parse_iso_utc(last_sync_at)).total_seconds(), 0.0)
+            raw_ts = [_parse_iso_utc(point["timestamp"]) for point in raw_points]
+            gaps = [
+                max((raw_ts[index] - raw_ts[index - 1]).total_seconds(), 0.0)
+                for index in range(1, len(raw_ts))
+            ]
+            if bucket == "day":
+                expected_gap_seconds = 86400.0
+            elif bucket == "hour":
+                expected_gap_seconds = 3600.0
+            elif gaps:
+                expected_gap_seconds = max(sum(gaps) / len(gaps), 1.0)
+            else:
+                expected_gap_seconds = max(total_seconds, 1.0)
+            largest_gap_seconds = max(gaps) if gaps else 0.0
+            has_data_gap = largest_gap_seconds > (expected_gap_seconds * 1.75) if gaps else False
+            completeness_ratio = (
+                min(len(points) / max(expected_points, 1), 1.0)
+                if bucket != "raw"
+                else (1.0 if points else 0.0)
+            )
+            volatility_std = _stddev(deltas)
+            is_outlier_candidate = False
+            if deltas:
+                mean_abs_delta = sum(abs(delta) for delta in deltas) / len(deltas)
+                std_abs_delta = _stddev([abs(delta) for delta in deltas]) or 0.0
+                threshold = mean_abs_delta + (std_abs_delta * 2.0)
+                is_outlier_candidate = any(abs(delta) > threshold and abs(delta) > 0 for delta in deltas)
+
+            activity = activity_summary.get(game_id) or {}
+            fail_count = int(activity.get("fail_count") or 0)
+            run_count = int(activity.get("run_count") or 0)
+            success_count = int(activity.get("success_count") or 0)
+            root_cause_hints: list[str] = []
+            if (growth_rate_per_day or 0) <= 0 and (completeness_ratio or 0.0) < 0.6:
+                root_cause_hints.append("missing_scan_coverage")
+            if (growth_rate_per_day or 0) <= 0 and (freshness_seconds or 0.0) > 48 * 3600:
+                root_cause_hints.append("stale_or_inactive_collection")
+            if fail_count > 0 and fail_count >= max(1, math.ceil(run_count * 0.3)):
+                root_cause_hints.append("operational_issue")
+            if is_outlier_candidate:
+                root_cause_hints.append("possible_outlier")
+
+            quality_flags = build_quality_flags(
+                freshness_seconds=freshness_seconds,
+                completeness_ratio=completeness_ratio,
+                has_data_gap=has_data_gap,
+                is_outlier_candidate=is_outlier_candidate,
+                expected_gap_seconds=expected_gap_seconds,
+            )
+
+            effective_target_growth = float(target_growth_pct) if target_growth_pct is not None else None
+            effective_target_due = temp_target_due_at
+            if resolved_target:
+                effective_target_growth = float(resolved_target.get("target_growth_pct") or 0)
+                effective_target_due = resolved_target.get("due_at") or effective_target_due
+
+            target_summary = build_target_summary(
+                points=points,
+                growth_pct=growth_pct,
+                coverage_ratio=completeness_ratio,
+                freshness_seconds=freshness_seconds,
+                effective_target_growth_pct=effective_target_growth,
+                effective_target_due_at=effective_target_due,
+            )
+
+            risk_level = "healthy"
+            if "operational_issue" in root_cause_hints or target_summary["target_status"] == "off_track":
+                risk_level = "high"
+            elif quality_flags or target_summary["target_status"] == "at_risk":
+                risk_level = "medium"
+
+            if risk_level != "healthy":
+                risk_feed.append(
+                    {
+                        "game_id": game_id,
+                        "lord_name": lord_name or game_id,
+                        "risk_level": risk_level,
+                        "reasons": root_cause_hints or quality_flags,
+                        "target_gap_pct": target_summary.get("gap_to_target_pct"),
+                        "recommended_action": (
+                            "Increase scan coverage and review recent failures."
+                            if "operational_issue" in root_cause_hints
+                            else "Refresh this account and monitor new scans."
+                        ),
+                    }
+                )
 
             series_payload.append(
                 {
@@ -2075,17 +2436,336 @@ class Database:
                         "delta_in_range": (latest - first) if latest is not None and first is not None else None,
                         "min": min(values) if values else None,
                         "max": max(values) if values else None,
-                        "last_sync_at": points[-1]["timestamp"] if points else None,
+                        "last_sync_at": last_sync_at,
                     },
+                    "derived_summary": {
+                        "growth_pct_in_range": growth_pct,
+                        "growth_rate_per_day": growth_rate_per_day,
+                        "growth_rate_per_hour": growth_rate_per_hour,
+                        "data_freshness_seconds": freshness_seconds,
+                        "point_count": len(points),
+                        "raw_point_count": len(raw_points),
+                        "expected_point_count": expected_points if bucket != "raw" else len(raw_points),
+                        "data_completeness_ratio": completeness_ratio,
+                        "has_data_gap": has_data_gap,
+                        "largest_gap_seconds": largest_gap_seconds,
+                        "volatility_std": volatility_std,
+                        "is_outlier_candidate": is_outlier_candidate,
+                        "activity_run_count": run_count,
+                        "activity_success_count": success_count,
+                        "activity_fail_count": fail_count,
+                        "last_activity_at": activity.get("last_activity_at"),
+                        "last_failure_at": activity.get("last_failure_at"),
+                        "last_failure_message": activity.get("last_failure_message") or "",
+                        "root_cause_hints": root_cause_hints,
+                        "risk_level": risk_level,
+                        **target_summary,
+                    },
+                    "quality_flags": quality_flags,
                 }
             )
 
         return {
             "metric": metric,
             "bucket": bucket,
-            "range": {"from": from_dt.isoformat(), "to": to_dt.isoformat()},
+            "aggregation": aggregation,
+            "range": {"from": _to_iso_z(from_dt), "to": _to_iso_z(to_dt)},
             "series": series_payload,
+            "timezone_context": {"source": "utc", "client_rendered": True},
+            "meta": {
+                "expected_point_count": expected_points,
+                "scope_type": effective_scope_type,
+                "scope_id": effective_scope_id,
+                "target": {
+                    "id": resolved_target.get("id") if resolved_target else None,
+                    "scope_type": resolved_target.get("scope_type") if resolved_target else effective_scope_type,
+                    "scope_id": resolved_target.get("scope_id") if resolved_target else effective_scope_id,
+                    "metric": resolved_target.get("metric") if resolved_target else metric,
+                    "target_growth_pct": float(resolved_target.get("target_growth_pct") or 0) if resolved_target else target_growth_pct,
+                    "due_at": resolved_target.get("due_at") if resolved_target else temp_target_due_at,
+                    "source": "persisted" if resolved_target else ("temporary" if target_growth_pct is not None else "none"),
+                },
+                "risk_feed": risk_feed,
+            },
         }
+
+    async def get_report_account_events(
+        self,
+        game_ids: list[str],
+        from_iso: str,
+        to_iso: str,
+    ) -> dict:
+        """Get report event overlays and operational summaries from activity logs."""
+        requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
+        if not requested_ids:
+            raise ValueError("game_ids is required")
+        from_dt = _parse_iso_utc(from_iso)
+        to_dt = _parse_iso_utc(to_iso)
+        if from_dt >= to_dt:
+            raise ValueError("from must be earlier than to")
+
+        placeholders = ",".join("?" for _ in requested_ids)
+        events_by_game_id: dict[str, list[dict]] = {game_id: [] for game_id in requested_ids}
+        summary_by_game_id: dict[str, dict] = {
+            game_id: {"activity_count": 0, "success_count": 0, "fail_count": 0, "execution_coverage": 0.0}
+            for game_id in requested_ids
+        }
+        total_days = max((to_dt - from_dt).total_seconds() / 86400.0, 1.0)
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""SELECT
+                        game_id,
+                        activity_name,
+                        status,
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        error_message
+                    FROM account_activity_logs
+                    WHERE game_id IN ({placeholders})
+                      AND started_at >= ?
+                      AND started_at <= ?
+                    ORDER BY started_at ASC, id ASC""",
+                (*requested_ids, _to_iso_z(from_dt), _to_iso_z(to_dt)),
+            )
+            for row in await cursor.fetchall():
+                payload = dict(row)
+                game_id = payload.get("game_id")
+                if game_id not in events_by_game_id:
+                    continue
+                started_at = _to_iso_z(_parse_iso_utc(payload.get("started_at")))
+                item = {
+                    "game_id": game_id,
+                    "timestamp": started_at,
+                    "label": payload.get("activity_name") or payload.get("status") or "Activity",
+                    "status": payload.get("status") or "",
+                    "duration_ms": int(payload.get("duration_ms") or 0),
+                    "error_message": payload.get("error_message") or "",
+                }
+                events_by_game_id[game_id].append(item)
+                summary = summary_by_game_id[game_id]
+                summary["activity_count"] += 1
+                if item["status"] == "SUCCESS":
+                    summary["success_count"] += 1
+                elif item["status"] == "FAILED":
+                    summary["fail_count"] += 1
+                    summary["latest_failure"] = item["error_message"]
+                    summary["latest_failure_at"] = started_at
+
+        for game_id, summary in summary_by_game_id.items():
+            summary["execution_coverage"] = min(summary["activity_count"] / total_days, 1.0)
+
+        return {
+            "range": {"from": _to_iso_z(from_dt), "to": _to_iso_z(to_dt)},
+            "timezone_context": {"source": "utc", "client_rendered": True},
+            "items": [
+                {"game_id": game_id, "events": events_by_game_id[game_id], "summary": summary_by_game_id[game_id]}
+                for game_id in requested_ids
+            ],
+        }
+
+    async def get_report_farming_summary(
+        self,
+        game_ids: list[str],
+        days_back: int = 7,
+    ) -> list[dict]:
+        """Return farming activity summary for selected accounts."""
+        requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
+        if not requested_ids:
+            raise ValueError("game_ids is required")
+
+        days_back = max(int(days_back or 7), 1)
+        from_dt = datetime.now(timezone.utc) - timedelta(days=days_back)
+        placeholders = ",".join("?" for _ in requested_ids)
+
+        def parse_json(raw):
+            if not raw:
+                return {}
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else raw
+                return parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+
+        def infer_resource_type(metadata: dict, result: dict, activity_id: str, activity_name: str) -> str | None:
+            candidates = [
+                metadata.get("resource_type"),
+                metadata.get("rss_type"),
+                metadata.get("target_resource"),
+                result.get("resource_type"),
+                result.get("rss_type"),
+                result.get("target_resource"),
+            ]
+            config = metadata.get("config")
+            if isinstance(config, dict):
+                candidates.extend([
+                    config.get("resource_type"),
+                    config.get("rss_type"),
+                    config.get("target_resource"),
+                ])
+            for candidate in candidates:
+                value = str(candidate or "").strip().lower()
+                if value in {"gold", "wood", "ore", "stone", "mana"}:
+                    return "ore" if value == "stone" else value
+
+            text = f"{activity_id} {activity_name} {json.dumps(metadata, ensure_ascii=False)} {json.dumps(result, ensure_ascii=False)}".lower()
+            if "gold" in text:
+                return "gold"
+            if "wood" in text:
+                return "wood"
+            if "ore" in text or "stone" in text:
+                return "ore"
+            if "mana" in text:
+                return "mana"
+            return None
+
+        summary_by_game_id: dict[str, dict] = {
+            game_id: {
+                "game_id": game_id,
+                "total_gathers": 0,
+                "successful_gathers": 0,
+                "failed_gathers": 0,
+                "center_gathers": 0,
+                "world_gathers": 0,
+                "total_duration_ms": 0,
+                "last_gathered_at": None,
+                "success_rate": 0.0,
+                "rss_distribution": {"gold": 0, "wood": 0, "ore": 0, "mana": 0},
+            }
+            for game_id in requested_ids
+        }
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""SELECT game_id, activity_id, activity_name, status, started_at, duration_ms, metadata_json, result_json
+                    FROM account_activity_logs
+                    WHERE game_id IN ({placeholders})
+                      AND started_at >= ?
+                      AND activity_id IN ('gather_resource', 'gather_rss_center')
+                    ORDER BY started_at ASC, id ASC""",
+                (*requested_ids, _to_iso_z(from_dt)),
+            )
+            rows = await cursor.fetchall()
+
+        for row in rows:
+            game_id = row["game_id"]
+            if game_id not in summary_by_game_id:
+                continue
+            item = summary_by_game_id[game_id]
+            item["total_gathers"] += 1
+            if row["status"] == "SUCCESS":
+                item["successful_gathers"] += 1
+            elif row["status"] == "FAILED":
+                item["failed_gathers"] += 1
+            if row["activity_id"] == "gather_rss_center":
+                item["center_gathers"] += 1
+            else:
+                item["world_gathers"] += 1
+            item["total_duration_ms"] += int(row["duration_ms"] or 0)
+
+            started_at = row["started_at"]
+            if started_at and (item["last_gathered_at"] is None or str(started_at) > str(item["last_gathered_at"])):
+                item["last_gathered_at"] = started_at
+
+            metadata = parse_json(row["metadata_json"])
+            result = parse_json(row["result_json"])
+            resource_type = infer_resource_type(metadata, result, row["activity_id"], row["activity_name"])
+            if row["status"] == "SUCCESS" and resource_type in item["rss_distribution"]:
+                item["rss_distribution"][resource_type] += 1
+
+        for game_id in requested_ids:
+            item = summary_by_game_id[game_id]
+            total = int(item["total_gathers"] or 0)
+            success = int(item["successful_gathers"] or 0)
+            item["success_rate"] = (success / total * 100.0) if total > 0 else 0.0
+
+        return [summary_by_game_id[game_id] for game_id in requested_ids]
+
+    async def get_report_targets(
+        self,
+        scope_type: str | None = None,
+        scope_id: int | None = None,
+        metric: str | None = None,
+    ) -> list[dict]:
+        """List report targets, optionally filtered by scope and metric."""
+        where_parts = []
+        params: list = []
+        if scope_type:
+            where_parts.append("scope_type = ?")
+            params.append(scope_type)
+        if scope_id is not None:
+            where_parts.append("scope_id = ?")
+            params.append(int(scope_id))
+        if metric:
+            where_parts.append("metric = ?")
+            params.append(metric)
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                f"""SELECT id, scope_type, scope_id, metric, target_growth_pct, due_at, created_at, updated_at
+                    FROM account_targets
+                    {where_clause}
+                    ORDER BY due_at ASC, updated_at DESC""",
+                params,
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def upsert_report_target(
+        self,
+        scope_type: str,
+        scope_id: int,
+        metric: str,
+        target_growth_pct: float,
+        due_at: str,
+    ) -> dict:
+        """Create or update one report target per scope + metric."""
+        scope_type = str(scope_type or "").strip().lower()
+        metric = str(metric or "").strip().lower()
+        if scope_type not in {"account", "group"}:
+            raise ValueError("Invalid scope_type")
+        due_at_dt = _parse_iso_utc(due_at)
+        updated_at = _to_iso_z(datetime.now(timezone.utc))
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT id FROM account_targets
+                   WHERE scope_type = ? AND scope_id = ? AND metric = ?
+                   LIMIT 1""",
+                (scope_type, int(scope_id), metric),
+            )
+            row = await cursor.fetchone()
+            if row:
+                await db.execute(
+                    """UPDATE account_targets
+                       SET target_growth_pct = ?, due_at = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (float(target_growth_pct), _to_iso_z(due_at_dt), updated_at, int(row["id"])),
+                )
+                target_id = int(row["id"])
+            else:
+                insert_cursor = await db.execute(
+                    """INSERT INTO account_targets (
+                           scope_type, scope_id, metric, target_growth_pct, due_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (scope_type, int(scope_id), metric, float(target_growth_pct), _to_iso_z(due_at_dt), updated_at),
+                )
+                target_id = insert_cursor.lastrowid
+            await db.commit()
+
+        results = await self.get_report_targets(scope_type=scope_type, scope_id=int(scope_id), metric=metric)
+        return next((item for item in results if int(item["id"]) == int(target_id)), results[0] if results else {})
+
+    async def delete_report_target(self, target_id: int) -> bool:
+        """Delete one report target by id."""
+        async with self._get_conn() as db:
+            cursor = await db.execute("DELETE FROM account_targets WHERE id = ?", (int(target_id),))
+            await db.commit()
+            return cursor.rowcount > 0
 
     async def update_account(self, game_id: str, **fields) -> bool:
         """Update specific account fields by game_id."""
@@ -2267,7 +2947,7 @@ class Database:
         alliance: str = "",
         note: str = "",
     ) -> int:
-        """Confirm a pending account → create it in accounts table. Returns account id."""
+        """Confirm a pending account -> create it in accounts table. Returns account id."""
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
@@ -2430,18 +3110,29 @@ class Database:
             )
             return [dict(row) for row in await cursor.fetchall()]
 
-    async def create_group(self, name: str, account_ids: str = "[]") -> int:
+    async def create_group(
+        self,
+        name: str,
+        account_ids: str = "[]",
+        cycle_target_minutes: int = 180,
+    ) -> int:
         """Create a new account group."""
+        normalized_target = max(30, int(cycle_target_minutes or 180))
         async with self._get_conn() as db:
             cursor = await db.execute(
-                "INSERT INTO account_groups (name, account_ids) VALUES (?, ?)",
-                (name, account_ids),
+                """INSERT INTO account_groups (name, account_ids, cycle_target_minutes)
+                   VALUES (?, ?, ?)""",
+                (name, account_ids, normalized_target),
             )
             await db.commit()
             return cursor.lastrowid
 
     async def update_group(
-        self, group_id: int, name: str | None = None, account_ids: str | None = None
+        self,
+        group_id: int,
+        name: str | None = None,
+        account_ids: str | None = None,
+        cycle_target_minutes: int | None = None,
     ) -> bool:
         """Update an account group."""
         fields = {}
@@ -2449,6 +3140,8 @@ class Database:
             fields["name"] = name
         if account_ids is not None:
             fields["account_ids"] = account_ids
+        if cycle_target_minutes is not None:
+            fields["cycle_target_minutes"] = max(30, int(cycle_target_minutes))
 
         if not fields:
             return False
@@ -2644,5 +3337,59 @@ class Database:
         return deleted
 
 
+
+    # ──────────────────────────────────────────
+    # Bulk Proxy Methods
+    # ──────────────────────────────────────────
+
+    async def get_all_proxies(self) -> list[dict]:
+        """Fetch all stored proxies and their assigned emulators."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM proxies ORDER BY id DESC")
+            proxies = [dict(row) for row in await cursor.fetchall()]
+            
+            for p in proxies:
+                c2 = await db.execute("SELECT emulator_index FROM proxy_assignments WHERE proxy_id = ?", (p['id'],))
+                p['assigned_emulators'] = [row[0] for row in await c2.fetchall()]
+            return proxies
+
+    async def add_proxy(self, raw_config: str, generated_config: str, name: str = "", expiry_date: str = "") -> int:
+        """Add a new proxy. Returns ID."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                "INSERT INTO proxies (raw_config, generated_config, name, expiry_date) VALUES (?, ?, ?, ?)",
+                (raw_config, generated_config, name, expiry_date)
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def delete_proxy(self, proxy_id: int) -> bool:
+        """Delete a proxy by ID. (Cascade deletes assignments)"""
+        async with self._get_conn() as db:
+            cursor = await db.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,))
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def set_proxy_assignments(self, proxy_id: int, emulator_indices: list[int]):
+        """Sets which emulators use this proxy. Completely overwrites previous assignments for this proxy."""
+        async with self._get_conn() as db:
+            await db.execute("DELETE FROM proxy_assignments WHERE proxy_id = ?", (proxy_id,))
+            for idx in emulator_indices:
+                await db.execute("INSERT OR IGNORE INTO proxy_assignments (proxy_id, emulator_index) VALUES (?, ?)", (proxy_id, idx))
+            await db.commit()
+
+    async def get_proxy_for_emulator(self, emulator_index: int) -> dict | None:
+        """Get the assigned proxy config string for a specific emulator."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT p.* FROM proxies p
+                JOIN proxy_assignments pa ON p.id = pa.proxy_id
+                WHERE pa.emulator_index = ?
+                ORDER BY pa.assigned_at DESC LIMIT 1
+            """, (emulator_index,))
+            row = await cursor.fetchone()
+            return dict(row) if row else None
 # Global singleton
 database = Database()

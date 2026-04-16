@@ -86,6 +86,7 @@ _APP_HEALTH_CACHE = {}
 
 import threading
 from datetime import datetime
+from backend.core.workflow.log_retention import prune_daily_log_tree
 
 _KNOWN_LOG_LEVELS = {
     "ERROR",
@@ -97,11 +98,13 @@ _KNOWN_LOG_LEVELS = {
 }
 
 _LOG_FILE_LOCK = threading.Lock()
+_WORKFLOW_LOG_RETENTION_DAYS = 7
 
 
 def _resolve_workflow_log_path(serial: str) -> str:
     """Build a daily workflow log file path scoped by emulator/account serial."""
     base_dir = os.path.join(os.path.dirname(config.db_path), "workflow_logs")
+    prune_daily_log_tree(base_dir, retention_days=_WORKFLOW_LOG_RETENTION_DAYS)
     safe_serial = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in (serial or "GENERAL"))
     dated_name = f"{datetime.now().strftime('%Y-%m-%d')}.log"
     log_dir = os.path.join(base_dir, safe_serial)
@@ -1601,9 +1604,6 @@ def go_to_farming(
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return _bubble(result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY lobby")
 
-    # 2. Pre-compute random search methods for each dispatch
-    methods = _plan_search_methods(len(LEGION_TAPS))
-    search_k_values = _plan_search_clicks(len(LEGION_TAPS))
     resource_plan = (
         normalized_legion_plan[:len(LEGION_TAPS)]
         if mode == "manual" and normalized_legion_plan
@@ -1613,19 +1613,61 @@ def go_to_farming(
             else [r_type] * len(LEGION_TAPS)
         )
     )
+    # 2. Pre-compute dispatch resources + search methods
+    resource_plan, methods = _plan_farming_dispatches(
+        resource_plan,
+        mode=mode,
+        selected_resource_type=r_type,
+    )
+    search_k_values = _plan_search_clicks(len(LEGION_TAPS))
+    shuffled_legion_taps = _shuffle_preset_legions(LEGION_TAPS)
     print(f"[{serial}] Search plan: {methods}, K values: {search_k_values}")
     print(
         f"[{serial}] Resource plan: {resource_plan} "
         f"(mode={mode}, shuffle={rotation_shuffle})"
     )
+    print(f"[{serial}] Legion preset order: {[LEGION_TAPS.index(tap) + 1 for tap in shuffled_legion_taps]}")
 
     # 3. Dispatch loop
-    for idx, legion_tap in enumerate(LEGION_TAPS):
+    consumed_manual_positions = set()
+    for idx, legion_tap in enumerate(shuffled_legion_taps):
+        if idx in consumed_manual_positions:
+            continue
         method = methods[idx]
         k_val = search_k_values[idx]
         dispatch_resource = resource_plan[idx]
         if dispatch_resource == "skip":
             print(f"\n[{serial}] --- Dispatch #{idx+1} skipped by config ---")
+            continue
+
+        if method == "manual":
+            block_indices = []
+            scan_idx = idx
+            while (
+                scan_idx < len(shuffled_legion_taps)
+                and resource_plan[scan_idx] == dispatch_resource
+                and methods[scan_idx] == "manual"
+            ):
+                block_indices.append(scan_idx)
+                consumed_manual_positions.add(scan_idx)
+                scan_idx += 1
+
+            block_taps = [shuffled_legion_taps[pos] for pos in block_indices]
+            print(
+                f"\n[{serial}] --- Manual Session {dispatch_resource.upper()} "
+                f"(dispatches {block_indices[0]+1}-{block_indices[-1]+1}) ---"
+            )
+            session_result = _run_manual_dispatch_session(
+                serial,
+                detector,
+                dispatch_resource,
+                block_taps,
+                RESOURCE_TAPS,
+                SEARCH_TAPS,
+                LEGION_TAPS,
+            )
+            if session_result == "stop":
+                break
             continue
         print(f"\n[{serial}] --- Dispatch #{idx+1} ({method} search, K={k_val}, resource={dispatch_resource.upper()}) ---")
 
@@ -1679,7 +1721,8 @@ def go_to_farming(
         _human_delay(2)
 
         # Select Legion Preset
-        print(f"[{serial}] Selecting Legion Preset #{idx+1} at {legion_tap}...")
+        preset_number = LEGION_TAPS.index(legion_tap) + 1
+        print(f"[{serial}] Selecting Legion Preset #{preset_number} at {legion_tap}...")
         adb_helper.tap(serial, legion_tap[0], legion_tap[1])
         _human_delay(1)
 
@@ -1699,28 +1742,276 @@ def go_to_farming(
     return _ok()
 
 
-def _plan_search_methods(total: int) -> list:
-    """Pre-compute random search method assignment for each dispatch.
+def _plan_farming_dispatches(
+    resource_plan: list[str],
+    mode: str = "legacy",
+    selected_resource_type: str = "wood",
+) -> tuple[list[str], list[str]]:
+    """Build dispatch resource order and per-dispatch search method.
 
-    Returns list of 'menu' or 'manual' strings.
-    Method 'manual' is capped at max 2 per session (slower, more expensive).
-    If mine map templates are not available, returns all 'menu'.
+    Rules:
+    - legacy mode:
+      - fixed resource => keep order, all manual
+      - rotation => count-based methods without reordering
+    - manual mode:
+      - resources with count >= 2 are grouped together and use manual
+      - resources with count == 1 are randomized between menu/manual
+      - skip entries are preserved at the end
     """
-    # Phase 3: set True when mine world-map templates are registered
-    manual_available = False
+    counts = {}
+    first_seen_order = []
+    skip_count = 0
 
-    if not manual_available:
-        return ["menu"] * total
+    for item in resource_plan:
+        if item == "skip":
+            skip_count += 1
+            continue
+        if item not in counts:
+            counts[item] = 0
+            first_seen_order.append(item)
+        counts[item] += 1
 
-    manual_count = random.randint(0, min(2, total))
-    methods = ["menu"] * total
+    if mode == "legacy":
+        legacy_plan = list(resource_plan)
+        if selected_resource_type != "rotation":
+            methods = ["skip" if item == "skip" else "manual" for item in legacy_plan]
+            return legacy_plan, methods
 
-    if manual_count > 0:
-        manual_positions = random.sample(range(total), manual_count)
-        for pos in manual_positions:
-            methods[pos] = "manual"
+        methods = []
+        for name in legacy_plan:
+            if name == "skip":
+                methods.append("skip")
+            elif counts.get(name, 0) >= 2:
+                methods.append("manual")
+            else:
+                methods.append(random.choice(["menu", "manual"]))
+        return legacy_plan, methods
 
-    return methods
+    repeated_resources = [name for name in first_seen_order if counts.get(name, 0) >= 2]
+    single_resources = [name for name in resource_plan if name != "skip" and counts.get(name, 0) == 1]
+    reordered_plan = []
+
+    for name in repeated_resources:
+        reordered_plan.extend([name] * counts[name])
+    reordered_plan.extend(single_resources)
+    reordered_plan.extend(["skip"] * skip_count)
+
+    methods = []
+    for name in reordered_plan:
+        if name == "skip":
+            methods.append("skip")
+        elif counts.get(name, 0) >= 2:
+            methods.append("manual")
+        else:
+            methods.append(random.choice(["menu", "manual"]))
+
+    return reordered_plan, methods
+
+
+def _shuffle_preset_legions(legion_taps: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Shuffle preset legion order with slots 1-4 randomized and slot 5 fixed last."""
+    if len(legion_taps) <= 1:
+        return list(legion_taps)
+    if len(legion_taps) < 5:
+        shuffled = list(legion_taps)
+        random.shuffle(shuffled)
+        return shuffled
+
+    first_four = list(legion_taps[:4])
+    random.shuffle(first_four)
+    return first_four + [legion_taps[4]]
+
+
+def _gather_and_dispatch_current_mine(
+    serial: str,
+    detector: GameStateDetector,
+    legion_tap: tuple[int, int],
+    legion_taps_master: list[tuple[int, int]],
+    gather_btn=None,
+) -> bool:
+    if not gather_btn:
+        gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=0.35)
+    if not gather_btn:
+        print(f"[{serial}] [WARNING] Gather button not visible. Mine popup may not have loaded.")
+        return False
+
+    _, gx, gy = gather_btn
+    print(f"[{serial}] Tapping Gather Button at detected ({gx}, {gy})...")
+    adb_helper.tap(serial, gx, gy)
+    _human_delay(0.55)
+
+    print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
+    create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=5, delay=0.3)
+    if not create_result:
+        print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
+        adb_helper.press_back(serial)
+        _human_delay(2)
+        return False
+
+    print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
+    print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
+    adb_helper.tap(serial, 755, 115)
+    _human_delay(1.3)
+
+    preset_number = legion_taps_master.index(legion_tap) + 1
+    print(f"[{serial}] Selecting Legion Preset #{preset_number} at {legion_tap}...")
+    adb_helper.tap(serial, legion_tap[0], legion_tap[1])
+    _human_delay(0.45)
+
+    dispatch_loc = (850, 480)
+    print(f"[{serial}] Tapping March/Dispatch {dispatch_loc}...")
+    adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
+    _human_delay(0.8)
+
+    state = wait_for_state(serial, detector, ["IN-GAME LOBBY (OUT_CITY)"], timeout_sec=10)
+    if not state:
+        print(f"[{serial}] [WARNING] Did not return to OUT_CITY after dispatch. Recovering...")
+        back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+    return True
+
+
+def _run_manual_dispatch_session(
+    serial: str,
+    detector: GameStateDetector,
+    r_type: str,
+    legion_taps: list[tuple[int, int]],
+    resource_taps: dict,
+    search_taps: dict,
+    legion_taps_master: list[tuple[int, int]],
+) -> str:
+    anchor_result = _search_mine_via_menu(
+        serial,
+        detector,
+        r_type,
+        resource_taps,
+        search_taps,
+        search_clicks=1,
+    )
+    if anchor_result is None:
+        print(f"[{serial}] [MANUAL SESSION] No anchor mine found for {r_type.upper()}.")
+        return "stop"
+    if anchor_result == "occupied":
+        print(f"[{serial}] [MANUAL SESSION] Anchor mine occupied for {r_type.upper()}. Skipping block.")
+        return "continue"
+
+    print(f"[{serial}] [MANUAL SESSION] Anchor mine found ({anchor_result.upper()}). Scanning for nearby alternatives...")
+
+    icon_targets = {
+        "gold": "MANUAL_RSS_GOLD",
+        "wood": "MANUAL_RSS_WOOD",
+        "stone": "MANUAL_RSS_ORE",
+        "mana": "MANUAL_RSS_MANA",
+    }
+    swipe_segments = {
+        "R": ((180, 270), (760, 270)),
+        "L": ((760, 270), (180, 270)),
+        "U": ((480, 430), (480, 90)),
+        "D": ((480, 90), (480, 430)),
+    }
+
+    clockwise = [("R", (1, 0)), ("D", (0, 1)), ("L", (-1, 0)), ("U", (0, -1))]
+    counterclockwise = [("R", (1, 0)), ("U", (0, -1)), ("L", (-1, 0)), ("D", (0, 1))]
+    base_directions = random.choice([clockwise, counterclockwise])
+    start_idx = random.randint(0, len(base_directions) - 1)
+    directions = base_directions[start_idx:] + base_directions[:start_idx]
+    rotation_name = "clockwise" if base_directions is clockwise else "counterclockwise"
+    print(
+        f"[{serial}] [MANUAL SESSION] Local spiral scan start rotation={rotation_name} "
+        f"start_direction={directions[0][0]}"
+    )
+
+    radius = 3
+    x = 0
+    y = 0
+    step_length = 1
+    step_idx = 0
+    planned_steps = ((radius * 2 + 1) ** 2) - 1
+    legion_idx = 0
+    skip_detect_once = False
+
+    while step_idx < planned_steps and legion_idx < len(legion_taps):
+        for dir_idx, (direction_name, (dx, dy)) in enumerate(directions):
+            for _ in range(step_length):
+                if step_idx >= planned_steps or legion_idx >= len(legion_taps):
+                    break
+                nx = x + dx
+                ny = y + dy
+                x, y = nx, ny
+                if abs(nx) > radius or abs(ny) > radius:
+                    continue
+
+                step_idx += 1
+                segment = swipe_segments[direction_name]
+                print(
+                    f"[{serial}] [MANUAL SESSION] Swipe {step_idx}/{planned_steps} "
+                    f"dir={direction_name} grid=({nx},{ny})"
+                )
+                adb_helper.swipe(
+                    serial,
+                    segment[0][0], segment[0][1],
+                    segment[1][0], segment[1][1],
+                    1200,
+                )
+                _human_delay(1.5)
+
+                if skip_detect_once:
+                    print(f"[{serial}] [MANUAL SESSION] Skipping detect immediately after dispatch; moving to next tile.")
+                    skip_detect_once = False
+                    continue
+
+                icon_matches = detector.find_all_icon_matches(serial, target=icon_targets[r_type], threshold=0.75)
+                if not icon_matches:
+                    continue
+                print(
+                    f"[{serial}] [MANUAL SESSION] Found {len(icon_matches)} nearby {r_type.upper()} "
+                    f"icon match(es) on this swipe."
+                )
+                dispatched_this_swipe = False
+                for icon_x, icon_y in icon_matches:
+                    print(f"[{serial}] [MANUAL SESSION] Probing icon at ({icon_x}, {icon_y}).")
+                    adb_helper.tap(serial, icon_x, icon_y)
+                    _human_delay(0.45)
+
+                    gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.3)
+                    if gather_btn:
+                        print(f"[{serial}] [MANUAL SESSION] Gather available on scanned mine.")
+                        if not _gather_and_dispatch_current_mine(
+                            serial,
+                            detector,
+                            legion_taps[legion_idx],
+                            legion_taps_master,
+                            gather_btn=gather_btn,
+                        ):
+                            return "stop"
+                        legion_idx += 1
+                        skip_detect_once = True
+                        dispatched_this_swipe = True
+                        break
+
+                    recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
+                    attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
+                    view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
+                    if recall_btn or attack_btn or view_btn:
+                        print(f"[{serial}] [MANUAL SESSION] Candidate icon is occupied/invalid. Trying next match.")
+                        _human_delay(0.8)
+                        continue
+
+                    current_state = detector.check_state(serial)
+                    if current_state != "IN-GAME LOBBY (OUT_CITY)":
+                        print(f"[{serial}] [MANUAL SESSION] Unexpected state {current_state}. Recovering with BACK.")
+                        adb_helper.press_back(serial)
+                        _human_delay(1.0)
+                if dispatched_this_swipe:
+                    continue
+            if dir_idx % 2 == 1:
+                step_length += 1
+
+    if legion_idx == 0:
+        print(f"[{serial}] [MANUAL SESSION] No valid nearby mine found after local scan.")
+        return "stop"
+
+    print(f"[{serial}] [MANUAL SESSION] Completed {legion_idx}/{len(legion_taps)} dispatches for {r_type.upper()}.")
+    return "continue"
 
 
 def _build_resource_plan(total: int, rotation_order: list[str], shuffle: bool = False) -> list[str]:
@@ -1892,12 +2183,12 @@ def _search_mine_manual(
     detector: GameStateDetector,
     r_type: str,
 ) -> str | None:
-    """Search for a mine by manually scanning the world map (Phase 3 — stub).
+    """Search for a mine by using the first search result as an anchor, then scanning nearby tiles.
 
-    Full implementation requires mine world-map templates to be captured and registered.
-    Currently falls back to menu search.
+    Anti-detect rule:
+    - The first mine found by Search is NOT gathered.
+    - That mine is only used as an anchor for local spiral scanning.
     """
-    print(f"[{serial}] [MANUAL SEARCH] Phase 3 not yet implemented. Falling back to menu search.")
     RESOURCE_TAPS = {
         "gold": (320, 485), "wood": (475, 485),
         "stone": (640, 485), "mana": (795, 485),
@@ -1906,7 +2197,106 @@ def _search_mine_manual(
         "gold": (320, 400), "wood": (475, 400),
         "stone": (640, 400), "mana": (795, 400),
     }
-    return _search_mine_via_menu(serial, detector, r_type, RESOURCE_TAPS, SEARCH_TAPS)
+    icon_targets = {
+        "gold": "MANUAL_RSS_GOLD",
+        "wood": "MANUAL_RSS_WOOD",
+        "stone": "MANUAL_RSS_ORE",
+        "mana": "MANUAL_RSS_MANA",
+    }
+    swipe_segments = {
+        "R": ((180, 270), (760, 270)),
+        "L": ((760, 270), (180, 270)),
+        "U": ((480, 430), (480, 90)),
+        "D": ((480, 90), (480, 430)),
+    }
+
+    anchor_result = _search_mine_via_menu(
+        serial,
+        detector,
+        r_type,
+        RESOURCE_TAPS,
+        SEARCH_TAPS,
+        search_clicks=1,
+    )
+    if anchor_result in {None, "occupied"}:
+        return anchor_result
+
+    print(f"[{serial}] [MANUAL SEARCH] Anchor mine found ({anchor_result.upper()}). Skipping first mine by design.")
+    _human_delay(1.2)
+
+    clockwise = [("R", (1, 0)), ("D", (0, 1)), ("L", (-1, 0)), ("U", (0, -1))]
+    counterclockwise = [("R", (1, 0)), ("U", (0, -1)), ("L", (-1, 0)), ("D", (0, 1))]
+    base_directions = random.choice([clockwise, counterclockwise])
+    start_idx = random.randint(0, len(base_directions) - 1)
+    directions = base_directions[start_idx:] + base_directions[:start_idx]
+    rotation_name = "clockwise" if base_directions is clockwise else "counterclockwise"
+    print(
+        f"[{serial}] [MANUAL SEARCH] Local spiral scan start rotation={rotation_name} "
+        f"start_direction={directions[0][0]}"
+    )
+
+    radius = 3
+    x = 0
+    y = 0
+    step_length = 1
+    planned_steps = ((radius * 2 + 1) ** 2) - 1
+    step_idx = 0
+
+    while step_idx < planned_steps:
+        for dir_idx, (direction_name, (dx, dy)) in enumerate(directions):
+            for _ in range(step_length):
+                nx = x + dx
+                ny = y + dy
+                x, y = nx, ny
+                if abs(nx) > radius or abs(ny) > radius:
+                    continue
+
+                step_idx += 1
+                segment = swipe_segments[direction_name]
+                print(
+                    f"[{serial}] [MANUAL SEARCH] Swipe {step_idx}/{planned_steps} "
+                    f"dir={direction_name} grid=({nx},{ny})"
+                )
+                adb_helper.swipe(
+                    serial,
+                    segment[0][0], segment[0][1],
+                    segment[1][0], segment[1][1],
+                    1200,
+                )
+                _human_delay(1.5)
+
+                icon_match = detector.locate_icon(serial, target=icon_targets[r_type], threshold=0.8)
+                if not icon_match:
+                    continue
+
+                _, icon_x, icon_y = icon_match
+                print(f"[{serial}] [MANUAL SEARCH] Found nearby {r_type.upper()} icon at ({icon_x}, {icon_y}).")
+                adb_helper.tap(serial, icon_x, icon_y)
+                _human_delay(1.0)
+
+                gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.8)
+                if gather_btn:
+                    print(f"[{serial}] [MANUAL SEARCH] Gather available on scanned mine.")
+                    return r_type
+
+                recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
+                attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
+                view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
+                if recall_btn or attack_btn or view_btn:
+                    print(f"[{serial}] [MANUAL SEARCH] Scanned mine is occupied/invalid. Continuing scan on next swipe.")
+                    _human_delay(1.0)
+                    continue
+
+                current_state = detector.check_state(serial)
+                if current_state != "IN-GAME LOBBY (OUT_CITY)":
+                    print(f"[{serial}] [MANUAL SEARCH] Unexpected state {current_state}. Recovering with BACK.")
+                    adb_helper.press_back(serial)
+                    _human_delay(1.0)
+            if dir_idx % 2 == 1:
+                step_length += 1
+
+    print(f"[{serial}] [MANUAL SEARCH] No valid nearby mine found after local scan.")
+    return None
 
 def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
     """

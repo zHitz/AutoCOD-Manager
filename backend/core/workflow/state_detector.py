@@ -117,9 +117,11 @@ class GameStateDetector:
         match = detector.check_activity(serial, target="CREATE_LEGION")
     """
 
+    _template_registry_cache: dict[str, dict[str, TemplateDict]] = {}
+
     def __init__(self, adb_path: str, templates_dir: str) -> None:
         self.adb_path = adb_path
-        self.templates_dir = templates_dir
+        self.templates_dir = os.path.abspath(templates_dir)
         self.roi_hints = ROI_HINTS
 
         # Consolidated template registry: {category: {name: [TemplateEntry]}}
@@ -251,10 +253,19 @@ class GameStateDetector:
 
     def _load_all_templates(self) -> None:
         """Load all template categories into the unified registry."""
+        cached_registry = self.__class__._template_registry_cache.get(self.templates_dir)
+        if cached_registry is not None:
+            self._registry = cached_registry
+            logger.info("Using cached image templates from RAM: %s", self.templates_dir)
+            return
+
         logger.info("Pre-loading image templates into RAM...")
+        registry: dict[str, TemplateDict] = {}
         for category, configs in _CATEGORY_REGISTRY.items():
-            self._registry[category] = {}
-            self._load_template_group(configs, self._registry[category], category.capitalize())
+            registry[category] = {}
+            self._load_template_group(configs, registry[category], category.capitalize())
+        self._registry = registry
+        self.__class__._template_registry_cache[self.templates_dir] = registry
         logger.info("Template loading complete.")
 
     # ── Screencap ─────────────────────────────────────────────────
@@ -618,6 +629,58 @@ class GameStateDetector:
         results.sort(key=lambda p: p[1])
         if results:
             logger.debug("Multi-match '%s': %d match(es) at %s", target, len(results), results)
+        return results
+
+    def find_all_icon_matches(self, serial: str, target: str, threshold: float = 0.8) -> list[tuple[int, int]]:
+        """
+        Multi-match icon detector with Non-Maximum Suppression.
+        Returns ALL matching positions sorted top-to-bottom.
+        """
+        screen = self.screencap_memory(serial)
+        if screen is None:
+            return []
+        screen_gray = self._get_gray(screen)
+
+        if target not in self.icon_templates:
+            logger.warning("Target '%s' not found in icon_templates.", target)
+            return []
+
+        results: list[tuple[int, int]] = []
+
+        for entry in self.icon_templates[target]:
+            tmpl_gray = entry["gray"]
+            roi = entry.get("roi")
+
+            if roi:
+                x1, y1, x2, y2 = roi
+                region = screen_gray[y1:y2, x1:x2]
+                if region.shape[0] < tmpl_gray.shape[0] or region.shape[1] < tmpl_gray.shape[1]:
+                    region = screen_gray
+                    roi = None
+            else:
+                region = screen_gray
+
+            res = cv2.matchTemplate(region, tmpl_gray, cv2.TM_CCOEFF_NORMED)
+            h, w = tmpl_gray.shape[:2]
+
+            while True:
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val < threshold:
+                    break
+
+                offset_x = roi[0] if roi else 0
+                offset_y = roi[1] if roi else 0
+                results.append((offset_x + max_loc[0] + w // 2, offset_y + max_loc[1] + h // 2))
+
+                sx = max(0, max_loc[0] - w // 2)
+                sy = max(0, max_loc[1] - h // 2)
+                ex = min(res.shape[1], max_loc[0] + w // 2 + 1)
+                ey = min(res.shape[0], max_loc[1] + h // 2 + 1)
+                res[sy:ey, sx:ex] = 0
+
+        results.sort(key=lambda p: p[1])
+        if results:
+            logger.debug("Multi-match icon '%s': %d match(es) at %s", target, len(results), results)
         return results
 
     # ── Diagnostic API ────────────────────────────────────────────

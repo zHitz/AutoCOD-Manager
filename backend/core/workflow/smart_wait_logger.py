@@ -11,6 +11,7 @@ Writes structured logs to `logs/smart_queue/` to track:
 import os
 import json
 from datetime import datetime
+from backend.core.workflow.log_retention import prune_prefixed_daily_logs
 
 _LOG_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "logs", "smart_queue"
@@ -18,6 +19,7 @@ _LOG_DIR = os.path.join(
 
 def _ensure_log_dir():
     os.makedirs(_LOG_DIR, exist_ok=True)
+    prune_prefixed_daily_logs(_LOG_DIR, prefix="smart_wait_", retention_days=7)
 
 def log_smart_wait_eval(
     serial: str,

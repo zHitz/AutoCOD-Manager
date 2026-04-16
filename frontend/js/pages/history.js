@@ -927,10 +927,7 @@ const HistoryPage = {
                 contentRendered = true;
             }
             else {
-                this.state.logsContentRaw = '';
-                this.state.logsLineNumbers = [];
-                this.state.logsMeta = null;
-                this.state.logsHasMoreBefore = false;
+                this._resetWorkflowLogContent();
             }
         } catch (e) {
             console.warn('[Logs] Failed to load summary:', e);
@@ -966,9 +963,25 @@ const HistoryPage = {
     },
     _getLogsDatesForSelection() { return [...new Set(this._getLogsFilesForSelection().map((file) => file.date))]; },
     _getSelectedLogFile() { return (this.state.logsSummary.files || []).find((file) => file.path_token === this.state.logsSelectedPathToken) || null; },
+    _resetWorkflowLogContent() {
+        this.state.logsContentRaw = '';
+        this.state.logsLineNumbers = [];
+        this.state.logsMeta = null;
+        this.state.logsHasMoreBefore = false;
+        this.state.logsOffset = 0;
+        this.state.logsContextAnchorLine = null;
+    },
 
     async loadWorkflowLogContent({ silent = false, scrollMode = 'bottom' } = {}) {
-        if (!this.state.logsSelectedSerial || !this.state.logsSelectedDate) return;
+        if (!this.state.logsSelectedSerial || !this.state.logsSelectedDate) {
+            this._resetWorkflowLogContent();
+            this.state.logsError = null;
+            if (!silent) {
+                this.state.logsLoading = false;
+                this.renderLogsPanel();
+            }
+            return;
+        }
         this._captureLogsScrollState(scrollMode);
         if (!silent) {
             this.state.logsLoading = true;
@@ -1143,24 +1156,29 @@ const HistoryPage = {
             const nextFile = (this.state.logsSummary.files || []).filter((file) => file.serial === this.state.logsSelectedSerial)[0] || null;
             this.state.logsSelectedDate = nextFile ? nextFile.date : '';
             this.state.logsSelectedPathToken = nextFile ? nextFile.path_token : '';
-            this.state.logsOffset = 0;
-            this.state.logsContextAnchorLine = null;
+            this._resetWorkflowLogContent();
+            if (!nextFile) {
+                this.renderLogsPanel();
+                return;
+            }
             await this.loadWorkflowLogContent({ scrollMode: 'bottom' });
         };
         if (dateSelect) dateSelect.onchange = async (event) => {
             this.state.logsSelectedDate = event.target.value;
             const nextFile = (this._getLogsFilesForSelection() || []).find((file) => file.date === this.state.logsSelectedDate) || null;
             this.state.logsSelectedPathToken = nextFile ? nextFile.path_token : '';
-            this.state.logsOffset = 0;
-            this.state.logsContextAnchorLine = null;
+            this._resetWorkflowLogContent();
+            if (!nextFile) {
+                this.renderLogsPanel();
+                return;
+            }
             await this.loadWorkflowLogContent({ scrollMode: 'bottom' });
         };
         document.querySelectorAll('[data-log-token]').forEach((btn) => btn.onclick = async () => {
             this.state.logsSelectedPathToken = btn.dataset.logToken;
             this.state.logsSelectedSerial = btn.dataset.logSerial;
             this.state.logsSelectedDate = btn.dataset.logDate;
-            this.state.logsOffset = 0;
-            this.state.logsContextAnchorLine = null;
+            this._resetWorkflowLogContent();
             await this.loadWorkflowLogContent({ scrollMode: 'bottom' });
         });
         if (searchInput) searchInput.oninput = (event) => { this.queueLogsSearch(event.target.value || ''); };

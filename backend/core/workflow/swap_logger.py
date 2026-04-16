@@ -14,6 +14,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional, Any
+from backend.core.workflow.log_retention import prune_prefixed_daily_logs
 
 _LOG_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "logs", "swap_account"
@@ -22,6 +23,7 @@ _LOG_DIR = os.path.join(
 
 def _ensure_log_dir():
     os.makedirs(_LOG_DIR, exist_ok=True)
+    prune_prefixed_daily_logs(_LOG_DIR, prefix="swap_", retention_days=7)
 
 
 def _write_entry(entry: dict):

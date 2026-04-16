@@ -25,7 +25,11 @@ const TaskPage = {
     _activityRegistry: [],
     _checklistTemplates: [],
     _summary: {},
+    _groupOverview: null,
+    _groupOverviewLoading: false,
+    _groupOverviewError: '',
     _showSettingsPanel: false,
+    _activeView: 'grid',
     _page: 1,
     _pageSize: 50,
     _pagination: { page: 1, page_size: 50, total_accounts: 0, total_pages: 0 },
@@ -447,6 +451,135 @@ const TaskPage = {
         };
     },
 
+    async _loadGroupOverview() {
+        this._groupOverview = null;
+        this._groupOverviewError = '';
+
+        if (!this._selectedGroupId) return;
+
+        this._groupOverviewLoading = true;
+        try {
+            const response = await fetch(
+                `/api/task/group-overview?group_id=${this._selectedGroupId}&date=${this._selectedDate}&lookback_days=7`
+            );
+            const payload = await response.json();
+            if (!response.ok || payload.status === 'error') {
+                throw new Error(payload.error || 'Failed to load workflow overview');
+            }
+            this._groupOverview = payload;
+        } catch (error) {
+            console.error('[TaskPage] Failed to load group overview:', error);
+            this._groupOverviewError = error?.message || 'Failed to load workflow overview';
+        } finally {
+            this._groupOverviewLoading = false;
+        }
+    },
+
+    _renderOverviewStatCard(label, value, sub = '', tone = '') {
+        return `
+            <div class="task-stat-card ${tone ? `task-stat-card-${tone}` : ''}">
+                <div class="task-stat-label">${this._escapeHtml(label)}</div>
+                <div class="task-stat-value">${this._escapeHtml(value)}</div>
+                <div class="task-stat-sub">${sub}</div>
+            </div>
+        `;
+    },
+
+    _renderRiskPill(status) {
+        const normalized = status || 'no-data';
+        const labelMap = {
+            'on-track': 'On track',
+            'at-risk': 'At risk',
+            'overdue': 'Over target',
+            'no-data': 'No data',
+        };
+        const cls =
+            normalized === 'overdue'
+                ? 'overdue'
+                : normalized === 'at-risk'
+                    ? 'at-risk'
+                    : normalized === 'on-track'
+                        ? 'on-track'
+                        : '';
+        return `<span class="task-pill task-status-pill ${cls}">${this._escapeHtml(labelMap[normalized] || normalized)}</span>`;
+    },
+
+    _renderGroupOverview() {
+        if (!this._selectedGroupId) {
+            return `
+                <div class="task-overview-empty">
+                    Select a target group to see workflow cycle KPI, throughput, and 3-hour risk.
+                </div>
+            `;
+        }
+
+        if (this._groupOverviewLoading) {
+            return `
+                <div class="task-overview-empty">
+                    <span class="spinner"></span> Loading workflow overview...
+                </div>
+            `;
+        }
+
+        if (this._groupOverviewError) {
+            return `<div class="task-overview-empty task-overview-error">${this._escapeHtml(this._groupOverviewError)}</div>`;
+        }
+
+        const payload = this._groupOverview;
+        if (!payload?.group) {
+            return `<div class="task-overview-empty">No workflow overview available for this group yet.</div>`;
+        }
+
+        const group = payload.group;
+        const today = payload.today || {};
+        const recent = payload.recent || {};
+
+        return `
+            <div class="task-overview-grid">
+                <section class="task-overview-panel">
+                    <div class="task-overview-panel-head">
+                        <div>
+                            <div class="task-overview-title">${this._escapeHtml(group.name)}</div>
+                            <div class="task-overview-subtitle">
+                                ${group.account_count || 0} accounts · ${group.emulator_count || 0} emulators · target cycle ${group.cycle_target_hours || 0}h
+                            </div>
+                        </div>
+                        ${this._renderRiskPill(recent.risk_status)}
+                    </div>
+                    <div class="task-overview-settings">
+                        <label class="task-overview-setting">
+                            <span>Cycle target (hours)</span>
+                            <input id="task-cycle-target-hours" type="number" min="0.5" max="24" step="0.5" value="${this._escapeHtml(group.cycle_target_hours || 3)}" class="task-control-input" />
+                        </label>
+                        <button class="btn btn-sm btn-default" id="task-save-cycle-target">Save target</button>
+                    </div>
+                    <div class="task-stats-grid task-overview-stat-grid">
+                        ${this._renderOverviewStatCard('Budget / account', `${group.per_account_budget_min || 0} min`, 'Maximum safe average per account to stay within cycle target.')}
+                        ${this._renderOverviewStatCard('Recent avg / account', `${recent.avg_account_min || 0} min`, `Median ${recent.median_account_min || 0} min · P90 ${recent.p90_account_min || 0} min`, recent.risk_status === 'overdue' ? 'danger' : recent.risk_status === 'at-risk' ? 'warn' : 'success')}
+                        ${this._renderOverviewStatCard('Estimated full cycle', `${recent.estimated_full_cycle_hours || 0} h`, `${recent.estimated_full_cycle_min || 0} min · utilization ${recent.target_utilization_pct || 0}%`, recent.risk_status === 'overdue' ? 'danger' : recent.risk_status === 'at-risk' ? 'warn' : 'success')}
+                        ${this._renderOverviewStatCard('Throughput', `${recent.throughput_accounts_per_hour || 0} acc/h`, `${recent.session_count || 0} account sessions in last ${payload.lookback_days || 7} days.`)}
+                    </div>
+                </section>
+
+                <section class="task-overview-panel">
+                    <div class="task-overview-panel-head">
+                        <div>
+                            <div class="task-overview-title">Selected Date Snapshot</div>
+                            <div class="task-overview-subtitle">${this._escapeHtml(payload.selected_date || this._selectedDate)}</div>
+                        </div>
+                        ${this._renderRiskPill(today.risk_status)}
+                    </div>
+                    <div class="task-stats-grid task-overview-stat-grid">
+                        ${this._renderOverviewStatCard('Today avg / account', `${today.avg_account_min || 0} min`, `Median ${today.median_account_min || 0} min · Max ${today.max_account_min || 0} min`, today.risk_status === 'overdue' ? 'danger' : today.risk_status === 'at-risk' ? 'warn' : 'success')}
+                        ${this._renderOverviewStatCard('Today estimated cycle', `${today.estimated_full_cycle_hours || 0} h`, `${today.estimated_full_cycle_min || 0} min across the current group size.`)}
+                        ${this._renderOverviewStatCard('Failed sessions avg', `${today.avg_failed_sessions || 0}`, `Average failed activities per account session.`)}
+                        ${this._renderOverviewStatCard('Activities / session', `${today.avg_activities || 0}`, `${today.session_count || 0} sessions observed on selected date.`)}
+                    </div>
+                </section>
+            </div>
+        `;
+    },
+
     _applyFilters() {
         const q = this._search.trim().toLowerCase();
         this._filteredAccounts = this._accounts.filter((acc) => {
@@ -561,6 +694,22 @@ const TaskPage = {
                 .task-control-input::placeholder { color: var(--muted-foreground); }
 
                 .task-main-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-height: 0; }
+                .task-view-tabs { display:flex; align-items:center; gap:6px; padding:4px; border:1px solid var(--border); border-radius:12px; background:var(--muted); width:max-content; max-width:100%; }
+                .task-view-tab { border:none; background:transparent; color:var(--muted-foreground); font-size:12px; font-weight:700; padding:8px 12px; border-radius:10px; cursor:pointer; transition:all var(--duration-fast); }
+                .task-view-tab.active { background:var(--card); color:var(--foreground); box-shadow:var(--shadow-sm); }
+                .task-overview-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
+                .task-overview-panel { border:1px solid var(--border); border-radius:12px; background:var(--card); padding:16px; display:flex; flex-direction:column; gap:14px; }
+                .task-overview-panel-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+                .task-overview-title { font-size:18px; font-weight:800; letter-spacing:-.02em; }
+                .task-overview-subtitle { font-size:12px; color:var(--muted-foreground); margin-top:4px; }
+                .task-overview-settings { display:flex; gap:10px; align-items:end; flex-wrap:wrap; }
+                .task-overview-setting { display:flex; flex-direction:column; gap:6px; min-width:180px; font-size:12px; color:var(--muted-foreground); font-weight:600; }
+                .task-overview-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                .task-stat-card-success { border-color: rgba(16,185,129,.25); background: rgba(16,185,129,.05); }
+                .task-stat-card-warn { border-color: rgba(245,158,11,.25); background: rgba(245,158,11,.06); }
+                .task-stat-card-danger { border-color: rgba(239,68,68,.25); background: rgba(239,68,68,.06); }
+                .task-overview-empty { border:1px dashed var(--border); border-radius:12px; background:var(--card); color:var(--muted-foreground); padding:24px; text-align:center; }
+                .task-overview-error { color:#b91c1c; }
                 .task-table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--card); position: relative; }
                 .task-scroll-hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: var(--muted-foreground); background: rgba(255,255,255,.88); border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px; pointer-events: none; }
                 .task-table-scroll { overflow: auto; max-height: calc(100vh - 330px); }
@@ -929,6 +1078,10 @@ const TaskPage = {
                     
                     <button class="btn btn-sm btn-ghost" id="task-settings-toggle" title="Configure Columns">⚙️</button>
                     <button class="btn btn-sm btn-outline" id="task-reset-view">Clear filters</button>
+                    <div class="task-view-tabs">
+                        <button class="task-view-tab ${this._activeView === 'grid' ? 'active' : ''}" id="task-view-grid">Checklist</button>
+                        <button class="task-view-tab ${this._activeView === 'overview' ? 'active' : ''}" id="task-view-overview">Overview KPI</button>
+                    </div>
                     <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
                         <button class="btn btn-sm btn-ghost" id="task-prev-page" ${this._page <= 1 ? 'disabled' : ''}>← Prev</button>
                         <span style="font-size:12px;color:var(--muted-foreground);">Page ${this._page}/${Math.max(this._pagination.total_pages || 1, 1)}</span>
@@ -939,7 +1092,8 @@ const TaskPage = {
                 <!-- Settings is now a modal popup -->
 
                 <div class="task-main-grid">
-                    <div class="task-table-wrap">
+                    ${this._activeView === 'overview' ? this._renderGroupOverview() : ''}
+                    <div class="task-table-wrap" style="${this._activeView === 'overview' ? 'display:none;' : ''}">
                         <div class="task-table-scroll" id="task-table-scroll">
                             <table class="task-table">
                                 <thead>
@@ -1068,6 +1222,31 @@ const TaskPage = {
 
     _renderBodyOnly() {
         this._applyFilters();
+        document.getElementById('task-view-grid')?.classList.toggle('active', this._activeView === 'grid');
+        document.getElementById('task-view-overview')?.classList.toggle('active', this._activeView === 'overview');
+
+        const mainGrid = document.querySelector('.task-main-grid');
+        if (!mainGrid) return;
+
+        if (this._activeView === 'overview') {
+            mainGrid.innerHTML = this._renderGroupOverview();
+            document.getElementById('task-save-cycle-target')?.addEventListener('click', () => this._saveCycleTarget());
+            return;
+        }
+
+        mainGrid.innerHTML = `
+            <div class="task-table-wrap">
+                <div class="task-table-scroll" id="task-table-scroll">
+                    <table class="task-table">
+                        <thead>
+                            <tr id="task-thead-row"></tr>
+                        </thead>
+                        <tbody id="task-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="task-scroll-hint" id="task-scroll-hint">← Scroll horizontally to see more columns →</div>
+            </div>
+        `;
         this._syncThead();
         const tbody = document.getElementById('task-tbody');
         if (tbody) {
@@ -1118,6 +1297,7 @@ const TaskPage = {
 
     async _reloadAndRender() {
         await this._loadRealData();
+        await this._loadGroupOverview();
         this._renderBodyOnly();
         this._refreshStats();
     },
@@ -1156,6 +1336,31 @@ const TaskPage = {
             await this._reloadAndRender();
         } catch (err) {
             console.error('[TaskPage] Save template error:', err);
+        }
+    },
+
+    async _saveCycleTarget() {
+        if (!this._selectedGroupId) return;
+
+        const input = document.getElementById('task-cycle-target-hours');
+        const rawHours = Number(input?.value || 0);
+        const cycleTargetMinutes = Math.max(30, Math.round(rawHours * 60));
+
+        try {
+            const response = await fetch(`/api/groups/${this._selectedGroupId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cycle_target_minutes: cycleTargetMinutes }),
+            });
+            const result = await response.json();
+            if (!response.ok || result.error) {
+                throw new Error(result.error || 'Failed to save cycle target');
+            }
+            const selected = this._groups.find((g) => String(g.id) === String(this._selectedGroupId));
+            if (selected) selected.cycle_target_minutes = cycleTargetMinutes;
+            await this._reloadAndRender();
+        } catch (error) {
+            console.error('[TaskPage] Save cycle target error:', error);
         }
     },
 
@@ -1225,6 +1430,7 @@ const TaskPage = {
 
     async init() {
         await this._loadRealData();
+        await this._loadGroupOverview();
         this._renderBodyOnly();
         this._refreshStats();
 
@@ -1287,6 +1493,15 @@ const TaskPage = {
             this._renderBodyOnly();
         });
 
+        document.getElementById('task-view-grid')?.addEventListener('click', () => {
+            this._activeView = 'grid';
+            this._renderBodyOnly();
+        });
+        document.getElementById('task-view-overview')?.addEventListener('click', () => {
+            this._activeView = 'overview';
+            this._renderBodyOnly();
+        });
+
         // Pagination
         const prevBtn = document.getElementById('task-prev-page');
         const nextBtn = document.getElementById('task-next-page');
@@ -1304,6 +1519,8 @@ const TaskPage = {
             if (existing) { this._closeSettingsModal(); return; }
             this._openSettingsModal();
         });
+
+        document.getElementById('task-save-cycle-target')?.addEventListener('click', () => this._saveCycleTarget());
     },
 
     destroy() {

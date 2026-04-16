@@ -1166,7 +1166,18 @@ const WF3 = {
     },
 
     getMiscConfig(groupId) {
-        const defaultMisc = { cooldown_min: 30, limit_min: 45, swap_wait_threshold_min: 5, choose_start_account: false, skip_cooldown: false, continue_on_error: false, max_power: 14000000, max_hall_level: 21 };
+        const defaultMisc = {
+            cooldown_min: 30,
+            limit_min: 45,
+            swap_wait_threshold_min: 5,
+            shutdown_emu_on_long_wait_enabled: true,
+            shutdown_emu_wait_threshold_min: 30,
+            choose_start_account: false,
+            skip_cooldown: false,
+            continue_on_error: false,
+            max_power: 14000000,
+            max_hall_level: 21,
+        };
         if (!groupId) return defaultMisc;
         const conf = this._groupConfigs[groupId];
         if (conf && conf.misc) {
@@ -1180,6 +1191,8 @@ const WF3 = {
         const cdEl = document.getElementById('misc-cooldown-min');
         const limitEl = document.getElementById('misc-limit-min');
         const swapWaitEl = document.getElementById('misc-swap-wait-threshold');
+        const shutdownEmuEnabledEl = document.getElementById('misc-shutdown-emu-long-wait-enabled');
+        const shutdownEmuThresholdEl = document.getElementById('misc-shutdown-emu-wait-threshold');
         const chooseStartEl = document.getElementById('misc-choose-start-account');
         const skipCdEl = document.getElementById('misc-skip-cooldown');
         const continueOnErrEl = document.getElementById('misc-continue-on-error');
@@ -1193,6 +1206,8 @@ const WF3 = {
             cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
             limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
             swap_wait_threshold_min: swapWaitEl ? parseInt(swapWaitEl.value) || 0 : 5,
+            shutdown_emu_on_long_wait_enabled: shutdownEmuEnabledEl ? shutdownEmuEnabledEl.checked : true,
+            shutdown_emu_wait_threshold_min: shutdownEmuThresholdEl ? parseInt(shutdownEmuThresholdEl.value) || 0 : 30,
             choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
             skip_cooldown: skipCdEl ? skipCdEl.checked : false,
             continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false,
@@ -1227,7 +1242,16 @@ const WF3 = {
 
         // Fallback default
         if (!this._groupConfigs[groupId]) {
-            this._groupConfigs[groupId] = { version: 2, activities: {}, misc: { cooldown_min: 30, limit_min: 45 } };
+            this._groupConfigs[groupId] = {
+                version: 2,
+                activities: {},
+                misc: {
+                    cooldown_min: 30,
+                    limit_min: 45,
+                    shutdown_emu_on_long_wait_enabled: true,
+                    shutdown_emu_wait_threshold_min: 30,
+                }
+            };
         }
         return this._groupConfigs[groupId];
     },
@@ -2123,6 +2147,24 @@ const WF3 = {
                 </div>
                 <div style="font-size: 12px;">
                     <input type="number" class="acv-input-num" id="misc-swap-wait-threshold" value="${misc.swap_wait_threshold_min || 0}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;"> minute(s)
+                </div>
+            </div>
+
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-shutdown-emu-long-wait-enabled" onchange="WF3.saveMiscConfig(${groupId}); WF3.renderMiscForGroup(${groupId})" ${misc.shutdown_emu_on_long_wait_enabled !== false ? 'checked' : ''} style="margin-top: 2px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                            <span>🖥️</span> Shutdown Emulator On Long Wait
+                        </div>
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            Close the current emulator when no same-emulator account is worth keeping alive.
+                        </div>
+                    </div>
+                </label>
+                <div style="font-size: 12px; margin-top: 6px; padding-left: 24px;">
+                    <input type="number" class="acv-input-num" id="misc-shutdown-emu-wait-threshold" value="${misc.shutdown_emu_wait_threshold_min ?? 30}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;" ${misc.shutdown_emu_on_long_wait_enabled === false ? 'disabled' : ''}> minute(s)
+                    <span style="color: var(--muted-foreground); margin-left: 6px;">Close only when same-emulator wait is longer than this.</span>
                 </div>
             </div>
             

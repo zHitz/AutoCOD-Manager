@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from backend.core.workflow.log_retention import prune_daily_log_tree, prune_prefixed_daily_logs
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -48,11 +49,13 @@ app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIR / "assets")), name="
 
 _LOG_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SAFE_SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_WORKFLOW_LOG_RETENTION_DAYS = 7
 
 
 def _workflow_logs_root() -> Path:
     root = Path(config.db_path).resolve().parent / "workflow_logs"
     root.mkdir(parents=True, exist_ok=True)
+    prune_daily_log_tree(root, retention_days=_WORKFLOW_LOG_RETENTION_DAYS)
     return root
 
 
@@ -451,6 +454,11 @@ async def get_account_timeseries(
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
     bucket: str = Query("hour"),
+    aggregation: str = Query("last"),
+    scope_type: str | None = Query(None),
+    scope_id: int | None = Query(None),
+    target_growth_pct: float | None = Query(None),
+    target_due_at: str | None = Query(None),
 ):
     """Get normalized account timeseries data for the Report page."""
     parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
@@ -463,9 +471,93 @@ async def get_account_timeseries(
             from_iso=from_,
             to_iso=to,
             bucket=bucket,
+            aggregation=aggregation,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            target_growth_pct=target_growth_pct,
+            target_due_at=target_due_at,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/accounts/events")
+async def get_report_account_events(
+    game_ids: str = Query(..., description="Comma-separated game IDs"),
+    from_: str = Query(..., alias="from"),
+    to: str = Query(...),
+):
+    """Get account activity overlays for the Report page."""
+    parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="game_ids is required")
+    try:
+        return await database.get_report_account_events(
+            game_ids=parsed_ids,
+            from_iso=from_,
+            to_iso=to,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/accounts/farming")
+async def get_report_farming_summary(
+    game_ids: str = Query(..., description="Comma-separated game IDs"),
+    days_back: int = Query(7, ge=1, le=90),
+):
+    """Get farming summary data for the Report page."""
+    parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="game_ids is required")
+    try:
+        return await database.get_report_farming_summary(
+            game_ids=parsed_ids,
+            days_back=days_back,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/targets")
+async def get_report_targets(
+    scope_type: str | None = Query(None),
+    scope_id: int | None = Query(None),
+    metric: str | None = Query(None),
+):
+    """List report targets."""
+    try:
+        return await database.get_report_targets(
+            scope_type=scope_type,
+            scope_id=scope_id,
+            metric=metric,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/reports/targets")
+async def upsert_report_target(payload: dict):
+    """Create or update a report target."""
+    try:
+        return await database.upsert_report_target(
+            scope_type=payload.get("scope_type"),
+            scope_id=int(payload.get("scope_id")),
+            metric=payload.get("metric"),
+            target_growth_pct=float(payload.get("target_growth_pct")),
+            due_at=payload.get("due_at"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/reports/targets/{target_id}")
+async def delete_report_target(target_id: int):
+    """Delete a report target."""
+    deleted = await database.delete_report_target(target_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Target not found")
+    return {"status": "ok", "deleted": True}
 
 
 # ──────────────────────────────────────────────
@@ -554,8 +646,10 @@ async def list_all_emulators():
 async def launch_emulator(index: int):
     """Start an emulator by index."""
     from backend.core import ldplayer_manager
+    from backend.core import window_arranger
 
     ldplayer_manager.launch_instance(index)
+    window_arranger.arrange_after_launch(index)
     return {"status": "ok", "msg": f"Launch command sent for index {index}"}
 
 
@@ -566,6 +660,55 @@ async def quit_emulator(index: int):
 
     ldplayer_manager.quit_instance(index)
     return {"status": "ok", "msg": f"Quit command sent for index {index}"}
+
+
+@app.get("/api/emulators/window-layout/settings")
+async def get_window_layout_settings():
+    """Get optional emulator window layout settings."""
+    from backend.core import window_arranger
+
+    return window_arranger.get_settings_payload()
+
+
+@app.post("/api/emulators/window-layout/settings")
+async def save_window_layout_settings(payload: dict):
+    """Persist optional emulator window layout settings."""
+    from backend.core import window_arranger
+
+    settings = window_arranger.save_settings(payload or {})
+    return {
+        "status": "ok",
+        "supported": window_arranger.is_supported(),
+        "settings": settings,
+    }
+
+
+@app.post("/api/emulators/window-layout/apply")
+async def apply_window_layout(payload: dict | None = None):
+    """Apply saved layout to running emulator windows."""
+    from backend.core import window_arranger
+
+    payload = payload or {}
+    indices = payload.get("indices")
+    if isinstance(indices, list):
+        indices = [int(i) for i in indices if str(i).strip().lstrip("-").isdigit()]
+    else:
+        indices = None
+    return window_arranger.apply_layout(indices=indices)
+
+
+@app.post("/api/emulators/window-layout/capture")
+async def capture_window_layout(payload: dict | None = None):
+    """Capture current bounds for running emulator windows."""
+    from backend.core import window_arranger
+
+    payload = payload or {}
+    indices = payload.get("indices")
+    if isinstance(indices, list):
+        indices = [int(i) for i in indices if str(i).strip().lstrip("-").isdigit()]
+    else:
+        indices = None
+    return window_arranger.capture_positions(indices=indices)
 
 
 # ──────────────────────────────────────────────
@@ -1934,7 +2077,15 @@ def _migrate_config_v1_to_v2(group_id: int, v1_config: dict) -> dict:
         "group_id": group_id,
         "updated_at": datetime.utcnow().isoformat() + "Z",
         "activities": {},
-        "misc": v1_config.get("misc", {"cooldown_min": 0, "limit_min": 0}),
+        "misc": v1_config.get(
+            "misc",
+            {
+                "cooldown_min": 0,
+                "limit_min": 0,
+                "shutdown_emu_on_long_wait_enabled": True,
+                "shutdown_emu_wait_threshold_min": 30,
+            },
+        ),
     }
 
     # Pre-populate all known activities with defaults
@@ -2202,9 +2353,14 @@ async def create_group(body: dict):
 
     account_ids = body.get("account_ids", [])
     account_ids_json = json.dumps(account_ids)
+    cycle_target_minutes = max(30, int(body.get("cycle_target_minutes") or 180))
 
     try:
-        group_id = await database.create_group(name=name, account_ids=account_ids_json)
+        group_id = await database.create_group(
+            name=name,
+            account_ids=account_ids_json,
+            cycle_target_minutes=cycle_target_minutes,
+        )
         return {"status": "created", "id": group_id}
     except Exception as e:
         if "UNIQUE" in str(e):
@@ -2225,10 +2381,16 @@ async def update_group(group_id: int, body: dict):
 
     account_ids = body.get("account_ids")
     account_ids_json = json.dumps(account_ids) if account_ids is not None else None
+    cycle_target_minutes = body.get("cycle_target_minutes")
+    if cycle_target_minutes is not None:
+        cycle_target_minutes = max(30, int(cycle_target_minutes))
 
     try:
         ok = await database.update_group(
-            group_id, name=name, account_ids=account_ids_json
+            group_id,
+            name=name,
+            account_ids=account_ids_json,
+            cycle_target_minutes=cycle_target_minutes,
         )
         if ok:
             return {"status": "ok", "id": group_id}
@@ -2661,6 +2823,233 @@ async def get_task_account_history(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
+@app.get("/api/task/group-overview")
+async def get_task_group_overview(
+    group_id: int,
+    date: str = None,
+    lookback_days: int = 7,
+):
+    """Return workflow cycle KPI overview for a target group."""
+    import aiosqlite
+    import json
+    import math
+    import statistics
+    from datetime import datetime as dt_cls, timedelta
+
+    target_date = date or dt_cls.now().strftime("%Y-%m-%d")
+    lookback_days = max(1, min(int(lookback_days or 7), 30))
+    lookback_start = (
+        dt_cls.fromisoformat(target_date) - timedelta(days=lookback_days - 1)
+    ).strftime("%Y-%m-%d")
+
+    try:
+        async with aiosqlite.connect(config.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            group_cursor = await db.execute(
+                """SELECT id, name, account_ids, cycle_target_minutes
+                   FROM account_groups
+                   WHERE id = ?""",
+                (group_id,),
+            )
+            group_row = await group_cursor.fetchone()
+            if not group_row:
+                return {"status": "error", "error": "Group not found"}
+
+            try:
+                group_account_ids = json.loads(group_row["account_ids"] or "[]")
+            except Exception:
+                group_account_ids = []
+            group_account_ids = [
+                int(account_id)
+                for account_id in group_account_ids
+                if str(account_id).strip()
+            ]
+            account_count = len(group_account_ids)
+
+            account_rows = []
+            if group_account_ids:
+                placeholders = ",".join("?" for _ in group_account_ids)
+                account_cursor = await db.execute(
+                    f"""SELECT id AS account_id, game_id, emulator_id
+                        FROM accounts
+                        WHERE id IN ({placeholders})""",
+                    tuple(group_account_ids),
+                )
+                account_rows = [dict(r) for r in await account_cursor.fetchall()]
+            emulator_count = len(
+                {
+                    int(r["emulator_id"])
+                    for r in account_rows
+                    if r.get("emulator_id") is not None
+                }
+            )
+
+            session_query = """
+                WITH ordered AS (
+                    SELECT
+                        id,
+                        run_id,
+                        account_id,
+                        game_id,
+                        started_at,
+                        finished_at,
+                        duration_ms,
+                        status,
+                        LAG(account_id) OVER (
+                            PARTITION BY run_id
+                            ORDER BY datetime(started_at), id
+                        ) AS prev_account_id
+                    FROM account_activity_logs
+                    WHERE group_id = ?
+                      AND date(started_at) BETWEEN ? AND ?
+                ),
+                sessioned AS (
+                    SELECT
+                        *,
+                        SUM(
+                            CASE
+                                WHEN prev_account_id IS NULL OR prev_account_id != account_id THEN 1
+                                ELSE 0
+                            END
+                        ) OVER (
+                            PARTITION BY run_id
+                            ORDER BY datetime(started_at), id
+                            ROWS UNBOUNDED PRECEDING
+                        ) AS session_no
+                    FROM ordered
+                )
+                SELECT
+                    run_id,
+                    session_no,
+                    account_id,
+                    game_id,
+                    MIN(started_at) AS started_at,
+                    MAX(COALESCE(finished_at, started_at)) AS finished_at,
+                    COUNT(*) AS activity_count,
+                    SUM(COALESCE(duration_ms, 0)) AS active_duration_ms,
+                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count
+                FROM sessioned
+                GROUP BY run_id, session_no, account_id, game_id
+                ORDER BY datetime(started_at) ASC
+            """
+            session_cursor = await db.execute(
+                session_query,
+                (group_id, lookback_start, target_date),
+            )
+            session_rows = [dict(r) for r in await session_cursor.fetchall()]
+
+        def _session_to_metrics(row: dict) -> dict:
+            started_at = row.get("started_at")
+            finished_at = row.get("finished_at") or started_at
+            wall_sec = 0.0
+            if started_at and finished_at:
+                try:
+                    wall_sec = max(
+                        0.0,
+                        (
+                            dt_cls.fromisoformat(finished_at)
+                            - dt_cls.fromisoformat(started_at)
+                        ).total_seconds(),
+                    )
+                except ValueError:
+                    wall_sec = 0.0
+            return {
+                **row,
+                "wall_sec": wall_sec,
+                "wall_min": wall_sec / 60.0,
+                "active_min": (int(row.get("active_duration_ms") or 0) / 1000.0) / 60.0,
+            }
+
+        sessions = [_session_to_metrics(row) for row in session_rows if row.get("started_at")]
+        selected_sessions = [
+            row for row in sessions if str(row.get("started_at", "")).startswith(target_date)
+        ]
+
+        def _build_summary(rows: list[dict]) -> dict:
+            if not rows:
+                return {
+                    "session_count": 0,
+                    "avg_account_min": 0,
+                    "median_account_min": 0,
+                    "p90_account_min": 0,
+                    "max_account_min": 0,
+                    "avg_failed_sessions": 0,
+                    "avg_activities": 0,
+                    "estimated_full_cycle_min": 0,
+                    "estimated_full_cycle_hours": 0,
+                    "throughput_accounts_per_hour": 0,
+                    "target_utilization_pct": 0,
+                    "risk_status": "no-data",
+                }
+
+            wall_minutes = sorted(row["wall_min"] for row in rows)
+            avg_account_min = statistics.fmean(wall_minutes)
+            median_account_min = statistics.median(wall_minutes)
+            p90_index = min(len(wall_minutes) - 1, max(0, math.ceil(len(wall_minutes) * 0.9) - 1))
+            p90_account_min = wall_minutes[p90_index]
+            max_account_min = wall_minutes[-1]
+            avg_failed_sessions = statistics.fmean(float(row.get("failed_count") or 0) for row in rows)
+            avg_activities = statistics.fmean(float(row.get("activity_count") or 0) for row in rows)
+
+            effective_emulators = max(1, emulator_count or 0)
+            effective_accounts = max(1, account_count or 0)
+            estimated_full_cycle_min = (avg_account_min * effective_accounts) / effective_emulators
+            throughput_accounts_per_hour = (
+                (effective_emulators * 60.0) / avg_account_min if avg_account_min > 0 else 0
+            )
+            target_minutes = max(30, int(group_row["cycle_target_minutes"] or 180))
+            target_utilization_pct = (
+                (estimated_full_cycle_min / target_minutes) * 100.0 if target_minutes > 0 else 0
+            )
+            if estimated_full_cycle_min <= target_minutes * 0.85:
+                risk_status = "on-track"
+            elif estimated_full_cycle_min <= target_minutes:
+                risk_status = "at-risk"
+            else:
+                risk_status = "overdue"
+
+            return {
+                "session_count": len(rows),
+                "avg_account_min": round(avg_account_min, 2),
+                "median_account_min": round(median_account_min, 2),
+                "p90_account_min": round(p90_account_min, 2),
+                "max_account_min": round(max_account_min, 2),
+                "avg_failed_sessions": round(avg_failed_sessions, 2),
+                "avg_activities": round(avg_activities, 2),
+                "estimated_full_cycle_min": round(estimated_full_cycle_min, 2),
+                "estimated_full_cycle_hours": round(estimated_full_cycle_min / 60.0, 2),
+                "throughput_accounts_per_hour": round(throughput_accounts_per_hour, 2),
+                "target_utilization_pct": round(target_utilization_pct, 1),
+                "risk_status": risk_status,
+            }
+
+        target_minutes = max(30, int(group_row["cycle_target_minutes"] or 180))
+        per_account_budget_min = round(
+            (target_minutes * max(1, emulator_count or 0)) / max(1, account_count or 0),
+            2,
+        )
+
+        return {
+            "status": "success",
+            "group": {
+                "id": int(group_row["id"]),
+                "name": group_row["name"],
+                "account_count": account_count,
+                "emulator_count": emulator_count,
+                "cycle_target_minutes": target_minutes,
+                "cycle_target_hours": round(target_minutes / 60.0, 2),
+                "per_account_budget_min": per_account_budget_min,
+            },
+            "selected_date": target_date,
+            "lookback_days": lookback_days,
+            "today": _build_summary(selected_sessions),
+            "recent": _build_summary(sessions),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
 @app.post("/api/task/checklist/rebuild-today")
 async def rebuild_task_checklist_today():
     """Utility endpoint to rebuild task_daily_state for today."""
@@ -2860,9 +3249,69 @@ async def save_checklist_template(body: dict):
         return {"status": "error", "error": str(e)}
 
 
+
+
+# ──────────────────────────────────────────────
+# Bulk Proxy Management Endpoint
+# ──────────────────────────────────────────────
+
+@app.get("/api/proxies")
+async def get_proxies():
+    """Get all proxies and their emulator assignments."""
+    proxies = await database.get_all_proxies()
+    return {"status": "ok", "proxies": proxies}
+
+class BulkProxyInput(BaseModel):
+    raw_lines: str
+
+@app.post("/api/proxies")
+async def add_proxies(payload: BulkProxyInput):
+    """Parse IP:PORT:USER:PASS and save to DB."""
+    lines = [line.strip() for line in payload.raw_lines.split('\n') if line.strip()]
+    added_count = 0
+    for line in lines:
+        parts = line.split(':')
+        if len(parts) == 4:
+            ip, port, user, password = parts
+            name = f"Proxy_{ip}_{port}"
+            gen = f'# superproxy:proxylist:v1\nhttp://{user}:{password}@{ip}:{port} "{name}" * dns:google'
+            await database.add_proxy(raw_config=line, generated_config=gen, name=name)
+            added_count += 1
+    return {"status": "ok", "added": added_count}
+
+@app.delete("/api/proxies/{proxy_id}")
+async def delete_proxy(proxy_id: int):
+    """Delete a proxy."""
+    deleted = await database.delete_proxy(proxy_id)
+    return {"status": "ok" if deleted else "not_found"}
+
+class ProxyAssignInput(BaseModel):
+    proxy_id: int
+    emulator_indices: list[int]
+
+@app.post("/api/proxies/assign")
+async def assign_proxy(payload: ProxyAssignInput):
+    """Assign emulator indices to a proxy."""
+    await database.set_proxy_assignments(payload.proxy_id, payload.emulator_indices)
+    return {"status": "ok"}
+
+@app.post("/api/proxies/deploy")
+async def deploy_proxies():
+    """Trigger the background bulk proxy deployment task."""
+    from backend.core.tasks.bulk_proxy_task import start_bulk_deployment
+    start_bulk_deployment()
+    return {"status": "accepted"}
+
+
 @app.on_event("startup")
 async def startup():
     """Initialize on startup."""
+    prune_daily_log_tree(Path(config.db_path).resolve().parent / "workflow_logs", retention_days=_WORKFLOW_LOG_RETENTION_DAYS)
+    workflow_logs_dir = Path(__file__).resolve().parent / "core" / "workflow" / "logs"
+    prune_prefixed_daily_logs(workflow_logs_dir / "ocr_swap", prefix="ocr_swap_", retention_days=7)
+    prune_prefixed_daily_logs(workflow_logs_dir / "smart_queue", prefix="smart_wait_", retention_days=7)
+    prune_prefixed_daily_logs(workflow_logs_dir / "swap_account", prefix="swap_", retention_days=7)
+
     # Wire up WebSocket callback to task queue
     task_queue.set_ws_callback(ws_manager.broadcast_sync)
 
