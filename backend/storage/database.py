@@ -142,6 +142,12 @@ CREATE TABLE IF NOT EXISTS accounts (
     provider        TEXT DEFAULT 'Global',
     alliance        TEXT DEFAULT '',
     note            TEXT DEFAULT '',
+    role            TEXT DEFAULT 'farmer',
+    rss_center_builder_enabled INTEGER DEFAULT 0,
+    safe_to_boot    INTEGER DEFAULT 0,
+    builder_priority INTEGER DEFAULT 100,
+    last_builder_run_at TEXT,
+    builder_resource_policy TEXT DEFAULT 'random',
     is_active       INTEGER DEFAULT 0,              -- 1 = currently active on its emulator
     created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -291,6 +297,8 @@ CREATE TABLE IF NOT EXISTS debug_logs (
     function_name   TEXT DEFAULT '',
     activity_id     TEXT DEFAULT '',
     screenshot_path TEXT DEFAULT '',
+    video_path      TEXT DEFAULT '',
+    video_duration_ms INTEGER DEFAULT 0,
     is_resolved     INTEGER NOT NULL DEFAULT 0,
     resolved_at     TEXT,
     resolved_note   TEXT DEFAULT '',
@@ -318,6 +326,35 @@ CREATE TABLE IF NOT EXISTS proxy_assignments (
     UNIQUE(proxy_id, emulator_index)
 );
 CREATE INDEX IF NOT EXISTS idx_proxy_assignments_emu ON proxy_assignments(emulator_index);
+
+CREATE TABLE IF NOT EXISTS rss_center_rebuild_requests (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_account_id   INTEGER,
+    source_game_id      TEXT DEFAULT '',
+    source_group_id     INTEGER,
+    source_emulator_id  INTEGER,
+    source_serial       TEXT DEFAULT '',
+    request_key         TEXT NOT NULL UNIQUE,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    reason_code         TEXT NOT NULL,
+    reason_message      TEXT DEFAULT '',
+    requested_resource_type TEXT DEFAULT 'random',
+    request_source      TEXT DEFAULT 'farmer_workflow',
+    requested_at        TEXT DEFAULT CURRENT_TIMESTAMP,
+    claimed_at          TEXT,
+    claimed_by_game_id  TEXT DEFAULT '',
+    claimed_by_account_id INTEGER,
+    finished_at         TEXT,
+    result_status       TEXT DEFAULT '',
+    result_message      TEXT DEFAULT '',
+    run_mode            TEXT DEFAULT 'scheduled',
+    last_error          TEXT DEFAULT '',
+    retry_count         INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_rss_center_requests_status_requested
+ON rss_center_rebuild_requests(status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rss_center_requests_source
+ON rss_center_rebuild_requests(source_game_id, source_serial, requested_at DESC);
 """
 
 
@@ -522,10 +559,16 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
 
 
 def _ensure_debug_logs_resolve_columns(conn: sqlite3.Connection):
-    """Add resolve-tracking columns to debug_logs if they are missing."""
+    """Add missing debug_logs columns without breaking existing installs."""
     cols = [row[1] for row in conn.execute("PRAGMA table_info(debug_logs)").fetchall()]
     added_any = False
 
+    if "video_path" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN video_path TEXT DEFAULT ''")
+        added_any = True
+    if "video_duration_ms" not in cols:
+        conn.execute("ALTER TABLE debug_logs ADD COLUMN video_duration_ms INTEGER DEFAULT 0")
+        added_any = True
     if "is_resolved" not in cols:
         conn.execute("ALTER TABLE debug_logs ADD COLUMN is_resolved INTEGER NOT NULL DEFAULT 0")
         added_any = True
@@ -558,6 +601,35 @@ def _ensure_accounts_lock_columns(conn: sqlite3.Connection):
     if added_any:
         conn.commit()
         print("[DB Migration] Added lord_name_locked column to accounts")
+
+
+def _ensure_accounts_builder_columns(conn: sqlite3.Connection):
+    """Add RSS center builder metadata columns to accounts if they are missing."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()]
+    additions = {
+        "role": "ALTER TABLE accounts ADD COLUMN role TEXT DEFAULT 'farmer'",
+        "rss_center_builder_enabled": "ALTER TABLE accounts ADD COLUMN rss_center_builder_enabled INTEGER DEFAULT 0",
+        "safe_to_boot": "ALTER TABLE accounts ADD COLUMN safe_to_boot INTEGER DEFAULT 0",
+        "builder_priority": "ALTER TABLE accounts ADD COLUMN builder_priority INTEGER DEFAULT 100",
+        "last_builder_run_at": "ALTER TABLE accounts ADD COLUMN last_builder_run_at TEXT",
+        "builder_resource_policy": "ALTER TABLE accounts ADD COLUMN builder_resource_policy TEXT DEFAULT 'random'",
+    }
+    added_any = False
+
+    for col, sql in additions.items():
+        if col not in cols:
+            conn.execute(sql)
+            added_any = True
+
+    if added_any:
+        conn.commit()
+        print("[DB Migration] Added RSS Center builder columns to accounts")
+
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_accounts_builder_candidates
+           ON accounts(rss_center_builder_enabled, safe_to_boot, builder_priority, last_builder_run_at)"""
+    )
+    conn.commit()
 
 
 def _ensure_account_group_kpi_columns(conn: sqlite3.Connection):
@@ -601,6 +673,7 @@ class Database:
         _migrate_v2_to_v3(conn)
         _ensure_debug_logs_resolve_columns(conn)
         _ensure_accounts_lock_columns(conn)
+        _ensure_accounts_builder_columns(conn)
         _ensure_account_group_kpi_columns(conn)
 
         # Add required_runs column if missing (KPI support)
@@ -1850,6 +1923,8 @@ class Database:
                        a.lord_name as acc_lord_name,
                        a.lord_name_locked,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
+                       a.role, a.rss_center_builder_enabled, a.safe_to_boot,
+                       a.builder_priority, a.last_builder_run_at, a.builder_resource_policy,
                        a.is_active,
                        a.created_at as account_created_at, a.updated_at,
                        e.id as emulator_db_id, e.emu_index, e.serial, e.name as emu_name,
@@ -1929,6 +2004,8 @@ class Database:
                        a.lord_name as acc_lord_name,
                        a.lord_name_locked,
                        a.login_method, a.email, a.provider, a.alliance, a.note,
+                       a.role, a.rss_center_builder_enabled, a.safe_to_boot,
+                       a.builder_priority, a.last_builder_run_at, a.builder_resource_policy,
                        a.is_active,
                        a.created_at as account_created_at, a.updated_at,
                        e.id as emulator_db_id, e.emu_index, e.serial, e.name as emu_name,
@@ -2084,8 +2161,12 @@ class Database:
             if bucket == "raw":
                 return [
                     {
+                        "snapshot_id": point.get("snapshot_id"),
+                        "source": point.get("source") or "snapshot",
+                        "metric": metric,
                         "timestamp": point["timestamp"],
                         "value": int(point.get("value") or 0),
+                        "source_value": int(point.get("value") or 0),
                         "lord_name": point.get("lord_name") or "",
                     }
                     for point in raw_points
@@ -2116,8 +2197,13 @@ class Database:
 
                 results.append(
                     {
+                        "snapshot_id": last_item.get("snapshot_id"),
+                        "source": last_item.get("source") or "snapshot",
+                        "metric": metric,
+                        "aggregation_note": "Representative last snapshot in bucket",
                         "timestamp": last_item["timestamp"],
                         "value": int(round(value)),
+                        "source_value": int(last_item.get("value") or 0),
                         "lord_name": last_item.get("lord_name") or first_item.get("lord_name") or "",
                     }
                 )
@@ -2236,6 +2322,7 @@ class Database:
             if resource_metric:
                 points_cursor = await db.execute(
                     f"""SELECT
+                            s.id AS snapshot_id,
                             s.game_id,
                             s.lord_name,
                             s.created_at,
@@ -2253,6 +2340,7 @@ class Database:
             else:
                 points_cursor = await db.execute(
                     f"""SELECT
+                            s.id AS snapshot_id,
                             s.game_id,
                             s.lord_name,
                             s.created_at,
@@ -2275,6 +2363,8 @@ class Database:
                         "timestamp": _to_iso_z(_parse_iso_utc(point.get("created_at", ""))) or point.get("created_at", ""),
                         "value": int(point.get("metric_value") or 0),
                         "lord_name": point.get("lord_name") or "",
+                        "snapshot_id": point.get("snapshot_id"),
+                        "source": "resource" if resource_metric else "snapshot",
                     }
                 )
 
@@ -2428,7 +2518,16 @@ class Database:
                     "account_id": account.get("account_id"),
                     "emulator_name": account.get("emulator_name") or "",
                     "points": [
-                        {"timestamp": point["timestamp"], "value": int(point.get("value") or 0)}
+                        {
+                            "timestamp": point["timestamp"],
+                            "value": int(point.get("value") or 0),
+                            "source_value": int(point.get("source_value", point.get("value") or 0) or 0),
+                            "snapshot_id": point.get("snapshot_id"),
+                            "source": point.get("source") or ("resource" if resource_metric else "snapshot"),
+                            "metric": metric,
+                            "editable": bool(point.get("snapshot_id")),
+                            "aggregation_note": point.get("aggregation_note"),
+                        }
                         for point in points
                     ],
                     "summary": {
@@ -2437,6 +2536,20 @@ class Database:
                         "min": min(values) if values else None,
                         "max": max(values) if values else None,
                         "last_sync_at": last_sync_at,
+                        "latest_point": (
+                            {
+                                "timestamp": points[-1]["timestamp"],
+                                "value": int(points[-1].get("value") or 0),
+                                "source_value": int(points[-1].get("source_value", points[-1].get("value") or 0) or 0),
+                                "snapshot_id": points[-1].get("snapshot_id"),
+                                "source": points[-1].get("source") or ("resource" if resource_metric else "snapshot"),
+                                "metric": metric,
+                                "editable": bool(points[-1].get("snapshot_id")),
+                                "aggregation_note": points[-1].get("aggregation_note"),
+                            }
+                            if points
+                            else None
+                        ),
                     },
                     "derived_summary": {
                         "growth_pct_in_range": growth_pct,
@@ -2489,11 +2602,87 @@ class Database:
             },
         }
 
+    async def update_report_datapoint(
+        self,
+        snapshot_id: int,
+        game_id: str,
+        metric: str,
+        value: int | float,
+    ) -> dict:
+        """Update the backing scan datapoint used by the Report growth chart."""
+        valid_snapshot_metrics = {"power", "pet_token", "hall_level", "market_level"}
+        valid_resource_metrics = {"gold", "wood", "ore", "mana"}
+        metric = str(metric or "").strip().lower()
+        if metric not in valid_snapshot_metrics | valid_resource_metrics:
+            raise ValueError(f"Metric is not editable from report: {metric}")
+        try:
+            snapshot_id = int(snapshot_id)
+            numeric_value = int(round(float(value)))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("snapshot_id and value must be numeric") from exc
+        if snapshot_id <= 0:
+            raise ValueError("snapshot_id is required")
+        if numeric_value < 0:
+            raise ValueError("value must be greater than or equal to 0")
+        game_id = str(game_id or "").strip()
+        if not game_id:
+            raise ValueError("game_id is required")
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            snapshot_cursor = await db.execute(
+                """SELECT id, game_id, created_at
+                   FROM scan_snapshots
+                   WHERE id = ? AND game_id = ?""",
+                (snapshot_id, game_id),
+            )
+            snapshot = await snapshot_cursor.fetchone()
+            if not snapshot:
+                raise ValueError("Datapoint snapshot was not found")
+
+            if metric in valid_resource_metrics:
+                existing_cursor = await db.execute(
+                    """SELECT id, bag_value
+                       FROM scan_resources
+                       WHERE snapshot_id = ? AND resource_type = ?""",
+                    (snapshot_id, metric),
+                )
+                existing = await existing_cursor.fetchone()
+                if existing:
+                    await db.execute(
+                        """UPDATE scan_resources
+                           SET total_value = ?
+                           WHERE id = ?""",
+                        (numeric_value, int(existing["id"])),
+                    )
+                else:
+                    await db.execute(
+                        """INSERT INTO scan_resources
+                           (snapshot_id, resource_type, bag_value, total_value)
+                           VALUES (?, ?, 0, ?)""",
+                        (snapshot_id, metric, numeric_value),
+                    )
+            else:
+                await db.execute(
+                    f"UPDATE scan_snapshots SET {metric} = ? WHERE id = ?",
+                    (numeric_value, snapshot_id),
+                )
+            await db.commit()
+
+        return {
+            "status": "ok",
+            "snapshot_id": snapshot_id,
+            "game_id": game_id,
+            "metric": metric,
+            "value": numeric_value,
+        }
+
     async def get_report_account_events(
         self,
         game_ids: list[str],
         from_iso: str,
         to_iso: str,
+        activity_id: str | None = None,
     ) -> dict:
         """Get report event overlays and operational summaries from activity logs."""
         requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
@@ -2511,6 +2700,8 @@ class Database:
             for game_id in requested_ids
         }
         total_days = max((to_dt - from_dt).total_seconds() / 86400.0, 1.0)
+        activity_filter = str(activity_id or "").strip()
+        extra_where = " AND activity_id = ? " if activity_filter else ""
 
         async with self._get_conn() as db:
             db.row_factory = aiosqlite.Row
@@ -2527,8 +2718,9 @@ class Database:
                     WHERE game_id IN ({placeholders})
                       AND started_at >= ?
                       AND started_at <= ?
+                      {extra_where}
                     ORDER BY started_at ASC, id ASC""",
-                (*requested_ids, _to_iso_z(from_dt), _to_iso_z(to_dt)),
+                (*requested_ids, _to_iso_z(from_dt), _to_iso_z(to_dt), *((activity_filter,) if activity_filter else tuple())),
             )
             for row in await cursor.fetchall():
                 payload = dict(row)
@@ -2564,6 +2756,296 @@ class Database:
                 {"game_id": game_id, "events": events_by_game_id[game_id], "summary": summary_by_game_id[game_id]}
                 for game_id in requested_ids
             ],
+        }
+
+    async def get_workflow_activity_timeseries(
+        self,
+        game_ids: list[str],
+        activity_id: str,
+        metric: str,
+        from_iso: str,
+        to_iso: str,
+        bucket: str = "hour",
+        aggregation: str = "sum",
+    ) -> dict:
+        """Get workflow activity analytics grouped by account and time bucket."""
+        requested_ids = [str(game_id or "").strip() for game_id in (game_ids or []) if str(game_id or "").strip()]
+        if not requested_ids:
+            raise ValueError("game_ids is required")
+
+        activity_id = str(activity_id or "").strip()
+        if not activity_id:
+            raise ValueError("activity_id is required")
+
+        valid_metrics = {
+            "run_count",
+            "success_count",
+            "fail_count",
+            "success_rate",
+            "avg_duration_ms",
+            "total_duration_ms",
+            "attempts_avg",
+        }
+        valid_buckets = {"raw", "hour", "day"}
+        valid_aggregations = {"sum", "avg", "min", "max", "count", "last"}
+        metric = str(metric or "").strip().lower()
+        bucket = str(bucket or "").strip().lower()
+        aggregation = str(aggregation or "").strip().lower() or "sum"
+        if metric not in valid_metrics:
+            raise ValueError(f"Invalid metric: {metric}")
+        if bucket not in valid_buckets:
+            raise ValueError(f"Invalid bucket: {bucket}")
+        if aggregation not in valid_aggregations:
+            raise ValueError(f"Invalid aggregation: {aggregation}")
+
+        try:
+            from_dt = _parse_iso_utc(from_iso)
+            to_dt = _parse_iso_utc(to_iso)
+        except ValueError as exc:
+            raise ValueError("Invalid from/to datetime") from exc
+        if from_dt >= to_dt:
+            raise ValueError("from must be earlier than to")
+
+        placeholders = ",".join("?" for _ in requested_ids)
+        rows_by_game_id: dict[str, list[dict]] = {game_id: [] for game_id in requested_ids}
+
+        def bucket_key(created_at: str) -> str:
+            dt = _parse_iso_utc(created_at)
+            if bucket == "day":
+                return dt.strftime("%Y-%m-%d")
+            if bucket == "hour":
+                return dt.strftime("%Y-%m-%d %H")
+            return _to_iso_z(dt) or created_at
+
+        def expected_point_count(total_seconds: float) -> int:
+            if bucket == "day":
+                return max(1, int(math.floor(total_seconds / 86400.0)) + 1)
+            if bucket == "hour":
+                return max(1, int(math.floor(total_seconds / 3600.0)) + 1)
+            return 0
+
+        def aggregate_bucket(items: list[dict]) -> dict:
+            items = sorted(items, key=lambda item: item["timestamp"])
+            durations = [float(item.get("duration_ms") or 0) for item in items]
+            attempts = [float(item.get("attempts") or 0) for item in items]
+            success_count = sum(1 for item in items if item.get("status") == "SUCCESS")
+            fail_count = sum(1 for item in items if item.get("status") == "FAILED")
+            run_count = len(items)
+            status_value_map = {
+                "run_count": float(run_count),
+                "success_count": float(success_count),
+                "fail_count": float(fail_count),
+                "success_rate": (success_count / run_count * 100.0) if run_count else 0.0,
+                "avg_duration_ms": (sum(durations) / len(durations)) if durations else 0.0,
+                "total_duration_ms": sum(durations),
+                "attempts_avg": (sum(attempts) / len(attempts)) if attempts else 0.0,
+            }
+
+            if metric in {"run_count", "success_count", "fail_count"}:
+                base_value = status_value_map[metric]
+            elif metric == "success_rate":
+                base_value = status_value_map["success_rate"]
+            elif metric == "avg_duration_ms":
+                base_value = status_value_map["avg_duration_ms"]
+            elif metric == "attempts_avg":
+                base_value = status_value_map["attempts_avg"]
+            else:
+                base_value = status_value_map["total_duration_ms"]
+
+            if metric in {"run_count", "success_count", "fail_count", "total_duration_ms"}:
+                if aggregation == "avg":
+                    value = base_value / max(run_count, 1)
+                elif aggregation == "min":
+                    value = min([base_value] + durations) if durations else base_value
+                elif aggregation == "max":
+                    value = max([base_value] + durations) if durations else base_value
+                elif aggregation == "count":
+                    value = float(run_count)
+                elif aggregation == "last":
+                    value = float(items[-1].get("metric_value") or base_value)
+                else:
+                    value = base_value
+            elif metric in {"avg_duration_ms", "attempts_avg"}:
+                if aggregation == "min":
+                    value = min(durations if metric == "avg_duration_ms" else attempts) if items else 0.0
+                elif aggregation == "max":
+                    value = max(durations if metric == "avg_duration_ms" else attempts) if items else 0.0
+                elif aggregation == "last":
+                    source = durations if metric == "avg_duration_ms" else attempts
+                    value = source[-1] if source else 0.0
+                else:
+                    source = durations if metric == "avg_duration_ms" else attempts
+                    value = (sum(source) / len(source)) if source else 0.0
+            else:
+                if aggregation == "min":
+                    value = 0.0 if not items else min((1.0 if item.get("status") == "SUCCESS" else 0.0) for item in items) * 100.0
+                elif aggregation == "max":
+                    value = 0.0 if not items else max((1.0 if item.get("status") == "SUCCESS" else 0.0) for item in items) * 100.0
+                else:
+                    value = status_value_map["success_rate"]
+
+            return {
+                "timestamp": items[-1]["timestamp"],
+                "value": float(value),
+                "run_count": run_count,
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "duration_ms": sum(durations),
+                "attempts_avg": (sum(attempts) / len(attempts)) if attempts else 0.0,
+                "last_status": items[-1].get("status") or "",
+            }
+
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            account_cursor = await db.execute(
+                f"""SELECT
+                        a.id AS account_id,
+                        a.game_id,
+                        a.lord_name AS account_lord_name,
+                        e.name AS emulator_name
+                    FROM accounts a
+                    LEFT JOIN emulators e ON a.emulator_id = e.id
+                    WHERE a.game_id IN ({placeholders})""",
+                tuple(requested_ids),
+            )
+            account_map = {row["game_id"]: dict(row) for row in await account_cursor.fetchall()}
+
+            activity_cursor = await db.execute(
+                f"""SELECT
+                        game_id,
+                        activity_id,
+                        activity_name,
+                        status,
+                        started_at,
+                        duration_ms,
+                        attempts
+                    FROM account_activity_logs
+                    WHERE game_id IN ({placeholders})
+                      AND activity_id = ?
+                      AND started_at >= ?
+                      AND started_at <= ?
+                    ORDER BY game_id ASC, started_at ASC, id ASC""",
+                (*requested_ids, activity_id, _to_iso_z(from_dt), _to_iso_z(to_dt)),
+            )
+            raw_rows = [dict(row) for row in await activity_cursor.fetchall()]
+
+        activity_name = activity_id
+        for row in raw_rows:
+            game_id = row.get("game_id")
+            if game_id not in rows_by_game_id:
+                continue
+            activity_name = row.get("activity_name") or activity_name
+            rows_by_game_id[game_id].append(
+                {
+                    "timestamp": _to_iso_z(_parse_iso_utc(row.get("started_at", ""))) or row.get("started_at", ""),
+                    "status": row.get("status") or "",
+                    "duration_ms": int(row.get("duration_ms") or 0),
+                    "attempts": int(row.get("attempts") or 0),
+                    "metric_value": 1,
+                }
+            )
+
+        total_seconds = max((to_dt - from_dt).total_seconds(), 1.0)
+        expected_points = expected_point_count(total_seconds)
+        series_payload = []
+        risk_feed: list[dict] = []
+
+        for game_id in requested_ids:
+            account = account_map.get(game_id, {})
+            raw_points = rows_by_game_id.get(game_id, [])
+            if bucket == "raw":
+                points = [aggregate_bucket([item]) for item in raw_points]
+            else:
+                grouped: dict[str, list[dict]] = {}
+                for item in raw_points:
+                    grouped.setdefault(bucket_key(item["timestamp"]), []).append(item)
+                points = [aggregate_bucket(grouped[key]) for key in sorted(grouped.keys())]
+
+            values = [float(point.get("value") or 0.0) for point in points]
+            latest = values[-1] if values else None
+            first = values[0] if values else None
+            run_total = sum(int(point.get("run_count") or 0) for point in points)
+            success_total = sum(int(point.get("success_count") or 0) for point in points)
+            fail_total = sum(int(point.get("fail_count") or 0) for point in points)
+            duration_total = sum(int(point.get("duration_ms") or 0) for point in points)
+            attempts_avg = (sum(float(point.get("attempts_avg") or 0) for point in points) / len(points)) if points else None
+            success_rate = (success_total / run_total * 100.0) if run_total else None
+            last_activity_at = points[-1]["timestamp"] if points else None
+            freshness_seconds = None
+            if last_activity_at:
+                freshness_seconds = max((datetime.now(timezone.utc) - _parse_iso_utc(last_activity_at)).total_seconds(), 0.0)
+            completeness_ratio = min(len(points) / max(expected_points, 1), 1.0) if bucket != "raw" else (1.0 if points else 0.0)
+            quality_flags: list[str] = []
+            if freshness_seconds is not None and freshness_seconds > 48 * 3600:
+                quality_flags.append("stale_data")
+            if completeness_ratio < 0.5 and bucket != "raw":
+                quality_flags.append("low_coverage")
+            if fail_total > 0 and fail_total >= max(1, math.ceil(run_total * 0.3)):
+                quality_flags.append("operational_issue")
+            risk_level = "healthy"
+            if "operational_issue" in quality_flags:
+                risk_level = "high"
+            elif quality_flags:
+                risk_level = "medium"
+
+            if run_total or quality_flags:
+                risk_feed.append(
+                    {
+                        "game_id": game_id,
+                        "lord_name": account.get("account_lord_name") or game_id,
+                        "risk_level": risk_level,
+                        "reasons": quality_flags,
+                        "recommended_action": (
+                            "Inspect failed runs and cooldown configuration."
+                            if "operational_issue" in quality_flags
+                            else "Increase execution frequency or verify scheduler coverage."
+                        ),
+                    }
+                )
+
+            series_payload.append(
+                {
+                    "game_id": game_id,
+                    "lord_name": account.get("account_lord_name") or game_id,
+                    "account_id": account.get("account_id"),
+                    "emulator_name": account.get("emulator_name") or "",
+                    "points": [{"timestamp": point["timestamp"], "value": round(float(point["value"]), 2)} for point in points],
+                    "summary": {
+                        "latest": latest,
+                        "delta_in_range": (latest - first) if latest is not None and first is not None else None,
+                        "min": min(values) if values else None,
+                        "max": max(values) if values else None,
+                        "last_sync_at": last_activity_at,
+                    },
+                    "derived_summary": {
+                        "run_count": run_total,
+                        "success_count": success_total,
+                        "fail_count": fail_total,
+                        "success_rate": success_rate,
+                        "avg_duration_ms": (duration_total / run_total) if run_total else None,
+                        "total_duration_ms": duration_total,
+                        "attempts_avg": attempts_avg,
+                        "data_freshness_seconds": freshness_seconds,
+                        "data_completeness_ratio": completeness_ratio,
+                        "risk_level": risk_level,
+                        "last_activity_at": last_activity_at,
+                    },
+                    "quality_flags": quality_flags,
+                }
+            )
+
+        return {
+            "activity": {"id": activity_id, "name": activity_name},
+            "metric": metric,
+            "bucket": bucket,
+            "aggregation": aggregation,
+            "range": {"from": _to_iso_z(from_dt), "to": _to_iso_z(to_dt)},
+            "series": series_payload,
+            "timezone_context": {"source": "utc", "client_rendered": True},
+            "meta": {
+                "expected_point_count": expected_points,
+                "risk_feed": risk_feed,
+            },
         }
 
     async def get_report_farming_summary(
@@ -2633,6 +3115,7 @@ class Database:
                 "last_gathered_at": None,
                 "success_rate": 0.0,
                 "rss_distribution": {"gold": 0, "wood": 0, "ore": 0, "mana": 0},
+                "daily_series": {},
             }
             for game_id in requested_ids
         }
@@ -2669,6 +3152,25 @@ class Database:
             started_at = row["started_at"]
             if started_at and (item["last_gathered_at"] is None or str(started_at) > str(item["last_gathered_at"])):
                 item["last_gathered_at"] = started_at
+            day_key = str(started_at or "")[:10]
+            if day_key:
+                daily = item["daily_series"].setdefault(day_key, {
+                    "date": day_key,
+                    "total_gathers": 0,
+                    "successful_gathers": 0,
+                    "failed_gathers": 0,
+                    "center_gathers": 0,
+                    "world_gathers": 0,
+                })
+                daily["total_gathers"] += 1
+                if row["status"] == "SUCCESS":
+                    daily["successful_gathers"] += 1
+                elif row["status"] == "FAILED":
+                    daily["failed_gathers"] += 1
+                if row["activity_id"] == "gather_rss_center":
+                    daily["center_gathers"] += 1
+                else:
+                    daily["world_gathers"] += 1
 
             metadata = parse_json(row["metadata_json"])
             result = parse_json(row["result_json"])
@@ -2681,6 +3183,7 @@ class Database:
             total = int(item["total_gathers"] or 0)
             success = int(item["successful_gathers"] or 0)
             item["success_rate"] = (success / total * 100.0) if total > 0 else 0.0
+            item["daily_series"] = [item["daily_series"][key] for key in sorted(item["daily_series"].keys())]
 
         return [summary_by_game_id[game_id] for game_id in requested_ids]
 
@@ -2777,12 +3280,23 @@ class Database:
             "note",
             "lord_name",
             "lord_name_locked",
+            "role",
+            "rss_center_builder_enabled",
+            "safe_to_boot",
+            "builder_priority",
+            "last_builder_run_at",
+            "builder_resource_policy",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
         if "lord_name_locked" in updates:
             updates["lord_name_locked"] = 1 if updates["lord_name_locked"] else 0
+        for bool_field in ("rss_center_builder_enabled", "safe_to_boot"):
+            if bool_field in updates:
+                updates[bool_field] = 1 if updates[bool_field] else 0
+        if "builder_priority" in updates:
+            updates["builder_priority"] = int(updates["builder_priority"])
         updates["updated_at"] = datetime.now().isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values())
@@ -2790,6 +3304,410 @@ class Database:
             cursor = await db.execute(
                 f"UPDATE accounts SET {set_clause} WHERE game_id = ?",
                 (*values, game_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def update_account_builder_metadata(self, game_id: str, **fields) -> bool:
+        """Update RSS center builder-related account metadata."""
+        return await self.update_account(game_id, **fields)
+
+    async def mark_builder_run(self, game_id: str, timestamp: str | None = None) -> bool:
+        """Persist the last time an RSS center builder account was selected."""
+        return await self.update_account(
+            game_id,
+            last_builder_run_at=timestamp or datetime.now().isoformat(),
+        )
+
+    async def get_rss_center_builder_candidates(self) -> list[dict]:
+        """Return safe RSS center builder accounts ordered by priority and recency."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT
+                       a.id as account_id,
+                       a.game_id,
+                       a.lord_name,
+                       a.role,
+                       a.rss_center_builder_enabled,
+                       a.safe_to_boot,
+                       a.builder_priority,
+                       a.last_builder_run_at,
+                       a.builder_resource_policy,
+                       a.updated_at,
+                       e.id as emulator_db_id,
+                       e.emu_index,
+                       e.serial,
+                       e.name as emu_name
+                   FROM accounts a
+                   LEFT JOIN emulators e ON a.emulator_id = e.id
+                   WHERE a.rss_center_builder_enabled = 1
+                     AND a.safe_to_boot = 1
+                   ORDER BY
+                     a.builder_priority ASC,
+                     CASE WHEN a.last_builder_run_at IS NULL OR a.last_builder_run_at = '' THEN 0 ELSE 1 END ASC,
+                     a.last_builder_run_at ASC,
+                     a.updated_at ASC"""
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def create_or_get_rss_center_rebuild_request(
+        self,
+        *,
+        source_account_id: int | None = None,
+        source_game_id: str = "",
+        source_group_id: int | None = None,
+        source_emulator_id: int | None = None,
+        source_serial: str = "",
+        request_key: str,
+        reason_code: str,
+        reason_message: str = "",
+        requested_resource_type: str = "random",
+        request_source: str = "farmer_workflow",
+        run_mode: str = "scheduled",
+    ) -> dict:
+        """Create a pending RSS center rebuild request or return the active one for the same key."""
+        now = datetime.now().isoformat()
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute(
+                """SELECT * FROM rss_center_rebuild_requests
+                   WHERE request_key = ?
+                     AND status IN ('pending', 'claimed')
+                   ORDER BY requested_at DESC
+                   LIMIT 1""",
+                (request_key,),
+            )
+            active_row = await cursor.fetchone()
+            if active_row:
+                payload = dict(active_row)
+                payload["_request_action"] = "deduped"
+                return payload
+
+            cursor = await db.execute(
+                """SELECT * FROM rss_center_rebuild_requests
+                   WHERE request_key = ?
+                   ORDER BY requested_at DESC
+                   LIMIT 1""",
+                (request_key,),
+            )
+            existing_row = await cursor.fetchone()
+            if existing_row:
+                request_id = int(existing_row["id"])
+                await db.execute(
+                    """UPDATE rss_center_rebuild_requests
+                       SET source_account_id = ?,
+                           source_game_id = ?,
+                           source_group_id = ?,
+                           source_emulator_id = ?,
+                           source_serial = ?,
+                           status = 'pending',
+                           reason_code = ?,
+                           reason_message = ?,
+                           requested_resource_type = ?,
+                           request_source = ?,
+                           requested_at = ?,
+                           claimed_at = NULL,
+                           claimed_by_game_id = '',
+                           claimed_by_account_id = NULL,
+                           finished_at = NULL,
+                           result_status = '',
+                           result_message = '',
+                           run_mode = ?,
+                           last_error = ''
+                       WHERE id = ?""",
+                    (
+                        source_account_id,
+                        source_game_id,
+                        source_group_id,
+                        source_emulator_id,
+                        source_serial,
+                        reason_code,
+                        reason_message,
+                        requested_resource_type,
+                        request_source,
+                        now,
+                        run_mode,
+                        request_id,
+                    ),
+                )
+                await db.commit()
+                cursor = await db.execute(
+                    "SELECT * FROM rss_center_rebuild_requests WHERE id = ?",
+                    (request_id,),
+                )
+                payload = dict(await cursor.fetchone())
+                payload["_request_action"] = "reused"
+                return payload
+
+            cursor = await db.execute(
+                """INSERT INTO rss_center_rebuild_requests (
+                       source_account_id, source_game_id, source_group_id, source_emulator_id,
+                       source_serial, request_key, status, reason_code, reason_message,
+                       requested_resource_type, request_source, requested_at, run_mode
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)""",
+                (
+                    source_account_id,
+                    source_game_id,
+                    source_group_id,
+                    source_emulator_id,
+                    source_serial,
+                    request_key,
+                    reason_code,
+                    reason_message,
+                    requested_resource_type,
+                    request_source,
+                    now,
+                    run_mode,
+                ),
+            )
+            request_id = cursor.lastrowid
+            await db.commit()
+            cursor = await db.execute(
+                "SELECT * FROM rss_center_rebuild_requests WHERE id = ?",
+                (request_id,),
+            )
+            payload = dict(await cursor.fetchone())
+            payload["_request_action"] = "created"
+            return payload
+
+    async def get_pending_rss_center_rebuild_requests(self, limit: int = 20) -> list[dict]:
+        """Return pending RSS center rebuild requests ordered by oldest first."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT * FROM rss_center_rebuild_requests
+                   WHERE status = 'pending'
+                   ORDER BY requested_at ASC
+                   LIMIT ?""",
+                (int(limit),),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_rss_center_rebuild_requests(self, limit: int = 100) -> list[dict]:
+        """Return RSS center rebuild request history newest first."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """SELECT * FROM rss_center_rebuild_requests
+                   ORDER BY requested_at DESC, id DESC
+                   LIMIT ?""",
+                (int(limit),),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
+    async def get_active_rss_center_rebuild_request_for_source(
+        self,
+        *,
+        source_game_id: str = "",
+        source_serial: str = "",
+    ) -> dict | None:
+        """Return the newest active request for one source game_id or serial."""
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            if source_game_id:
+                cursor = await db.execute(
+                    """SELECT * FROM rss_center_rebuild_requests
+                       WHERE source_game_id = ?
+                         AND status IN ('pending', 'claimed')
+                       ORDER BY requested_at DESC
+                       LIMIT 1""",
+                    (source_game_id,),
+                )
+            elif source_serial:
+                cursor = await db.execute(
+                    """SELECT * FROM rss_center_rebuild_requests
+                       WHERE source_serial = ?
+                         AND status IN ('pending', 'claimed')
+                       ORDER BY requested_at DESC
+                       LIMIT 1""",
+                    (source_serial,),
+                )
+            else:
+                return None
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def claim_rss_center_rebuild_request(
+        self,
+        request_id: int,
+        builder_account_id: int,
+        builder_game_id: str,
+    ) -> dict | None:
+        """Atomically claim a pending RSS center rebuild request."""
+        claimed_at = datetime.now().isoformat()
+        async with self._get_conn() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """UPDATE rss_center_rebuild_requests
+                   SET status = 'claimed',
+                       claimed_at = ?,
+                       claimed_by_game_id = ?,
+                       claimed_by_account_id = ?
+                   WHERE id = ?
+                     AND status = 'pending'""",
+                (claimed_at, builder_game_id, builder_account_id, int(request_id)),
+            )
+            await db.commit()
+            if cursor.rowcount <= 0:
+                return None
+            cursor = await db.execute(
+                "SELECT * FROM rss_center_rebuild_requests WHERE id = ?",
+                (int(request_id),),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def complete_rss_center_rebuild_request(
+        self,
+        request_id: int,
+        result_status: str,
+        result_message: str = "",
+    ) -> bool:
+        """Mark a rebuild request as done."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """UPDATE rss_center_rebuild_requests
+                   SET status = 'done',
+                       finished_at = ?,
+                       result_status = ?,
+                       result_message = ?
+                   WHERE id = ?""",
+                (datetime.now().isoformat(), result_status, result_message, int(request_id)),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def fail_rss_center_rebuild_request(
+        self,
+        request_id: int,
+        error: str,
+        retryable: bool = True,
+        result_status: str = "not_implemented",
+        result_message: str = "",
+    ) -> bool:
+        """Mark a rebuild request as failed."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """UPDATE rss_center_rebuild_requests
+                   SET status = 'failed',
+                       finished_at = ?,
+                       result_status = ?,
+                       result_message = ?,
+                       last_error = ?,
+                       retry_count = retry_count + ?
+                   WHERE id = ?""",
+                (
+                    datetime.now().isoformat(),
+                    result_status,
+                    result_message,
+                    error,
+                    1 if retryable else 0,
+                    int(request_id),
+                ),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def note_rss_center_rebuild_request(
+        self,
+        request_id: int,
+        *,
+        result_message: str = "",
+        last_error: str = "",
+        run_mode: str | None = None,
+    ) -> bool:
+        """Update non-terminal note fields for a rebuild request."""
+        fields = []
+        values = []
+        if result_message:
+            fields.append("result_message = ?")
+            values.append(result_message)
+        if last_error:
+            fields.append("last_error = ?")
+            values.append(last_error)
+        if run_mode is not None:
+            fields.append("run_mode = ?")
+            values.append(run_mode)
+        if not fields:
+            return False
+        values.append(int(request_id))
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                f"UPDATE rss_center_rebuild_requests SET {', '.join(fields)} WHERE id = ?",
+                values,
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def cancel_active_rss_center_requests_for_source(
+        self,
+        *,
+        source_game_id: str = "",
+        source_serial: str = "",
+    ) -> int:
+        """Cancel active rebuild requests for one source."""
+        if not source_game_id and not source_serial:
+            return 0
+        async with self._get_conn() as db:
+            if source_game_id:
+                cursor = await db.execute(
+                    """UPDATE rss_center_rebuild_requests
+                       SET status = 'canceled',
+                           finished_at = ?,
+                           result_status = 'canceled',
+                           result_message = 'Canceled by source request'
+                       WHERE source_game_id = ?
+                         AND status IN ('pending', 'claimed')""",
+                    (datetime.now().isoformat(), source_game_id),
+                )
+            else:
+                cursor = await db.execute(
+                    """UPDATE rss_center_rebuild_requests
+                       SET status = 'canceled',
+                           finished_at = ?,
+                           result_status = 'canceled',
+                           result_message = 'Canceled by source request'
+                       WHERE source_serial = ?
+                         AND status IN ('pending', 'claimed')""",
+                    (datetime.now().isoformat(), source_serial),
+                )
+            await db.commit()
+            return max(cursor.rowcount, 0)
+
+    async def cancel_rss_center_rebuild_request(self, request_id: int) -> bool:
+        """Cancel one active rebuild request."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """UPDATE rss_center_rebuild_requests
+                   SET status = 'canceled',
+                       finished_at = ?,
+                       result_status = 'canceled',
+                       result_message = 'Canceled manually'
+                   WHERE id = ?
+                     AND status IN ('pending', 'claimed')""",
+                (datetime.now().isoformat(), int(request_id)),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def retry_rss_center_rebuild_request(self, request_id: int) -> bool:
+        """Reset one failed rebuild request back to pending."""
+        async with self._get_conn() as db:
+            cursor = await db.execute(
+                """UPDATE rss_center_rebuild_requests
+                   SET status = 'pending',
+                       claimed_at = NULL,
+                       claimed_by_game_id = '',
+                       claimed_by_account_id = NULL,
+                       finished_at = NULL,
+                       result_status = '',
+                       result_message = '',
+                       last_error = ''
+                   WHERE id = ?
+                     AND status = 'failed'""",
+                (int(request_id),),
             )
             await db.commit()
             return cursor.rowcount > 0
@@ -3177,16 +4095,26 @@ class Database:
         function_name: str = "",
         activity_id: str = "",
         screenshot_path: str = "",
+        video_path: str = "",
+        video_duration_ms: int = 0,
     ) -> int:
         """Save a debug log entry. Auto-prunes old entries per serial."""
         async with self._get_conn() as db:
             cursor = await db.execute(
                 """INSERT INTO debug_logs
                    (serial, error_code, error_message, function_name,
-                    activity_id, screenshot_path)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (serial, error_code, error_message, function_name,
-                 activity_id, screenshot_path),
+                    activity_id, screenshot_path, video_path, video_duration_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    serial,
+                    error_code,
+                    error_message,
+                    function_name,
+                    activity_id,
+                    screenshot_path,
+                    video_path,
+                    int(video_duration_ms or 0),
+                ),
             )
             await db.commit()
             log_id = cursor.lastrowid
@@ -3261,11 +4189,11 @@ class Database:
             return result.rowcount > 0
 
     async def prune_debug_logs(self, serial: str, keep: int = 50):
-        """Keep only the latest N debug logs per serial. Deletes old screenshot files."""
+        """Keep only the latest N debug logs per serial. Deletes old capture files."""
         async with self._get_conn() as db:
             # Find IDs to delete
             cursor = await db.execute(
-                """SELECT id, screenshot_path FROM debug_logs
+                """SELECT id, screenshot_path, video_path FROM debug_logs
                    WHERE serial = ?
                    ORDER BY created_at DESC
                    LIMIT -1 OFFSET ?""",
@@ -3277,7 +4205,12 @@ class Database:
                 return
 
             ids_to_delete = [row[0] for row in old_rows]
-            paths_to_delete = [row[1] for row in old_rows if row[1]]
+            paths_to_delete = []
+            for row in old_rows:
+                if row[1]:
+                    paths_to_delete.append(row[1])
+                if len(row) > 2 and row[2]:
+                    paths_to_delete.append(row[2])
 
             # Delete DB records
             placeholders = ",".join("?" * len(ids_to_delete))
@@ -3287,7 +4220,7 @@ class Database:
             )
             await db.commit()
 
-            # Delete screenshot files
+            # Delete capture files
             for path in paths_to_delete:
                 try:
                     if os.path.exists(path):
@@ -3296,9 +4229,9 @@ class Database:
                     pass
 
     async def clear_debug_logs(self, serial: str = None, status: str = "active") -> int:
-        """Delete debug logs (and screenshot files), optionally filtered by serial and resolve state."""
+        """Delete debug logs and any linked capture files."""
         async with self._get_conn() as db:
-            where_parts = ["screenshot_path != ''"]
+            where_parts = ["(screenshot_path != '' OR video_path != '')"]
             params: list = []
             delete_where_parts = []
             delete_params: list = []
@@ -3316,10 +4249,15 @@ class Database:
                 delete_where_parts.append("is_resolved = 1")
 
             cursor = await db.execute(
-                f"SELECT screenshot_path FROM debug_logs WHERE {' AND '.join(where_parts)}",
+                f"SELECT screenshot_path, video_path FROM debug_logs WHERE {' AND '.join(where_parts)}",
                 tuple(params),
             )
-            paths = [row[0] for row in await cursor.fetchall()]
+            paths = []
+            for row in await cursor.fetchall():
+                if row[0]:
+                    paths.append(row[0])
+                if len(row) > 1 and row[1]:
+                    paths.append(row[1])
 
             delete_sql = f"DELETE FROM debug_logs WHERE {' AND '.join(delete_where_parts)}" if delete_where_parts else "DELETE FROM debug_logs"
             result = await db.execute(delete_sql, tuple(delete_params))

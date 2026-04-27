@@ -27,12 +27,13 @@
 
 /* ── Hero / Toolbar Panel ── */
 .report-shell .hero {
-    padding: 20px 22px;
+    padding: 16px 20px;
     background: linear-gradient(135deg, hsl(222, 47%, 11%) 0%, hsl(215, 51%, 18%) 50%, hsl(210, 44%, 22%) 100%);
     border: none;
     color: hsl(210, 40%, 98%);
     position: relative;
-    overflow: hidden;
+    z-index: 60;
+    overflow: visible;
 }
 
 .report-shell .hero::before {
@@ -47,27 +48,27 @@
 
 .report-shell .hero-head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
     position: relative;
     z-index: 1;
 }
 
 .report-shell .hero-title {
     margin: 0 0 4px;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 800;
     color: white;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
 .report-shell .hero-title svg {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     opacity: 0.9;
 }
 
@@ -76,7 +77,7 @@
     font-size: 13px;
     color: hsla(210, 40%, 85%, 0.8);
     max-width: 520px;
-    line-height: 1.5;
+    line-height: 1.4;
 }
 
 /* ── Hero Buttons ── */
@@ -91,12 +92,12 @@
     background: hsla(210, 40%, 98%, 0.08);
     color: hsla(210, 40%, 98%, 0.9);
     border-radius: 8px;
-    min-height: 34px;
+    min-height: 32px;
     font: inherit;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    padding: 0 14px;
+    padding: 0 12px;
     transition: all var(--duration-fast);
     display: inline-flex;
     align-items: center;
@@ -123,8 +124,8 @@
 .report-shell .toolbar-grid {
     display: grid;
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 10px;
-    margin-top: 16px;
+    gap: 8px;
+    margin-top: 12px;
     position: relative;
     z-index: 1;
 }
@@ -140,6 +141,8 @@
 .report-shell .span-2 { grid-column: span 2; }
 .report-shell .span-3 { grid-column: span 3; }
 .report-shell .span-4 { grid-column: span 4; }
+.report-shell .span-5 { grid-column: span 5; }
+.report-shell .span-6 { grid-column: span 6; }
 
 /* ── Tab Navigation ── */
 .report-tabs {
@@ -217,7 +220,7 @@
     background: hsla(210, 40%, 98%, 0.08);
     color: hsla(210, 40%, 98%, 0.92);
     border-radius: 8px;
-    min-height: 34px;
+    min-height: 32px;
     font: inherit;
     font-size: 13px;
     width: 100%;
@@ -232,7 +235,7 @@
     background: white;
     color: #1e293b;
     border-radius: 8px;
-    min-height: 34px;
+    min-height: 32px;
     font: inherit;
     font-size: 13px;
     width: 100%;
@@ -273,7 +276,7 @@
     background: hsla(210, 40%, 98%, 0.06);
     color: hsla(210, 40%, 98%, 0.85);
     border-radius: 8px;
-    min-height: 34px;
+    min-height: 32px;
     font: inherit;
     font-size: 12px;
     font-weight: 600;
@@ -293,6 +296,18 @@
     color: hsl(210, 100%, 85%);
     font-weight: 700;
     box-shadow: 0 0 8px hsla(217, 91%, 60%, 0.15);
+}
+
+.report-shell #report-workflow-aggregation-buttons {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(54px, 1fr));
+    gap: 6px;
+}
+
+.report-shell #report-workflow-aggregation-buttons .btn {
+    justify-content: center;
+    padding: 0 8px;
+    min-width: 0;
 }
 
 /* ── General Inputs (non-hero) ── */
@@ -343,6 +358,722 @@
     font-weight: 700;
 }
 
+/* Pet Skill Analytics */
+.pet-skill-shell .pet-source-chip {
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    border: 1px solid hsla(210, 40%, 98%, 0.14);
+    background: hsla(210, 40%, 98%, 0.07);
+    color: hsla(210, 40%, 92%, 0.86);
+    border-radius: 8px;
+    padding: 0 10px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pet-skill-shell .pet-distribution-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0 16px 16px;
+}
+
+.pet-skill-shell .pet-dist-tile {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: linear-gradient(180deg, hsla(217, 91%, 60%, 0.035), var(--card));
+}
+
+.pet-skill-shell .pet-dist-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pet-skill-shell .pet-dist-head strong {
+    color: hsl(217, 91%, 50%);
+}
+
+.pet-skill-shell .pet-dist-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--muted);
+    overflow: hidden;
+    margin: 10px 0 8px;
+}
+
+.pet-skill-shell .pet-dist-bar span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, hsl(217, 91%, 60%), hsl(152, 69%, 42%));
+}
+
+.pet-skill-shell .pet-dist-note {
+    font-size: 11px;
+    color: var(--muted-foreground);
+}
+
+.pet-skill-shell .hidden {
+    display: none !important;
+}
+
+.pet-skill-shell .pet-skill-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    width: fit-content;
+}
+
+.pet-skill-shell .pet-skill-tab {
+    min-height: 34px;
+    border: 0;
+    border-radius: 7px;
+    padding: 0 12px;
+    background: transparent;
+    color: var(--muted-foreground);
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.pet-skill-shell .pet-skill-tab svg {
+    width: 15px;
+    height: 15px;
+}
+
+.pet-skill-shell .pet-skill-tab:hover {
+    color: var(--foreground);
+    background: var(--accent);
+}
+
+.pet-skill-shell .pet-skill-tab.active {
+    background: hsl(217, 91%, 60%);
+    color: white;
+    box-shadow: 0 8px 18px hsla(217, 91%, 60%, 0.22);
+}
+
+.report-shell.pet-skill-shell .pet-skill-workspace {
+    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+    align-items: start;
+}
+
+.pet-skill-shell .pet-release-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: 680px;
+    overflow: auto;
+    padding: 0 10px 12px;
+}
+
+.pet-skill-shell .pet-release-item {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: var(--card);
+    border-radius: 9px;
+    padding: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 7px;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    transition: all var(--duration-fast);
+}
+
+.pet-skill-shell .pet-release-item:hover {
+    border-color: hsla(217, 91%, 60%, 0.5);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+}
+
+.pet-skill-shell .pet-release-item:focus-visible {
+    outline: 2px solid hsla(217, 91%, 60%, 0.42);
+    outline-offset: 2px;
+}
+
+.pet-skill-shell .pet-release-item.active {
+    border-color: hsl(217, 91%, 60%);
+    background: hsla(217, 91%, 60%, 0.075);
+    box-shadow: 0 0 0 1px hsla(217, 91%, 60%, 0.16);
+}
+
+.pet-skill-shell .pet-release-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.pet-skill-shell .pet-release-time {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-release-id {
+    font-size: 10px;
+    color: var(--muted-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 108px;
+}
+
+.pet-skill-shell .pet-release-badges {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-end;
+}
+
+.pet-skill-shell .pet-slot-badge,
+.pet-skill-shell .pet-pool-badge {
+    min-height: 18px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 6px;
+    font-size: 9px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.pet-skill-shell .pet-slot-badge {
+    background: hsla(217, 91%, 60%, 0.12);
+    color: hsl(217, 91%, 45%);
+}
+
+.pet-skill-shell .pet-pool-badge {
+    background: hsla(152, 69%, 42%, 0.12);
+    color: hsl(152, 69%, 30%);
+}
+
+.pet-skill-shell .pet-release-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+}
+
+.pet-skill-shell .pet-delete-btn {
+    width: 24px;
+    height: 24px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: hsla(0, 72%, 51%, 0.08);
+    color: hsl(0, 72%, 44%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.pet-skill-shell .pet-delete-btn:hover,
+.pet-skill-shell .pet-delete-btn:focus-visible {
+    border-color: hsla(0, 72%, 51%, 0.32);
+    background: hsl(0, 72%, 51%);
+    color: white;
+    outline: none;
+}
+
+.pet-skill-shell .pet-delete-btn svg {
+    width: 13px;
+    height: 13px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.pet-skill-shell .pet-detail-panel > #pet-skill-detail {
+    padding: 0 16px 16px;
+}
+
+.pet-skill-shell .pet-image-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+    gap: 12px;
+}
+
+.pet-skill-shell .pet-image-panel {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+}
+
+.pet-skill-shell .pet-image-head {
+    min-height: 38px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.pet-skill-shell .pet-image-stage {
+    height: 270px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: linear-gradient(180deg, hsl(210, 40%, 98%), hsl(214, 32%, 95%));
+}
+
+.pet-skill-shell .pet-image-stage img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.pet-skill-shell .pet-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.pet-skill-shell .pet-mini-metric {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 11px;
+    background: var(--card);
+    min-width: 0;
+}
+
+.pet-skill-shell .pet-mini-metric div,
+.pet-skill-shell .pet-fact-row div {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin-bottom: 4px;
+}
+
+.pet-skill-shell .pet-mini-metric strong,
+.pet-skill-shell .pet-fact-row strong {
+    display: block;
+    font-size: 13px;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pet-skill-shell .pet-facts-panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+}
+
+.pet-skill-shell .pet-facts-title {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+}
+
+.pet-skill-shell .pet-facts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pet-skill-shell .pet-fact-row {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    min-width: 0;
+}
+
+.pet-skill-shell .pet-skill-stars-row {
+    grid-column: 1 / -1;
+}
+
+.pet-skill-shell .pet-slot-stars-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.pet-skill-shell .pet-slot-star {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 8px;
+    background: hsl(210, 40%, 98%);
+}
+
+.pet-skill-shell .pet-slot-star.obtained {
+    border-color: hsla(217, 91%, 60%, 0.55);
+    background: hsla(217, 91%, 60%, 0.08);
+    box-shadow: inset 0 0 0 1px hsla(217, 91%, 60%, 0.12);
+}
+
+.pet-skill-shell .pet-slot-star-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 5px !important;
+}
+
+.pet-skill-shell .pet-slot-star-head span {
+    font-size: 10px;
+    font-weight: 800;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-slot-star-head b {
+    min-height: 16px;
+    border-radius: 999px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    background: hsla(217, 91%, 60%, 0.14);
+    color: hsl(217, 91%, 43%);
+    font-size: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.pet-skill-shell .pet-star-track {
+    display: flex;
+    gap: 3px;
+    margin-bottom: 5px !important;
+}
+
+.pet-skill-shell .pet-star {
+    width: 12px;
+    height: 12px;
+    background: hsl(214, 32%, 86%);
+    clip-path: polygon(50% 0%, 62% 34%, 98% 35%, 69% 56%, 79% 91%, 50% 70%, 21% 91%, 31% 56%, 2% 35%, 38% 34%);
+}
+
+.pet-skill-shell .pet-star.filled {
+    background: hsl(43, 96%, 50%);
+    filter: drop-shadow(0 1px 1px hsla(35, 92%, 33%, 0.22));
+}
+
+.pet-skill-shell .pet-slot-star strong {
+    font-size: 11px;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-empty-state {
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    color: var(--muted-foreground);
+    text-align: center;
+    font-size: 13px;
+}
+
+.pet-skill-shell .pet-db-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 12px;
+    padding: 0 16px 16px;
+}
+
+.pet-skill-shell .pet-db-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+    overflow: hidden;
+}
+
+.pet-skill-shell .pet-db-card-top {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pet-skill-shell .pet-template-preview {
+    width: 58px;
+    height: 58px;
+    border: 1px solid hsla(217, 91%, 60%, 0.22);
+    border-radius: 10px;
+    background: linear-gradient(135deg, hsla(217, 91%, 60%, 0.12), hsla(152, 69%, 42%, 0.1));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.pet-skill-shell .pet-template-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.pet-skill-shell .pet-template-preview span {
+    font-size: 18px;
+    font-weight: 900;
+    color: hsl(217, 91%, 45%);
+}
+
+.pet-skill-shell .pet-db-main {
+    min-width: 0;
+}
+
+.pet-skill-shell .pet-db-name {
+    font-size: 15px;
+    font-weight: 900;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-db-id,
+.pet-skill-shell .pet-db-note {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pet-skill-shell .pet-db-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.pet-skill-shell .pet-edit-btn,
+.pet-skill-shell .pet-icon-btn {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--background);
+    color: var(--foreground);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: all var(--duration-fast);
+}
+
+.pet-skill-shell .pet-edit-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.pet-skill-shell .pet-edit-btn svg {
+    width: 13px;
+    height: 13px;
+}
+
+.pet-skill-shell .pet-icon-btn {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.pet-skill-shell .pet-edit-btn:hover,
+.pet-skill-shell .pet-icon-btn:hover {
+    border-color: hsla(217, 91%, 60%, 0.36);
+    color: hsl(217, 91%, 45%);
+    background: hsla(217, 91%, 60%, 0.08);
+}
+
+.pet-skill-shell .pet-price-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pet-skill-shell .pet-price-cell {
+    padding: 10px 12px;
+    border-right: 1px solid var(--border);
+    min-width: 0;
+}
+
+.pet-skill-shell .pet-price-cell:last-child {
+    border-right: 0;
+}
+
+.pet-skill-shell .pet-price-star {
+    margin-bottom: 7px;
+    font-size: 11px;
+    font-weight: 900;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-price-cell div:not(.pet-price-star) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.pet-skill-shell .pet-price-cell span {
+    font-size: 10px;
+    color: var(--muted-foreground);
+}
+
+.pet-skill-shell .pet-price-cell strong {
+    font-size: 12px;
+    color: var(--foreground);
+    font-variant-numeric: tabular-nums;
+}
+
+.pet-skill-shell .pet-db-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.42);
+    backdrop-filter: blur(6px);
+}
+
+.pet-skill-shell .pet-db-modal {
+    width: min(780px, 100%);
+    max-height: calc(100vh - 48px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--background);
+    box-shadow: 0 30px 90px rgba(15, 23, 42, 0.28);
+    overflow: auto;
+}
+
+.pet-skill-shell .pet-db-modal-head,
+.pet-skill-shell .pet-db-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pet-skill-shell .pet-db-modal-head h3 {
+    margin: 3px 0 0;
+    font-size: 20px;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-db-modal-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 18px;
+}
+
+.pet-skill-shell .pet-db-modal-body .field:nth-child(3),
+.pet-skill-shell .pet-db-modal-body .field:nth-child(4),
+.pet-skill-shell .pet-edit-price-grid {
+    grid-column: 1 / -1;
+}
+
+.pet-skill-shell .pet-edit-price-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.pet-skill-shell .pet-edit-price-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: var(--card);
+}
+
+.pet-skill-shell .pet-edit-price-card > div {
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 900;
+    color: var(--foreground);
+}
+
+.pet-skill-shell .pet-edit-price-card label {
+    display: block;
+    margin-top: 8px;
+}
+
+.pet-skill-shell .pet-edit-price-card span {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 10px;
+    color: var(--muted-foreground);
+}
+
+.pet-skill-shell .pet-db-modal-footer {
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+    justify-content: flex-end;
+}
+
+@media (max-width: 1180px) {
+    .pet-skill-shell .pet-distribution-grid,
+    .pet-skill-shell .pet-kpi-grid,
+    .pet-skill-shell .pet-price-grid,
+    .pet-skill-shell .pet-edit-price-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .report-shell.pet-skill-shell .pet-skill-workspace {
+        grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 820px) {
+    .report-shell.pet-skill-shell .pet-skill-workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .pet-skill-shell .pet-distribution-grid,
+    .pet-skill-shell .pet-image-grid,
+    .pet-skill-shell .pet-kpi-grid,
+    .pet-skill-shell .pet-facts-grid,
+    .pet-skill-shell .pet-db-grid,
+    .pet-skill-shell .pet-price-grid,
+    .pet-skill-shell .pet-db-modal-body,
+    .pet-skill-shell .pet-edit-price-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pet-skill-shell .pet-image-stage {
+        height: 220px;
+    }
+
+    .pet-skill-shell .pet-release-item {
+        flex-direction: row;
+        gap: 8px;
+    }
+
+    .pet-skill-shell .pet-release-badges {
+        flex-direction: column;
+        align-items: flex-end;
+    }
+}
+
 /* ── Button row, legend, legend-meta ── */
 .report-shell .button-row,
 .report-shell .legend,
@@ -368,27 +1099,73 @@
     inset: auto 0 auto 0;
     top: 100%;
     margin-top: 6px;
-    z-index: 30;
+    z-index: 1000;
     background: var(--popover);
     border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 20px 50px -10px rgba(0,0,0,0.2);
-    padding: 10px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    max-height: 320px;
+    width: min(520px, calc(100vw - 48px));
+    max-height: min(460px, calc(100vh - 180px));
+    overflow: hidden;
+}
+
+.report-shell #report-account-menu-anchor {
+    position: relative;
+    z-index: 1001;
+}
+
+.report-shell .account-menu-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: var(--popover);
+    border-bottom: 1px solid var(--border);
+}
+
+.report-shell .account-menu-actions {
+    gap: 6px;
+}
+
+.report-shell .account-menu-actions .chip {
+    min-height: 28px !important;
+    padding: 0 10px !important;
+}
+
+.report-shell .account-menu-meta {
+    font-size: 11px;
+    color: var(--muted-foreground);
+}
+
+.report-shell .account-list {
+    padding: 6px;
     overflow: auto;
+    max-height: min(330px, calc(100vh - 310px));
 }
 
 .report-shell .account-option {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 10px;
     padding: 8px 10px;
     border-radius: 8px;
     cursor: pointer;
     transition: background var(--duration-fast);
+}
+
+.report-shell .account-option input {
+    margin-top: 2px;
+}
+
+.report-shell .account-option div > div:last-child {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--muted-foreground);
 }
 
 .report-shell .account-option:hover {
@@ -601,6 +1378,222 @@
     border: 1px solid hsla(214, 32%, 91%, 0.6);
     border-radius: 12px;
     background: linear-gradient(180deg, hsla(217, 91%, 60%, 0.02) 0%, var(--background) 20%);
+}
+
+.report-shell .report-data-point.is-editable {
+    cursor: pointer;
+    transition: r var(--duration-fast), filter var(--duration-fast);
+}
+
+.report-shell .report-data-hit.is-editable {
+    cursor: pointer;
+    pointer-events: all;
+}
+
+.report-shell .report-event-marker {
+    pointer-events: none;
+}
+
+.report-shell .report-data-point.is-editable:hover {
+    r: 7px;
+    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.45));
+}
+
+.report-shell .tooltip-hint {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.report-shell .mini-action {
+    min-height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--background);
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.report-shell .mini-action:hover {
+    background: var(--accent);
+}
+
+.report-shell .table-section-title {
+    position: sticky;
+    left: 0;
+    padding: 10px 12px;
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+}
+
+.report-shell .table-subsection {
+    margin-top: 18px;
+    border-top: 1px solid var(--border);
+}
+
+.report-shell .edit-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, 0.42);
+    backdrop-filter: blur(6px);
+}
+
+.report-shell .edit-modal {
+    width: min(560px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--background);
+    box-shadow: 0 30px 90px rgba(15, 23, 42, 0.28);
+    overflow: hidden;
+}
+
+.report-shell .edit-modal-header,
+.report-shell .edit-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.report-shell .edit-modal-footer {
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+    justify-content: flex-end;
+}
+
+.report-shell .edit-modal-kicker {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+}
+
+.report-shell .edit-modal h3 {
+    margin: 3px 0 0;
+    font-size: 20px;
+    color: var(--foreground);
+}
+
+.report-shell .edit-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+}
+
+.report-shell .edit-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.report-shell .edit-meta-grid > div {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--muted);
+}
+
+.report-shell .edit-meta-grid span {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+}
+
+.report-shell .edit-meta-grid strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    color: var(--foreground);
+}
+
+.report-shell .edit-modal-warning {
+    padding: 10px 12px;
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-radius: 10px;
+    background: rgba(245, 158, 11, 0.08);
+    color: hsl(32, 95%, 34%);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.report-shell .edit-modal .btn.primary {
+    border-color: var(--primary);
+    background: var(--primary);
+    color: white;
+}
+
+.report-shell .farming-daily-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0 14px 14px;
+}
+
+.report-shell .farming-daily-kpi {
+    padding: 12px 14px;
+    border: 1px solid hsla(214, 32%, 91%, 0.75);
+    border-radius: 12px;
+    background: linear-gradient(180deg, hsla(210, 40%, 98%, 0.92), hsla(210, 40%, 98%, 0.5));
+    box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.75);
+}
+
+.report-shell .farming-daily-kpi.tone-blue { border-color: rgba(59,130,246,.18); background: linear-gradient(180deg,rgba(59,130,246,.1),rgba(59,130,246,.025)); }
+.report-shell .farming-daily-kpi.tone-green { border-color: rgba(34,197,94,.18); background: linear-gradient(180deg,rgba(34,197,94,.1),rgba(34,197,94,.025)); }
+.report-shell .farming-daily-kpi.tone-amber { border-color: rgba(245,158,11,.2); background: linear-gradient(180deg,rgba(245,158,11,.1),rgba(245,158,11,.025)); }
+.report-shell .farming-daily-kpi.tone-indigo { border-color: rgba(99,102,241,.18); background: linear-gradient(180deg,rgba(99,102,241,.1),rgba(99,102,241,.025)); }
+
+.report-shell .farming-daily-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+}
+
+.report-shell .farming-daily-value {
+    margin-top: 6px;
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--foreground);
+    line-height: 1;
+}
+
+.report-shell .farming-daily-note {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+}
+
+.report-shell .farming-daily-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 0 16px 12px;
+    color: var(--muted-foreground);
+    font-size: 12px;
 }
 
 .report-shell .chart-empty,
@@ -919,11 +1912,15 @@
     .report-shell .toolbar-grid {
         grid-template-columns: repeat(6, minmax(0, 1fr));
     }
+    .report-shell .span-5,
     .report-shell .span-4 { grid-column: span 3; }
     .report-shell .span-3,
     .report-shell .span-2 { grid-column: span 2; }
     .report-shell .summary-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .report-shell .farming-daily-kpis {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .report-shell .insight-grid {
         grid-template-columns: 1fr;
@@ -933,11 +1930,14 @@
 @media (max-width: 820px) {
     .report-shell .toolbar-grid,
     .report-shell .summary-grid,
+    .report-shell .farming-daily-kpis,
     .report-shell .risk-feed,
     .report-shell .drill-grid {
         grid-template-columns: 1fr;
     }
     .report-shell .span-4,
+    .report-shell .span-5,
+    .report-shell .span-6,
     .report-shell .span-3,
     .report-shell .span-2 {
         grid-column: span 1;

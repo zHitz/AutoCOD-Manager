@@ -524,6 +524,146 @@ class GameStateDetector:
 
         return {"state": state, "construction": construction, "special": special, "screen": screen}
 
+    def detect_screen_bundle(
+        self,
+        serial: str,
+        *,
+        state: bool = True,
+        construction_targets: Optional[list[str]] = None,
+        special_targets: Optional[list[str]] = None,
+        activity_targets: Optional[list[str]] = None,
+        alliance_targets: Optional[list[str]] = None,
+        icon_targets: Optional[list[str]] = None,
+        thresholds: Optional[dict[str, float]] = None,
+        include_screen: bool = False,
+    ) -> dict:
+        """Run several screen detections from one screencap.
+
+        This is intended for hot workflow loops that currently call check_state(),
+        check_special_state(), check_activity(), etc. separately. It captures one
+        frame, reuses the same grayscale data, and returns grouped results.
+        """
+        started = time.perf_counter()
+        capture_started = time.perf_counter()
+        screen = self.screencap_memory(serial)
+        capture_ms = (time.perf_counter() - capture_started) * 1000
+        if screen is None:
+            return {
+                "state": ERROR_CAPTURE if state else None,
+                "construction": {},
+                "special": {},
+                "activity": {},
+                "alliance": {},
+                "icon": {},
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                "timings_ms": {
+                    "capture": round(capture_ms, 2),
+                    "state": 0.0,
+                    "construction": 0.0,
+                    "special": 0.0,
+                    "activity": 0.0,
+                    "alliance": 0.0,
+                    "icon": 0.0,
+                },
+                "screen": None if include_screen else None,
+            }
+
+        threshold_map = dict(DEFAULT_THRESHOLDS)
+        if thresholds:
+            threshold_map.update(thresholds)
+
+        result: dict[str, object] = {
+            "state": None,
+            "construction": {},
+            "special": {},
+            "activity": {},
+            "alliance": {},
+            "icon": {},
+        }
+        timings = {
+            "capture": capture_ms,
+            "state": 0.0,
+            "construction": 0.0,
+            "special": 0.0,
+            "activity": 0.0,
+            "alliance": 0.0,
+            "icon": 0.0,
+        }
+
+        if state:
+            section_started = time.perf_counter()
+            result["state"] = self._match_state_from_screen(
+                screen, threshold_map.get("state", DEFAULT_THRESHOLDS["state"])
+            )
+            timings["state"] += (time.perf_counter() - section_started) * 1000
+
+        section_started = time.perf_counter()
+        for target in construction_targets or []:
+            result["construction"][target] = self._find_name_only(
+                screen,
+                self.construction_templates,
+                target=target,
+                threshold=threshold_map.get("construction", DEFAULT_THRESHOLDS["construction"]),
+                _caller="detect_screen_bundle.construction",
+            )
+        timings["construction"] += (time.perf_counter() - section_started) * 1000
+
+        section_started = time.perf_counter()
+        for target in special_targets or []:
+            result["special"][target] = self._find_name_only(
+                screen,
+                self.special_templates,
+                target=target,
+                threshold=threshold_map.get("special", DEFAULT_THRESHOLDS["special"]),
+                _caller="detect_screen_bundle.special",
+            )
+        timings["special"] += (time.perf_counter() - section_started) * 1000
+
+        section_started = time.perf_counter()
+        for target in activity_targets or []:
+            result["activity"][target] = self._find_template(
+                serial,
+                self.activity_templates,
+                target=target,
+                threshold=threshold_map.get("activity", DEFAULT_THRESHOLDS["activity"]),
+                use_color=True,
+                frame=screen,
+                _caller="detect_screen_bundle.activity",
+            )
+        timings["activity"] += (time.perf_counter() - section_started) * 1000
+
+        section_started = time.perf_counter()
+        for target in alliance_targets or []:
+            result["alliance"][target] = self._find_template(
+                serial,
+                self.alliance_templates,
+                target=target,
+                threshold=threshold_map.get("alliance", DEFAULT_THRESHOLDS["alliance"]),
+                use_color=True,
+                frame=screen,
+                _caller="detect_screen_bundle.alliance",
+            )
+        timings["alliance"] += (time.perf_counter() - section_started) * 1000
+
+        section_started = time.perf_counter()
+        for target in icon_targets or []:
+            result["icon"][target] = self._find_template(
+                serial,
+                self.icon_templates,
+                target=target,
+                threshold=threshold_map.get("icon", DEFAULT_THRESHOLDS["icon"]),
+                use_color=True,
+                frame=screen,
+                _caller="detect_screen_bundle.icon",
+            )
+        timings["icon"] += (time.perf_counter() - section_started) * 1000
+
+        result["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        result["timings_ms"] = {key: round(value, 2) for key, value in timings.items()}
+        if include_screen:
+            result["screen"] = screen
+        return result
+
     def is_menu_expanded(self, serial: str, threshold: float = 0.8) -> bool:
         """Checks if the expandable lobby menu is currently open."""
         if "LOBBY_MENU_EXPANDED" not in self.templates:
@@ -630,6 +770,138 @@ class GameStateDetector:
         if results:
             logger.debug("Multi-match '%s': %d match(es) at %s", target, len(results), results)
         return results
+
+    def _find_slots_by_template(
+        self,
+        screen,
+        template_name: str,
+        threshold: float = 0.90,
+        min_distance: int = 20,
+    ) -> list[int]:
+        """Map repeated slot markers to legion-management slot indices."""
+        slot_zones = [
+            (50, 130),
+            (140, 220),
+            (230, 310),
+            (320, 400),
+            (410, 490),
+        ]
+
+        templates = self.activity_templates.get(template_name)
+        if not templates:
+            return []
+
+        template = templates[0]["gray"]
+        screen_gray = self._get_gray(screen)
+        th, tw = template.shape[:2]
+        res = cv2.matchTemplate(screen_gray, template, cv2.TM_CCOEFF_NORMED)
+        positions = []
+
+        while True:
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val < threshold:
+                break
+
+            cy = max_loc[1] + th // 2
+            positions.append(cy)
+
+            x1 = max(0, max_loc[0] - min_distance)
+            y1 = max(0, max_loc[1] - min_distance)
+            x2 = min(res.shape[1], max_loc[0] + tw + min_distance)
+            y2 = min(res.shape[0], max_loc[1] + th + min_distance)
+            res[y1:y2, x1:x2] = 0
+
+        slots: list[int] = []
+        for cy in positions:
+            for slot_idx, (y_min, y_max) in enumerate(slot_zones, start=1):
+                if y_min <= cy <= y_max:
+                    slots.append(slot_idx)
+                    break
+        slots.sort()
+        return slots
+
+    def check_legion_state(
+        self,
+        serial: str,
+        max_legions: int = 5,
+        frame: Optional[np.ndarray] = None,
+    ) -> dict:
+        """Detect current legion usage plus idle/returning slot state."""
+        legion_labels = [
+            "LEGION_4_1",
+            "LEGION_4_2",
+            "LEGION_4_3",
+            "LEGION_4_4",
+            "LEGION_5_1",
+            "LEGION_5_2",
+            "LEGION_5_3",
+            "LEGION_5_4",
+            "LEGION_5_5",
+        ]
+
+        result = {
+            "legions_outcity": 0,
+            "legions_idle": 0,
+            "idle_slots": [],
+            "legions_returning": 0,
+            "returning_slots": [],
+            "legions_free": max_legions,
+            "max_legions": max_legions,
+            "detected_label": None,
+        }
+
+        screen = frame if frame is not None else self.screencap_memory(serial)
+        if screen is None:
+            logger.warning("[%s] Could not capture screen for legion check.", serial)
+            return result
+
+        best_label = None
+        best_outcity = 0
+        for label in legion_labels:
+            match = self.check_activity(serial, target=label, threshold=0.98, frame=screen)
+            if not match:
+                continue
+            parts = label.split("_")
+            outcity = int(parts[2])
+            if outcity > best_outcity:
+                best_outcity = outcity
+                best_label = label
+
+        if best_label:
+            parts = best_label.split("_")
+            detected_max = int(parts[1])
+            outcity = int(parts[2])
+            result["max_legions"] = detected_max
+            result["legions_outcity"] = outcity
+            result["legions_free"] = max(0, detected_max - outcity)
+            result["detected_label"] = best_label
+
+        idle_slots = self._find_slots_by_template(screen, "LEGION_IDLE")
+        result["legions_idle"] = len(idle_slots)
+        result["idle_slots"] = idle_slots
+
+        returning_slots = self._find_slots_by_template(screen, "LEGION_RETURNING")
+        result["legions_returning"] = len(returning_slots)
+        result["returning_slots"] = returning_slots
+
+        logger.info(
+            "[%s] Legion state: %s/%s out-city, %s free (detected %s)",
+            serial,
+            result["legions_outcity"],
+            result["max_legions"],
+            result["legions_free"],
+            result["detected_label"],
+        )
+        if idle_slots:
+            logger.info("[%s]   Idle: %s -> slots %s", serial, len(idle_slots), idle_slots)
+        if returning_slots:
+            logger.info(
+                "[%s]   Returning: %s -> slots %s",
+                serial,
+                len(returning_slots),
+                returning_slots,
+            )
+        return result
 
     def find_all_icon_matches(self, serial: str, target: str, threshold: float = 0.8) -> list[tuple[int, int]]:
         """

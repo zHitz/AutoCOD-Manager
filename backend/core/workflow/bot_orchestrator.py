@@ -32,10 +32,12 @@ from backend.core.ldplayer_manager import (
     wait_for_device,
 )
 from backend.config import config
+from backend.storage.database import Database
 import os
 
 # Dictionary to store active orchestrators per group_id
 _active_orchestrators = {}
+_db = Database()
 
 
 class BotOrchestrator:
@@ -59,15 +61,7 @@ class BotOrchestrator:
         self.activities = activities  # List of dicts: name, config
         self.ws_callback = ws_callback
         self.misc_config = misc_config or {}
-        self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
-        self.continue_on_error = self.misc_config.get("continue_on_error", False)
-        raw_shutdown_threshold = self.misc_config.get("shutdown_emu_wait_threshold_min", 30)
-        self.shutdown_emu_on_long_wait_enabled = bool(
-            self.misc_config.get("shutdown_emu_on_long_wait_enabled", True)
-        )
-        self.shutdown_emu_wait_threshold_min = int(
-            30 if raw_shutdown_threshold is None else raw_shutdown_threshold
-        )
+        self._apply_misc_config(self.misc_config)
         self.package_name = core_actions.get_package_for_provider()  # default, auto-detected per-emu in _ensure_lobby
 
         self.main_task: asyncio.Task = None
@@ -93,6 +87,7 @@ class BotOrchestrator:
         self.account_statuses = {str(acc["id"]): "pending" for acc in self.accounts}
         self.last_run_times = {}  # tracking cooldowns per acc_id
         self._smart_wait_info = {"account_id": None, "remaining_sec": None}
+        self._account_runtime_context: Dict[str, Dict[str, Any]] = {}
 
         # Track activity progress
         self.current_activity = None
@@ -109,7 +104,48 @@ class BotOrchestrator:
             "target_id": self.group_id,
             "trigger_type": "manual",
         }
+        self._refresh_activity_runtime_state()
 
+    def _apply_misc_config(self, misc_config: Dict[str, Any] | None) -> None:
+        """Refresh misc-derived runtime flags."""
+        self.misc_config = misc_config or {}
+        self.skip_cooldown = self.misc_config.get("skip_cooldown", False)
+        self.continue_on_error = self.misc_config.get("continue_on_error", False)
+        raw_shutdown_threshold = self.misc_config.get("shutdown_emu_wait_threshold_min", 30)
+        self.shutdown_emu_on_long_wait_enabled = bool(
+            self.misc_config.get("shutdown_emu_on_long_wait_enabled", True)
+        )
+        self.shutdown_emu_wait_threshold_min = int(
+            30 if raw_shutdown_threshold is None else raw_shutdown_threshold
+        )
+        self.legion_preflight_enabled = bool(
+            self.misc_config.get("legion_preflight_enabled", False)
+        )
+        self.legion_preflight_recall_idle_enabled = bool(
+            self.misc_config.get("legion_preflight_recall_idle_enabled", True)
+        )
+
+    def refresh_runtime_config(
+        self,
+        activities: List[Dict[str, Any]] | None = None,
+        misc_config: Dict[str, Any] | None = None,
+    ) -> None:
+        """Best-effort refresh of runtime config when a running orchestrator is reused."""
+        if activities is not None:
+            self.activities = activities
+        if misc_config is not None:
+            self._apply_misc_config(misc_config)
+        print(
+            f"[BotOrchestrator] Refreshed runtime config for group {self.group_id}: "
+            f"legion_preflight_enabled={self.legion_preflight_enabled}, "
+            f"legion_preflight_recall_idle_enabled={self.legion_preflight_recall_idle_enabled}, "
+            f"shutdown_emu_on_long_wait_enabled={self.shutdown_emu_on_long_wait_enabled}, "
+            f"shutdown_emu_wait_threshold_min={self.shutdown_emu_wait_threshold_min}"
+        )
+        self._refresh_activity_runtime_state()
+
+    def _refresh_activity_runtime_state(self) -> None:
+        """Rebuild cached activity metadata derived from current selected activities."""
         # Resolve templates dir once for detector usage inside orchestrator (if needed)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.templates_dir = os.path.join(current_dir, "templates")
@@ -119,6 +155,21 @@ class BotOrchestrator:
         self._weight_map = {}
         for act in ACTIVITY_REGISTRY:
             self._weight_map[act["id"]] = act.get("weight", "heavy")
+        self._selected_has_heavy_tasks = any(
+            (
+                (act.get("config", {}) or {}).get("weight")
+                or self._weight_map.get(act.get("id", act.get("name", "")), "heavy")
+            ) == "heavy"
+            for act in self.activities
+        )
+
+    def _touch_account_cooldown(self, acc_id: str, reason: str) -> None:
+        """Update account-level cooldown timestamp to avoid tight retry loops."""
+        ts = time.time()
+        self.last_run_times[str(acc_id)] = ts
+        print(
+            f"[DEBUG-CD] Account {acc_id}: last_run_times UPDATED to {ts:.0f} ({reason})"
+        )
 
     async def broadcast_state(self):
         """Sends the current orchestrator queue state to the frontend via WebSocket."""
@@ -165,6 +216,8 @@ class BotOrchestrator:
                 "skip_cooldown": self.skip_cooldown,
                 "shutdown_emu_on_long_wait_enabled": self.shutdown_emu_on_long_wait_enabled,
                 "shutdown_emu_wait_threshold_min": self.shutdown_emu_wait_threshold_min,
+                "legion_preflight_enabled": self.legion_preflight_enabled,
+                "legion_preflight_recall_idle_enabled": self.legion_preflight_recall_idle_enabled,
             },
             "smart_wait_active": self._smart_wait_info,
         }
@@ -195,6 +248,81 @@ class BotOrchestrator:
             steps=steps,
             ws_callback=self.ws_callback,
         )
+
+    async def _resolve_scan_max_legions(self, serial: str) -> tuple[int, int]:
+        """Resolve total legion capacity from latest scan data."""
+        try:
+            latest_scan = await _db.get_emulator_data(serial=serial)
+        except Exception:
+            latest_scan = None
+        hall_level = int((latest_scan or {}).get("hall_level", 0) or 0)
+        max_legions = 5 if hall_level >= 21 else 4
+        return max_legions, hall_level
+
+    async def _run_account_legion_preflight(
+        self,
+        serial: str,
+        detector: GameStateDetector,
+        acc_id: str,
+        emu_idx: int,
+        account_label: str,
+    ) -> dict:
+        """Best-effort per-account legion preflight used by gather_resource."""
+        if not self.legion_preflight_enabled:
+            self._account_runtime_context.pop(acc_id, None)
+            return {}
+
+        resolved_max_legions, hall_level = await self._resolve_scan_max_legions(serial)
+        await self._emit_timeline(
+            "🪖",
+            f"{account_label}: running legion preflight",
+            emu_idx,
+            acc_id,
+        )
+
+        try:
+            result = await asyncio.to_thread(
+                core_actions.run_legion_preflight,
+                serial,
+                detector,
+                resolved_max_legions,
+                self.legion_preflight_recall_idle_enabled,
+            )
+        except Exception as exc:
+            print(f"[BotOrchestrator] Legion preflight failed for Account {acc_id}: {exc}")
+            result = {
+                "error": str(exc),
+                "preflight_ran": False,
+                "idle_recalled": 0,
+                "legions_free": resolved_max_legions,
+                "max_legions": resolved_max_legions,
+            }
+
+        if not isinstance(result, dict):
+            result = {
+                "preflight_ran": False,
+                "idle_recalled": 0,
+                "legions_free": resolved_max_legions,
+                "max_legions": resolved_max_legions,
+            }
+
+        result["scan_hall_level"] = hall_level
+        result["requested_max_legions"] = resolved_max_legions
+        self._account_runtime_context[acc_id] = {"legion_preflight": result}
+
+        free_legions = int(result.get("legions_free", resolved_max_legions) or 0)
+        recalled = int(result.get("idle_recalled", 0) or 0)
+        print(
+            f"[BotOrchestrator] Legion preflight for Account {acc_id}: "
+            f"free={free_legions}, recalled_idle={recalled}, hall={hall_level}, max={resolved_max_legions}"
+        )
+        await self._emit_timeline(
+            "📋",
+            f"{account_label}: legion preflight free={free_legions}, recalled_idle={recalled}",
+            emu_idx,
+            acc_id,
+        )
+        return result
 
     async def _emit_activity_event(
         self,
@@ -1112,6 +1240,7 @@ class BotOrchestrator:
                         if not swap_ok:
                             print(f"[BotOrchestrator] Cross-emu swap FAILED. Skipping account.")
                             self.account_statuses[acc_id] = "error"
+                            self._touch_account_cooldown(acc_id, "cross-emu swap failure")
                             # Do NOT set last_emu_index - next account should retry boot
                             self._advance_queue()
                             continue
@@ -1159,6 +1288,7 @@ class BotOrchestrator:
                         if not boot_ok:
                             print(f"[BotOrchestrator] Emu {emu_idx} boot FAILED after retry. Skipping account.")
                             self.account_statuses[acc_id] = "error"
+                            self._touch_account_cooldown(acc_id, "initial emulator boot failure")
                             # Do NOT set last_emu_index - next account should retry boot
                             self._advance_queue()
                             continue
@@ -1180,6 +1310,7 @@ class BotOrchestrator:
                 if not lobby_ok:
                     print(f"[BotOrchestrator] Failed to reach lobby on Emu {emu_idx}. Skipping account.")
                     self.account_statuses[acc_id] = "error"
+                    self._touch_account_cooldown(acc_id, "lobby unreachable")
                     last_emu_index = emu_idx
                     self._advance_queue()
                     continue
@@ -1227,6 +1358,7 @@ class BotOrchestrator:
                         f"[BotOrchestrator] Account {acc_id} has no expected game_id. Skipping account."
                     )
                     self.account_statuses[acc_id] = "error"
+                    self._touch_account_cooldown(acc_id, "missing expected game id")
                     last_emu_index = emu_idx
                     self._advance_queue()
                     continue
@@ -1265,6 +1397,7 @@ class BotOrchestrator:
                         f"[BotOrchestrator] Could not verify target account {expected_game_id} on Emu {emu_idx}. Skipping account."
                     )
                     self.account_statuses[acc_id] = "error"
+                    self._touch_account_cooldown(acc_id, "account verification failure")
                     last_emu_index = emu_idx
                     self._advance_queue()
                     continue
@@ -1289,9 +1422,18 @@ class BotOrchestrator:
                             f"[BotOrchestrator] Final activity guard could not recover target account {expected_game_id}. Skipping account."
                         )
                         self.account_statuses[acc_id] = "error"
+                        self._touch_account_cooldown(acc_id, "final activity guard failure")
                         last_emu_index = emu_idx
                         self._advance_queue()
                         continue
+
+                await self._run_account_legion_preflight(
+                    serial,
+                    detector,
+                    acc_id,
+                    emu_idx,
+                    acc.get("lord_name") or acc_id,
+                )
 
                 # Wait slightly before starting activities
                 await asyncio.sleep(2)
@@ -1316,7 +1458,9 @@ class BotOrchestrator:
                 }
 
                 run_order = list(range(len(self.activities)))
-                random.shuffle(run_order)
+                shuffle_enabled = bool(self.misc_config.get("activity_shuffle_enabled", True))
+                if shuffle_enabled:
+                    random.shuffle(run_order)
 
                 # Find positions where troop activities landed after shuffle
                 troop_positions = []  # (position_in_run_order, original_index)
@@ -1338,8 +1482,9 @@ class BotOrchestrator:
 
                 shuffled_activities = [self.activities[j] for j in run_order]
                 shuffled_keys = [act_keys[j] for j in run_order]
+                order_label = "Shuffled" if shuffle_enabled else "Fixed"
                 print(
-                    f"[BotOrchestrator] Shuffled activity order for Account {acc_id}: "
+                    f"[BotOrchestrator] {order_label} activity order for Account {acc_id}: "
                     f"{[a.get('name', k) for a, k in zip(shuffled_activities, shuffled_keys)]}"
                 )
 
@@ -1347,6 +1492,7 @@ class BotOrchestrator:
                 account_success = True
                 ran_heavy = False  # Track if any heavy activity succeeded (for conditional account CD)
                 ran_heavy_attempted = False  # Track if any heavy activity was attempted (for failure CD)
+                executed_any_activity = False
 
                 # Execute activities one by one (shuffled order)
                 for i, act in enumerate(shuffled_activities):
@@ -1396,12 +1542,23 @@ class BotOrchestrator:
                         step_cfg["account_id"] = acc_id
                         step_cfg["max_power"] = self.misc_config.get("max_power", 14_000_000)
                         step_cfg["max_hall_level"] = self.misc_config.get("max_hall_level", 21)
+                        legion_ctx = (
+                            self._account_runtime_context.get(acc_id, {}).get("legion_preflight", {})
+                        )
+                        step_cfg["runtime_legion_preflight_enabled"] = self.legion_preflight_enabled
+                        step_cfg["runtime_legion_recall_idle_enabled"] = (
+                            self.legion_preflight_recall_idle_enabled
+                        )
+                        step_cfg["runtime_legions_free"] = legion_ctx.get("legions_free")
+                        step_cfg["runtime_legion_max_legions"] = legion_ctx.get("max_legions")
+                        step_cfg["runtime_legion_idle_recalled"] = legion_ctx.get("idle_recalled", 0)
 
                     self.current_activity = {
                         "id": act_id_or_name,
                         "name": act.get("name", act_id_or_name),
                         "status": "running",
                     }
+                    executed_any_activity = True
                     self.activity_statuses[act_id_or_name] = "running"
                     await self.broadcast_state()
 
@@ -1520,6 +1677,47 @@ class BotOrchestrator:
                         result=result if isinstance(result, dict) else {},
                     )
 
+                    if isinstance(result, dict):
+                        from backend.core.workflow.rss_center_signal_service import (
+                            persist_rss_center_rebuild_signal,
+                        )
+
+                        rebuild_request = await persist_rss_center_rebuild_signal(
+                            account_id=int(acc_id),
+                            game_id=str(acc.get("game_id", "")),
+                            group_id=self.group_id,
+                            emu_index=emu_idx,
+                            serial=serial,
+                            activity_id=act_id_or_name,
+                            result=result,
+                        )
+                        if rebuild_request:
+                            request_action = rebuild_request.get("_request_action", "created")
+                            request_id = rebuild_request.get("id")
+                            request_reason = rebuild_request.get("reason_code", "")
+                            if request_action == "deduped":
+                                print(
+                                    f"[BotOrchestrator] RSS Center rebuild request deduped for "
+                                    f"Account {acc_id} (request #{request_id}, reason={request_reason})."
+                                )
+                                await self._emit_timeline(
+                                    "♻️",
+                                    f"{acc.get('lord_name') or acc_id}: RSS Center rebuild request deduped (#{request_id})",
+                                    emu_idx,
+                                    acc_id,
+                                )
+                            else:
+                                print(
+                                    f"[BotOrchestrator] RSS Center rebuild request stored for "
+                                    f"Account {acc_id} (request #{request_id}, reason={request_reason}, action={request_action})."
+                                )
+                                await self._emit_timeline(
+                                    "🛠️",
+                                    f"{acc.get('lord_name') or acc_id}: RSS Center rebuild requested (#{request_id})",
+                                    emu_idx,
+                                    acc_id,
+                                )
+
                     # Emit WS event: activity completed/failed
                     ws_event = (
                         "activity_completed"
@@ -1564,12 +1762,31 @@ class BotOrchestrator:
                 self.current_activity = None
 
                 # Update last run time for cooldown tracking
-                # - SUCCESS path: only update if heavy activity ran (light-only = no account CD)
-                # - ERROR path: ALWAYS update (prevent rapid re-run after failure)
-                print(f"[DEBUG-CD] Account {acc_id} POST-LOOP: ran_heavy={ran_heavy}, ran_heavy_attempted={ran_heavy_attempted}, account_success={account_success}")
-                if ran_heavy or ran_heavy_attempted or (not account_success):
-                    self.last_run_times[acc_id] = time.time()
-                    print(f"[DEBUG-CD] Account {acc_id}: last_run_times UPDATED to {time.time():.0f}")
+                # - If this selection includes heavy tasks, keep the old behavior:
+                #   success updates only when heavy ran; failures always update.
+                # - If there are no heavy tasks at all, a successful light-only pass
+                #   should still respect account-level cooldown to avoid rapid reruns.
+                print(
+                    f"[DEBUG-CD] Account {acc_id} POST-LOOP: "
+                    f"selected_has_heavy={self._selected_has_heavy_tasks}, "
+                    f"ran_heavy={ran_heavy}, ran_heavy_attempted={ran_heavy_attempted}, "
+                    f"executed_any_activity={executed_any_activity}, account_success={account_success}"
+                )
+                should_touch_cooldown = False
+                touch_reason = ""
+                if not account_success:
+                    should_touch_cooldown = True
+                    touch_reason = "post-loop failure"
+                elif self._selected_has_heavy_tasks:
+                    if ran_heavy or ran_heavy_attempted:
+                        should_touch_cooldown = True
+                        touch_reason = "heavy task success/attempt"
+                elif executed_any_activity:
+                    should_touch_cooldown = True
+                    touch_reason = "light-only workflow success"
+
+                if should_touch_cooldown:
+                    self._touch_account_cooldown(acc_id, touch_reason)
 
                 if account_success and not self.stop_requested:
                     self.account_statuses[acc_id] = "done"
@@ -1715,12 +1932,27 @@ def start_sequential_orchestrator(
     if group_id in _active_orchestrators:
         existing = _active_orchestrators[group_id]
         if existing.is_running:
+            existing.refresh_runtime_config(
+                activities=activities,
+                misc_config=misc_config,
+            )
+            print(
+                f"[BotOrchestrator] Group {group_id} is already running. "
+                "Reusing existing orchestrator with refreshed runtime config."
+            )
             return existing  # Already running, don't reset
         # Not running anymore — clean up old reference
         del _active_orchestrators[group_id]
 
     orch = BotOrchestrator(
         group_id, accounts, activities, ws_callback, misc_config, start_account_id
+    )
+    print(
+        f"[BotOrchestrator] Starting group {group_id} with misc: "
+        f"legion_preflight_enabled={orch.legion_preflight_enabled}, "
+        f"legion_preflight_recall_idle_enabled={orch.legion_preflight_recall_idle_enabled}, "
+        f"shutdown_emu_on_long_wait_enabled={orch.shutdown_emu_on_long_wait_enabled}, "
+        f"shutdown_emu_wait_threshold_min={orch.shutdown_emu_wait_threshold_min}"
     )
     _active_orchestrators[group_id] = orch
 

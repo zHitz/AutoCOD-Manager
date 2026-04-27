@@ -28,8 +28,11 @@ export class BotPayloadBuilder {
             cooldown_min: 30,
             limit_min: 45,
             swap_wait_threshold_min: 5,
+            activity_shuffle_enabled: true,
             shutdown_emu_on_long_wait_enabled: true,
             shutdown_emu_wait_threshold_min: 30,
+            legion_preflight_enabled: false,
+            legion_preflight_recall_idle_enabled: true,
         };
         const misc = (groupConfig && groupConfig.misc) ? { ...defaultMisc, ...groupConfig.misc } : defaultMisc;
 

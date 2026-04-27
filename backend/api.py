@@ -4,8 +4,9 @@ FastAPI Routes — REST API + WebSocket endpoints.
 
 import os
 import re
+import bisect
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -486,6 +487,7 @@ async def get_report_account_events(
     game_ids: str = Query(..., description="Comma-separated game IDs"),
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
+    activity_id: str | None = Query(None),
 ):
     """Get account activity overlays for the Report page."""
     parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
@@ -496,6 +498,49 @@ async def get_report_account_events(
             game_ids=parsed_ids,
             from_iso=from_,
             to_iso=to,
+            activity_id=activity_id,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/reports/accounts/datapoint")
+async def update_report_account_datapoint(payload: dict):
+    """Update one backing scan datapoint used by the Report growth chart."""
+    try:
+        return await database.update_report_datapoint(
+            snapshot_id=int(payload.get("snapshot_id")),
+            game_id=payload.get("game_id"),
+            metric=payload.get("metric"),
+            value=payload.get("value"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/workflows/timeseries")
+async def get_workflow_activity_timeseries(
+    game_ids: str = Query(..., description="Comma-separated game IDs"),
+    activity_id: str = Query(...),
+    metric: str = Query("run_count"),
+    from_: str = Query(..., alias="from"),
+    to: str = Query(...),
+    bucket: str = Query("hour"),
+    aggregation: str = Query("sum"),
+):
+    """Get workflow activity analytics for the Report page."""
+    parsed_ids = [item.strip() for item in (game_ids or "").split(",") if item.strip()]
+    if not parsed_ids:
+        raise HTTPException(status_code=400, detail="game_ids is required")
+    try:
+        return await database.get_workflow_activity_timeseries(
+            game_ids=parsed_ids,
+            activity_id=activity_id,
+            metric=metric,
+            from_iso=from_,
+            to_iso=to,
+            bucket=bucket,
+            aggregation=aggregation,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -558,6 +603,395 @@ async def delete_report_target(target_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail="Target not found")
     return {"status": "ok", "deleted": True}
+
+
+# Pet skill analytics
+
+_PET_RELEASES_DIR = Path(config.db_path).resolve().parent / "pet_releases"
+_PET_SKILL_DATA_FILE = _PET_RELEASES_DIR / "skill_data.json"
+_PET_RELEASE_ID_RE = re.compile(r"^(?P<serial>emulator-\d+)_(?P<ts>\d{8}_\d{6})$")
+_PET_RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/pet_releases", StaticFiles(directory=str(_PET_RELEASES_DIR)), name="pet_releases")
+_pet_skill_cache: dict = {
+    "key": None,
+    "summary": None,
+    "rows": [],
+    "by_id": {},
+    "accounts": [],
+}
+
+
+def _pet_cache_key() -> tuple:
+    data_mtime = _PET_SKILL_DATA_FILE.stat().st_mtime if _PET_SKILL_DATA_FILE.exists() else 0
+    return (data_mtime,)
+
+
+def _load_pet_skill_rows() -> list[dict]:
+    if not _PET_SKILL_DATA_FILE.exists():
+        return []
+    try:
+        import json
+
+        with _PET_SKILL_DATA_FILE.open("r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return rows if isinstance(rows, list) else []
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read pet skill data: {exc}") from exc
+
+
+def _save_pet_skill_rows(rows: list[dict]) -> None:
+    import json
+
+    _PET_RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = _PET_SKILL_DATA_FILE.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=2, ensure_ascii=False)
+    tmp_path.replace(_PET_SKILL_DATA_FILE)
+
+
+def _pet_release_file_counts() -> dict:
+    if not _PET_RELEASES_DIR.exists():
+        return {"available": 0, "get": 0, "pairs": 0}
+    available = {p.name.replace("available_", "", 1) for p in _PET_RELEASES_DIR.glob("available_*.png")}
+    obtained = {p.name.replace("get_", "", 1) for p in _PET_RELEASES_DIR.glob("get_*.png")}
+    return {
+        "available": len(available),
+        "get": len(obtained),
+        "pairs": len(available & obtained),
+    }
+
+
+def _build_pet_skill_summary(rows: list[dict]) -> dict:
+    by_slot: dict[str, int] = defaultdict(int)
+    by_pool_size: dict[str, int] = defaultdict(int)
+    by_emulator: dict[str, int] = defaultdict(int)
+    star_counts: dict[str, int] = defaultdict(int)
+
+    for row in rows:
+        slot = row.get("get_slot_position")
+        by_slot[str(slot if slot not in (None, "", -1) else "unknown")] += 1
+        by_pool_size[str(row.get("pool_filled_count", "unknown"))] += 1
+        by_emulator[str(row.get("emulator") or "unknown")] += 1
+        for star in row.get("skill_stars") or []:
+            star_counts[str(star)] += 1
+
+    latest = sorted(rows, key=lambda item: item.get("datetime") or "", reverse=True)[:50]
+    return {
+        "total_releases": len(rows),
+        "by_slot": dict(sorted(by_slot.items(), key=lambda item: (item[0] == "unknown", item[0]))),
+        "by_pool_size": dict(sorted(by_pool_size.items(), key=lambda item: item[0])),
+        "by_emulator": dict(sorted(by_emulator.items())),
+        "skill_stars": dict(sorted(star_counts.items())),
+        "latest": latest,
+        "data_file": str(_PET_SKILL_DATA_FILE),
+        "file_counts": _pet_release_file_counts(),
+    }
+
+
+def _parse_pet_release_time(row: dict) -> datetime | None:
+    raw_dt = row.get("datetime")
+    if raw_dt:
+        try:
+            return datetime.strptime(str(raw_dt), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
+    release_id = str(row.get("release_id") or "")
+    match = _PET_RELEASE_ID_RE.match(release_id)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group("ts"), "%Y%m%d_%H%M%S")
+    except ValueError:
+        return None
+
+
+def _pet_release_filenames() -> set[str]:
+    if not _PET_RELEASES_DIR.exists():
+        return set()
+    return {p.name for p in _PET_RELEASES_DIR.glob("*.png")}
+
+
+def _image_payload_for_release(row: dict, filenames: set[str] | None = None) -> dict:
+    release_id = str(row.get("release_id") or "")
+    match = _PET_RELEASE_ID_RE.match(release_id)
+    serial = row.get("emulator") or (match.group("serial") if match else "")
+    ts = match.group("ts") if match else ""
+    available = f"available_{serial}_{ts}.png" if serial and ts else ""
+    obtained = f"get_{serial}_{ts}.png" if serial and ts else ""
+    filenames = filenames if filenames is not None else _pet_release_filenames()
+    return {
+        "available": f"/pet_releases/{available}" if available in filenames else "",
+        "obtained": f"/pet_releases/{obtained}" if obtained in filenames else "",
+        "available_filename": available,
+        "obtained_filename": obtained,
+    }
+
+
+def _normalize_pet_row(row: dict, filenames: set[str] | None = None) -> dict:
+    enriched = dict(row)
+    enriched["images"] = _image_payload_for_release(row, filenames)
+    return enriched
+
+
+async def _pet_account_windows() -> list[dict]:
+    import aiosqlite
+
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT
+                aal.account_id,
+                aal.game_id,
+                aal.emulator_id,
+                aal.started_at,
+                aal.finished_at,
+                a.lord_name AS account_name,
+                COALESCE(e_idx.serial, e_id.serial) AS serial
+            FROM account_activity_logs aal
+            LEFT JOIN accounts a ON a.id = aal.account_id
+            LEFT JOIN emulators e_idx ON e_idx.emu_index = aal.emulator_id
+            LEFT JOIN emulators e_id ON e_id.id = aal.emulator_id
+            WHERE aal.activity_id IN ('catch_pet', 'capture_pet', 'release_pet')
+            ORDER BY aal.started_at DESC
+            """
+        )
+        rows = []
+        for row in await cursor.fetchall():
+            item = dict(row)
+            start = _parse_db_datetime(item.get("started_at"))
+            finish = _parse_db_datetime(item.get("finished_at")) or start
+            if not item.get("serial") or not start:
+                continue
+            item["_start_dt"] = start
+            item["_finish_dt"] = finish
+            item["_start_ts"] = start.timestamp()
+            rows.append(item)
+        return rows
+
+
+def _parse_db_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    cleaned = str(value).replace("Z", "").split("+", 1)[0]
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _index_pet_account_windows(windows: list[dict]) -> dict[str, dict]:
+    indexed: dict[str, dict] = {}
+    for window in windows:
+        serial = window.get("serial")
+        if not serial:
+            continue
+        bucket = indexed.setdefault(serial, {"starts": [], "windows": []})
+        bucket["starts"].append(window["_start_ts"])
+        bucket["windows"].append(window)
+    for bucket in indexed.values():
+        paired = sorted(zip(bucket["starts"], bucket["windows"]), key=lambda item: item[0])
+        bucket["starts"] = [item[0] for item in paired]
+        bucket["windows"] = [item[1] for item in paired]
+    return indexed
+
+
+def _match_pet_account(row: dict, window_index: dict[str, dict]) -> dict | None:
+    serial = row.get("emulator")
+    release_time = _parse_pet_release_time(row)
+    if not serial or not release_time:
+        return None
+
+    best = None
+    best_delta = None
+    bucket = window_index.get(serial)
+    if not bucket:
+        return None
+
+    release_ts = release_time.timestamp()
+    idx = bisect.bisect_left(bucket["starts"], release_ts)
+    start_idx = max(0, idx - 12)
+    end_idx = min(len(bucket["windows"]), idx + 12)
+
+    for window in bucket["windows"][start_idx:end_idx]:
+        start = window["_start_dt"]
+        finish = window["_finish_dt"]
+
+        padded_finish = finish + timedelta(minutes=10)
+        if start <= release_time <= padded_finish:
+            delta = abs((release_time - start).total_seconds())
+        else:
+            delta = abs((release_time - start).total_seconds())
+            if delta > 45 * 60:
+                continue
+        if best_delta is None or delta < best_delta:
+            best = window
+            best_delta = delta
+
+    if not best:
+        return None
+    return {
+        "account_id": best.get("account_id"),
+        "game_id": best.get("game_id") or "",
+        "account_name": best.get("account_name") or "",
+        "serial": best.get("serial") or serial,
+    }
+
+
+async def _enrich_pet_rows_with_accounts(rows: list[dict]) -> list[dict]:
+    filenames = _pet_release_filenames()
+    window_index = _index_pet_account_windows(await _pet_account_windows())
+    enriched = []
+    for row in rows:
+        item = _normalize_pet_row(row, filenames)
+        account = _match_pet_account(row, window_index)
+        item["account"] = account
+        item["account_id"] = account.get("account_id") if account else None
+        item["game_id"] = account.get("game_id") if account else ""
+        item["account_name"] = account.get("account_name") if account else ""
+        enriched.append(item)
+    return enriched
+
+
+def _pet_account_options(rows: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    unmatched_count = 0
+    for row in rows:
+        account_id = row.get("account_id")
+        if account_id is None:
+            unmatched_count += 1
+            continue
+        key = str(account_id)
+        if key not in grouped:
+            grouped[key] = {
+                "account_id": account_id,
+                "game_id": row.get("game_id") or "",
+                "name": row.get("account_name") or row.get("game_id") or f"Account {account_id}",
+                "serial": row.get("emulator") or "",
+                "release_count": 0,
+            }
+        grouped[key]["release_count"] += 1
+    accounts = sorted(grouped.values(), key=lambda item: (-item["release_count"], str(item["name"])))
+    if unmatched_count:
+        accounts.append({
+            "account_id": "unmatched",
+            "game_id": "",
+            "name": "Unmatched releases",
+            "serial": "",
+            "release_count": unmatched_count,
+        })
+    return accounts
+
+
+async def _get_pet_skill_dataset(force: bool = False) -> dict:
+    key = _pet_cache_key()
+    if not force and _pet_skill_cache.get("key") == key:
+        return _pet_skill_cache
+
+    rows = await _enrich_pet_rows_with_accounts(_load_pet_skill_rows())
+    rows = sorted(rows, key=lambda item: item.get("datetime") or "", reverse=True)
+    accounts = _pet_account_options(rows)
+    summary = _build_pet_skill_summary(rows)
+    dataset = {
+        "key": key,
+        "summary": summary,
+        "rows": rows,
+        "by_id": {str(row.get("release_id")): row for row in rows if row.get("release_id")},
+        "accounts": accounts,
+    }
+    _pet_skill_cache.update(dataset)
+    return _pet_skill_cache
+
+
+@app.get("/api/pet-skills/summary")
+async def get_pet_skill_summary():
+    """Read pet skill analysis output and return dashboard-friendly aggregates."""
+    dataset = await _get_pet_skill_dataset()
+    return {"status": "ok", **dataset["summary"], "accounts": dataset["accounts"]}
+
+
+@app.post("/api/pet-skills/analyze")
+async def analyze_pet_skills():
+    """Run the built-in pet skill analyzer against data/pet_releases."""
+    try:
+        from backend.core.data_analyst.pet_skill_analyzer import run_analysis
+
+        rows = run_analysis(str(_PET_RELEASES_DIR), str(_PET_SKILL_DATA_FILE))
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pet skill analyzer dependency is missing: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Pet skill analysis failed: {exc}") from exc
+    _pet_skill_cache["key"] = None
+    dataset = await _get_pet_skill_dataset(force=True)
+    return {"status": "ok", **dataset["summary"], "accounts": dataset["accounts"]}
+
+
+@app.get("/api/pet-skills/releases")
+async def get_pet_skill_releases(account_id: str | None = Query(None), limit: int = Query(200, ge=1, le=2000)):
+    """List analyzed pet releases, optionally scoped to one resolved account."""
+    dataset = await _get_pet_skill_dataset()
+    rows = dataset["rows"]
+    if account_id:
+        if account_id == "unmatched":
+            rows = [row for row in rows if row.get("account_id") is None]
+        else:
+            rows = [row for row in rows if str(row.get("account_id")) == str(account_id)]
+    rows = rows[:limit]
+    return {"status": "ok", "items": rows, "count": len(rows)}
+
+
+@app.get("/api/pet-skills/releases/{release_id}")
+async def get_pet_skill_release_detail(release_id: str):
+    """Return one pet release with images and analyzed data."""
+    dataset = await _get_pet_skill_dataset()
+    row = dataset["by_id"].get(release_id)
+    if row:
+        return {"status": "ok", "item": row}
+    raise HTTPException(status_code=404, detail="Release not found")
+
+
+@app.delete("/api/pet-skills/releases/{release_id}")
+async def delete_pet_skill_release(release_id: str):
+    """Permanently delete one analyzed pet release and its source images."""
+    if not _PET_RELEASE_ID_RE.match(release_id):
+        raise HTTPException(status_code=400, detail="Invalid release id")
+
+    rows = _load_pet_skill_rows()
+    kept_rows = [row for row in rows if str(row.get("release_id")) != release_id]
+    if len(kept_rows) == len(rows):
+        raise HTTPException(status_code=404, detail="Release not found")
+
+    match = _PET_RELEASE_ID_RE.match(release_id)
+    serial = match.group("serial")
+    ts = match.group("ts")
+    filenames = [
+        f"available_{serial}_{ts}.png",
+        f"get_{serial}_{ts}.png",
+    ]
+    deleted_files = []
+    for filename in filenames:
+        path = (_PET_RELEASES_DIR / filename).resolve()
+        try:
+            path.relative_to(_PET_RELEASES_DIR.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid release image path") from exc
+        if path.exists():
+            path.unlink()
+            deleted_files.append(filename)
+
+    _save_pet_skill_rows(kept_rows)
+    _pet_skill_cache["key"] = None
+    return {
+        "status": "ok",
+        "deleted": True,
+        "release_id": release_id,
+        "deleted_files": deleted_files,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -1261,6 +1695,47 @@ async def execute_schedule_now(schedule_id: int):
     # Run in background (don't block API response)
     asyncio.create_task(execute_schedule(sched, ws_callback=ws_manager.broadcast_sync))
     return {"status": "executing", "name": sched["name"]}
+
+
+@app.get("/api/rss-center/rebuild/requests")
+async def get_rss_center_rebuild_requests(limit: int = 100):
+    """List RSS Center rebuild requests newest first."""
+    return await database.get_rss_center_rebuild_requests(limit=limit)
+
+
+@app.post("/api/rss-center/rebuild/dispatch/run-once")
+async def run_rss_center_rebuild_dispatch_once():
+    """Run one RSS Center rebuild dispatcher cycle immediately."""
+    from backend.core.rss_center_rebuild_dispatcher import (
+        run_rss_center_rebuild_dispatch_cycle,
+    )
+
+    summary = await run_rss_center_rebuild_dispatch_cycle(trigger_mode="manual")
+    return {"status": "ok", "summary": summary}
+
+
+@app.post("/api/rss-center/rebuild/requests/{request_id}/cancel")
+async def cancel_rss_center_rebuild_request(request_id: int):
+    """Cancel one active RSS Center rebuild request."""
+    ok = await database.cancel_rss_center_rebuild_request(request_id)
+    if ok:
+        return {"status": "ok", "id": request_id}
+    return {"error": "Request not found or not active", "id": request_id}
+
+
+@app.post("/api/rss-center/rebuild/requests/{request_id}/retry")
+async def retry_rss_center_rebuild_request(request_id: int):
+    """Reset one failed RSS Center rebuild request back to pending."""
+    ok = await database.retry_rss_center_rebuild_request(request_id)
+    if ok:
+        return {"status": "ok", "id": request_id}
+    return {"error": "Request not found or not failed", "id": request_id}
+
+
+@app.get("/api/rss-center/rebuild/builders")
+async def get_rss_center_rebuild_builders():
+    """List safe RSS Center builder account candidates."""
+    return await database.get_rss_center_builder_candidates()
 
 
 # ──────────────────────────────────────────────
@@ -2084,6 +2559,8 @@ def _migrate_config_v1_to_v2(group_id: int, v1_config: dict) -> dict:
                 "limit_min": 0,
                 "shutdown_emu_on_long_wait_enabled": True,
                 "shutdown_emu_wait_threshold_min": 30,
+                "legion_preflight_enabled": False,
+                "legion_preflight_recall_idle_enabled": True,
             },
         ),
     }
@@ -3323,9 +3800,25 @@ async def startup():
 
     # Start background scheduler
     from backend.core.scheduler import start_scheduler
+    from backend.core.rss_center_rebuild_dispatcher import (
+        start_rss_center_rebuild_dispatcher,
+    )
 
     start_scheduler()
+    start_rss_center_rebuild_dispatcher()
 
     print(f"[API] Started on port {config.server_port}")
     print(f"[API] Devices found: {len(emulator_manager.get_all())}")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Stop background workers on shutdown."""
+    from backend.core.scheduler import stop_scheduler
+    from backend.core.rss_center_rebuild_dispatcher import (
+        stop_rss_center_rebuild_dispatcher,
+    )
+
+    stop_scheduler()
+    stop_rss_center_rebuild_dispatcher()
 

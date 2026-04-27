@@ -497,12 +497,29 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
         current_state = detector.check_state(serial)
         print(f"[{serial}] Startup state after foreground check: {current_state}")
 
+        if current_state == "ERROR_CAPTURE":
+            if not adb_helper.ping_device(serial):
+                print(f"[{serial}] [FAILED] Device is no longer reachable via ADB. Failing fast instead of waiting for Lobby.")
+                return _fail("CRASH_DEVICE_OFFLINE: Device not reachable via ADB during startup")
+
+            print(f"[{serial}] [WARNING] Screencap failed during startup, but device is still reachable. Checking for crash recovery...")
+            if check_app_crash(serial, package_name, current_state=current_state):
+                return _recover_game_from_crash(
+                    serial,
+                    detector,
+                    package_name,
+                    target_lobby=None,
+                    load_timeout=load_timeout,
+                )
+
+            print(f"[{serial}] [FAILED] Screencap failed during startup and app did not qualify for crash recovery.")
+            return _fail("ADB_CAPTURE_FAILED: Could not capture screen during startup")
+
         non_recoverable_states = {
             None,
             "UNKNOWN / TRANSITION",
             "LOADING SCREEN",
             "LOADING SCREEN (NETWORK ISSUE)",
-            "ERROR_CAPTURE",
         }
 
         if current_state in LOBBY_STATES:
@@ -517,6 +534,9 @@ def startup_to_lobby(serial: str, detector: GameStateDetector, package_name: str
         print(f"[{serial}] State is transitional/loading. Waiting for game to load into Lobby...")
         lobby = wait_for_state(serial, detector, LOBBY_STATES, timeout_sec=load_timeout, package_name=package_name)
         if not lobby:
+            if check_app_crash(serial, package_name):
+                print(f"[{serial}] [FAILED] Game crashed during startup or loading.")
+                return _fail("CRASH_DURING_STARTUP: App crashed while waiting for Lobby")
             print(f"[{serial}] [FAILED] Game did not load into Lobby after {load_timeout}s.")
             return _fail(f"TIMEOUT_LOAD: Game did not load into Lobby after {load_timeout}s")
         return _ok()
@@ -713,6 +733,34 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
 
     print(f"[{serial}] === BACK TO LOBBY ===")
 
+    def _tap_back_ui_or_fallback(reason: str, frame=None) -> str:
+        """Prefer the in-game back arrow; only use ADB BACK if still not in lobby."""
+        back_arrow = detector._find_template(
+            serial,
+            detector.activity_templates,
+            target="BACK_ARROW",
+            threshold=0.75,
+            use_color=True,
+            frame=frame,
+            _caller="back_to_lobby_back_arrow",
+        )
+        if back_arrow:
+            _, bx, by = back_arrow
+            print(f"[{serial}] -> {reason}: BACK_ARROW detected at ({bx}, {by}). Tapping UI back...")
+            adb_helper.tap(serial, bx, by)
+            _human_delay(1.5)
+            return "ui_back"
+
+        lobby_state = detector.check_state(serial)
+        if lobby_state in LOBBY_STATES:
+            print(f"[{serial}] -> {reason}: No BACK_ARROW, but already at lobby ({lobby_state}).")
+            return "already_lobby"
+
+        print(f"[{serial}] -> {reason}: No BACK_ARROW and not in lobby ({lobby_state}). Falling back to ADB BACK...")
+        adb_helper.press_back(serial)
+        _human_delay(1.5)
+        return "adb_back"
+
     # 0. Ensure emulator is online and game is running
     detected_provider = detect_provider_from_emulator(serial)
     package_name = get_package_for_provider(detected_provider)
@@ -817,10 +865,9 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
 
         # === CASE 3: Construction detected (via check_state_full) — Press BACK immediately ===
         if construction:
-            print(f"[{serial}] -> Construction '{construction}' detected. Pressing BACK...")
+            print(f"[{serial}] -> Construction '{construction}' detected. Navigating back...")
             unknown_start_time = None
-            adb_helper.press_back(serial)
-            _human_delay(1.5)
+            _tap_back_ui_or_fallback(f"Construction '{construction}'", frame=result["screen"])
             continue
 
         # === CASE 4: Special screen detected — mostly BACK immediately ===
@@ -829,35 +876,22 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
 
             if special == "NOTE":
                 screen_before_back = result["screen"]
-                print(f"[{serial}] -> Special screen 'NOTE' detected. Trying BACK first...")
-                adb_helper.press_back(serial)
-                _human_delay(1.5)
-                detector._cache.invalidate()
-                note_after_back = detector.check_special_state(serial, target="NOTE")
-                screen_after_back = detector._cache.frame
-                screen_change_score = None
-                if (
-                    note_after_back == "NOTE"
-                    and screen_before_back is not None
-                    and screen_after_back is not None
-                    and screen_before_back.shape == screen_after_back.shape
-                ):
-                    screen_change_score = float(np.mean(cv2.absdiff(screen_before_back, screen_after_back)))
+                network_note_icon = detector.locate_icon(serial, target="NETWORK_ISSUE_NOTE_ICON", threshold=0.8)
+                if network_note_icon:
+                    _, nix, niy = network_note_icon
                     print(
-                        f"[{serial}] -> NOTE persisted after BACK. Screen change score: {screen_change_score:.2f}"
+                        f"[{serial}] -> Special screen 'NOTE' matched NETWORK_ISSUE_NOTE_ICON "
+                        f"at ({nix}, {niy}). Treating as network note. Tapping Confirm..."
                     )
-
-                if note_after_back == "NOTE" and screen_change_score is not None and screen_change_score < 4.0:
-                    print(f"[{serial}] -> NOTE remained unchanged after BACK. Treating as network note. Tapping Confirm...")
                     adb_helper.tap(serial, *NETWORK_CONFIRM_XY)
                     _human_delay(2)
-                elif note_after_back == "NOTE":
-                    print(f"[{serial}] -> NOTE changed after BACK. Not tapping Confirm to avoid accidental game exit.")
+                else:
+                    print(f"[{serial}] -> Special screen 'NOTE' detected without network icon. Navigating back...")
+                    _tap_back_ui_or_fallback("Special 'NOTE'", frame=screen_before_back)
                 continue
 
-            print(f"[{serial}] -> Special screen '{special}' detected. Pressing BACK...")
-            adb_helper.press_back(serial)
-            _human_delay(1.5)
+            print(f"[{serial}] -> Special screen '{special}' detected. Navigating back...")
+            _tap_back_ui_or_fallback(f"Special '{special}'", frame=result["screen"])
             continue
 
         # === CASE 5: BLACK SCREEN — Game booting, NEVER press back! ===
@@ -928,9 +962,8 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                 continue
             else:
                 last_crash_check = time.time()
-                print(f"[{serial}] -> Unknown for >5s. Pressing BACK...")
-                adb_helper.press_back(serial)
-                _human_delay(1.5)
+                print(f"[{serial}] -> Unknown for >5s. Trying UI back / fallback...")
+                _tap_back_ui_or_fallback("UNKNOWN >5s", frame=screen)
                 continue
 
         # === CASE 6: Known named state (Profile Menu, Bazaar, Events, etc.) ===
@@ -954,9 +987,8 @@ def back_to_lobby(serial: str, detector: GameStateDetector, timeout_sec: int = 3
                         load_timeout=180,
                     )
                 last_crash_check = time.time()
-            print(f"[{serial}] -> Known state '{current_state}'. Pressing BACK ({known_state_back_count}/3)...")
-            adb_helper.press_back(serial)
-            _human_delay(1.5)
+            print(f"[{serial}] -> Known state '{current_state}'. Trying UI back / fallback ({known_state_back_count}/3)...")
+            _tap_back_ui_or_fallback(f"Known state '{current_state}'", frame=result["screen"])
         else:
             if time.time() - last_crash_check > 10:
                 if check_app_crash(serial, package_name, current_state=current_state):
@@ -1060,7 +1092,13 @@ def go_to_resources(serial: str, detector: GameStateDetector) -> dict:
     
     return _ok()
 
-def go_to_construction(serial: str, detector: GameStateDetector, name: str, feature: str | None = None) -> dict:
+def go_to_construction(
+    serial: str,
+    detector: GameStateDetector,
+    name: str,
+    feature: str | None = None,
+    post_base_tap_swipe: tuple[int, int, int, int, int] | None = None,
+) -> dict:
     """
     Generic navigation to any construction building.
 
@@ -1074,7 +1112,13 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str, feat
 
     # ── V2 path: feature-based navigation ──
     if feature is not None:
-        return _go_to_construction_v2(serial, detector, name_upper, feature)
+        return _go_to_construction_v2(
+            serial,
+            detector,
+            name_upper,
+            feature,
+            post_base_tap_swipe=post_base_tap_swipe,
+        )
 
     # ── V1 path: legacy tap sequence (backward compat) ──
     if name_upper not in CONSTRUCTION_TAPS:
@@ -1129,7 +1173,13 @@ def go_to_construction(serial: str, detector: GameStateDetector, name: str, feat
     return _fail(f"NAV_TARGET_NOT_REACHED: Could not confirm {name_upper} opened")
 
 
-def _go_to_construction_v2(serial: str, detector: GameStateDetector, name_upper: str, feature: str) -> dict:
+def _go_to_construction_v2(
+    serial: str,
+    detector: GameStateDetector,
+    name_upper: str,
+    feature: str,
+    post_base_tap_swipe: tuple[int, int, int, int, int] | None = None,
+) -> dict:
     """
     V2 feature-based construction navigation. ALL features use template detection.
 
@@ -1176,6 +1226,14 @@ def _go_to_construction_v2(serial: str, detector: GameStateDetector, name_upper:
             print(f"[{serial}] Tapping base building at ({base_x}, {base_y})...")
         adb_helper.tap(serial, base_x, base_y)
         _human_delay(1.2)
+        if base_attempt == 0 and post_base_tap_swipe:
+            sx1, sy1, sx2, sy2, duration_ms = post_base_tap_swipe
+            print(
+                f"[{serial}] Applying one-time post-base swipe "
+                f"({sx1}, {sy1}) -> ({sx2}, {sy2}) for {name_upper}."
+            )
+            adb_helper.swipe(serial, sx1, sy1, sx2, sy2, duration_ms)
+            _human_delay(1.0)
 
         # ── Step 3: Detect & tap feature button ──
         if feat_type == "template":
@@ -1247,16 +1305,45 @@ def go_to_capture_pet(serial: str, detector: GameStateDetector) -> dict:
     """
     Go to Capture Pet Full Phase
     """
-    capture_pet(serial, detector)
-    go_to_pet_sanctuary(serial, detector)
-    release_pet(serial, detector)
-    capture_pet(serial, detector)
+    dispatch_result = capture_pet(serial, detector, mode="dispatch")
+    if not _is_ok(dispatch_result):
+        return _bubble(dispatch_result, "CAPTURE_PET_DISPATCH_FAILED")
+    dispatch_status = str((dispatch_result or {}).get("capture_status") or "")
+
+    sanctuary_result = go_to_pet_sanctuary(serial, detector)
+    if not _is_ok(sanctuary_result):
+        return _bubble(sanctuary_result, "NAV_TARGET_NOT_REACHED: Could not reach Pet Sanctuary")
+
+    clean_result = clean_trash_pet_sanctuary(serial, detector, duration=20, navigate=False)
+    if not _is_ok(clean_result):
+        return _bubble(clean_result, "CLEAN_TRASH_FAILED")
+
+    release_result = release_pet(serial, detector)
+    if not _is_ok(release_result):
+        return _bubble(release_result, "RELEASE_PET_FAILED")
+
+    if dispatch_status == "idle_no_warrants":
+        print(f"[{serial}] Capture dispatch had no warrants. Skipping final check_only phase.")
+        return _ok(capture_status="idle_no_warrants")
+
+    check_result = capture_pet(serial, detector, mode="check_only")
+    if not _is_ok(check_result):
+        return _bubble(check_result, "CAPTURE_PET_CHECK_FAILED")
     return _ok()
-    
-def capture_pet(serial: str, detector: GameStateDetector) -> dict:
+
+
+def capture_pet(serial: str, detector: GameStateDetector, mode: str = "dispatch") -> dict:
     """
-    Navigates from OUT_CITY to Auto Capture Pet screen and starts capture.
+    Pet capture flow.
+
+    Modes:
+      - dispatch: start a real pet capture and return without waiting for completion
+      - check_only: open the capture screen only to inspect current status
     """
+    mode = str(mode or "dispatch").strip().lower()
+    if mode not in {"dispatch", "check_only"}:
+        return _fail(f"CONFIG_INVALID_PARAM: Unknown capture_pet mode '{mode}'")
+
     print(f"[{serial}] Navigating to Capture Pet...")
     
     lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
@@ -1264,16 +1351,12 @@ def capture_pet(serial: str, detector: GameStateDetector) -> dict:
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
 
-    # 2. Tap Menu search
-    print(f"[{serial}] Opening Search Menu (42, 422)...")
-    adb_helper.tap(serial, 42, 422)
-    _human_delay(3)
-    
-    # 3. Tap Menu search Pet
-    print(f"[{serial}] Selecting Darklink Legions (158, 486)...")
-    adb_helper.tap(serial, 158, 486)
-    _human_delay(2)
+    # 2. Open search menu and switch to Darkling category if needed
+    category = _ensure_search_menu_category(serial, detector, "darkling")
+    if category is None:
+        return _fail("NAV_TARGET_NOT_REACHED: Could not open search menu")
 
+    # 3. Select Catch Pet sub-tab under Darkling category
     print(f"[{serial}] Selecting BEASTS MENU (301, 215)...")
     adb_helper.tap(serial, 301, 215)
     _human_delay(2)
@@ -1290,6 +1373,36 @@ def capture_pet(serial: str, detector: GameStateDetector) -> dict:
     if state not in ["AUTO_CAPTURE_PET", "AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"]:
         print(f"[{serial}] [FAILED] Did not reach Capture window.")
         return _fail("NAV_TARGET_NOT_REACHED: Did not reach Capture window")
+
+    if mode == "check_only":
+        resolved_state = state
+        if state == "AUTO_CAPTURE_PET":
+            print(f"[{serial}] Capture window opened at AUTO_CAPTURE_PET. Resolving actual capture state...")
+            resolved_state = wait_for_state(
+                serial,
+                detector,
+                ["AUTO_CAPTURE_START", "AUTO_CAPTURE_IN_PROGRESS"],
+                timeout_sec=10,
+                check_mode="special",
+            ) or "AUTO_CAPTURE_PET"
+
+        if resolved_state == "AUTO_CAPTURE_IN_PROGRESS":
+            print(f"[{serial}] Auto capture is still in progress. Waiting for completion...")
+            while True:
+                finished = detector.check_special_state(serial, target="AUTO_CAPTURE_START")
+                if finished:
+                    print(f"[{serial}] Auto capture completed successfully!")
+                    adb_helper.press_back(serial)
+                    _human_delay(1.2)
+                    return _ok(capture_status="completed")
+
+                print(f"[{serial}] Still in progress... waiting 5s for auto refresh.")
+                _human_delay(5)
+
+        print(f"[{serial}] Auto capture is idle/ready (capture likely completed or no warrants).")
+        adb_helper.press_back(serial)
+        _human_delay(1.2)
+        return _ok(capture_status="ready")
 
     # 6. Tap (284, 398) x5 to configure
     print(f"[{serial}] Configuring Pet Capture (284, 398) x5...")
@@ -1309,30 +1422,21 @@ def capture_pet(serial: str, detector: GameStateDetector) -> dict:
     
     if outcome is None:
         print(f"[{serial}] Auto capture started & game pushed to map! Capture successful.")
-        return _ok()
+        return _ok(capture_status="started_background")
         
     if outcome == "AUTO_CAPTURE_IN_PROGRESS":
-        print(f"[{serial}] Auto Capture remains on screen and is in progress! Waiting for completion...")
-        while True:
-            # Check if start icon appeared (meaning capture finished)
-            finished = detector.check_special_state(serial, target="AUTO_CAPTURE_START")
-            if finished:
-                print(f"[{serial}] Auto capture completed successfully!")
-                adb_helper.press_back(serial)
-                break
-                
-            print(f"[{serial}] Still in progress... tapping refresh (285, 400) and waiting 5s.")
-            # Bấm đổi tab Auto Capture để nó loading lại giao diện
-            adb_helper.tap(serial, 147, 140)
-            _human_delay(0.5)
-            adb_helper.tap(serial, 150, 233)
-            _human_delay(5)
+        print(f"[{serial}] Auto capture is running in background. Leaving screen to use waiting time.")
+        adb_helper.press_back(serial)
+        _human_delay(1.2)
+        return _ok(capture_status="in_progress")
             
     elif outcome == "AUTO_CAPTURE_START":
         print(f"[{serial}] Not enough warrants to capture pet (or idle state returned).")
         adb_helper.press_back(serial)
+        _human_delay(1.2)
+        return _ok(capture_status="idle_no_warrants")
         
-    return _ok()
+    return _ok(capture_status="unknown")
 
 def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> dict:
     """
@@ -1361,11 +1465,26 @@ def go_to_pet_sanctuary(serial: str, detector: GameStateDetector) -> dict:
     print(f"[{serial}] -> PET_SANCTUARY reached successfully.")
     return _ok()
 
-# Pet grid slot definitions (3 columns × N rows, 1-indexed)
-# Slot 7 = row 3 col 1, Slot 8 = row 3 col 2
-_PET_SLOT_7 = {"tap": (151, 315), "roi": (116, 275, 186, 355)}
-_PET_SLOT_8 = {"tap": (217, 320), "roi": (180, 275, 250, 355)}
 _BLANK_PET_TEMPLATE = os.path.join("pets", "blank_pet_slot_8.png")
+_PET_LOCK_TEMPLATE = os.path.join("pets", "pet_lock_icon.png")
+_PET_KEEP_COUNT = 7
+_PET_LOCK_THRESHOLD = 0.75
+_PET_BLANK_THRESHOLD = 0.80
+
+_PET_LOCK_ROIS = [
+    {"slot": "r1c1", "lock_roi": (150, 165, 180, 190), "slot_roi": (110, 110, 180, 190)},
+    {"slot": "r2c1", "lock_roi": (150, 250, 180, 275), "slot_roi": (110, 190, 180, 275)},
+    {"slot": "r3c1", "lock_roi": (150, 330, 180, 360), "slot_roi": (110, 278, 180, 360)},
+    {"slot": "r4c1", "lock_roi": (150, 405, 180, 435), "slot_roi": (110, 360, 180, 435)},
+    {"slot": "r1c2", "lock_roi": (225, 165, 250, 190), "slot_roi": (180, 110, 250, 190)},
+    {"slot": "r2c2", "lock_roi": (225, 250, 250, 275), "slot_roi": (180, 190, 250, 275)},
+    {"slot": "r3c2", "lock_roi": (225, 330, 250, 360), "slot_roi": (180, 278, 250, 360)},
+    {"slot": "r4c2", "lock_roi": (225, 405, 250, 435), "slot_roi": (180, 360, 250, 435)},
+    {"slot": "r1c3", "lock_roi": (295, 165, 320, 190), "slot_roi": (250, 110, 320, 190)},
+    {"slot": "r2c3", "lock_roi": (295, 250, 320, 275), "slot_roi": (250, 190, 320, 275)},
+    {"slot": "r3c3", "lock_roi": (295, 330, 320, 360), "slot_roi": (250, 278, 320, 360)},
+    {"slot": "r4c3", "lock_roi": (295, 405, 320, 435), "slot_roi": (250, 360, 320, 435)},
+]
 
 
 def _is_pet_slot_blank(
@@ -1411,6 +1530,81 @@ def _is_pet_slot_blank(
     is_blank = max_val >= threshold
     print(f"[{serial}] [PET] Slot blank check ROI={roi}: conf={max_val:.3f} → {'BLANK' if is_blank else 'HAS PET'}")
     return is_blank
+
+
+def _match_pet_template(roi_crop: np.ndarray, template_path: str) -> float:
+    if roi_crop.size == 0 or not os.path.exists(template_path):
+        return 0.0
+
+    template = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
+    if template is None:
+        return 0.0
+
+    if len(template.shape) == 3 and template.shape[2] == 4:
+        template = template[:, :, :3]
+
+    if roi_crop.shape[0] < template.shape[0] or roi_crop.shape[1] < template.shape[1]:
+        template = cv2.resize(template, (roi_crop.shape[1], roi_crop.shape[0]))
+
+    roi_gray = cv2.cvtColor(roi_crop, cv2.COLOR_BGR2GRAY)
+    tpl_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+    gray_res = cv2.matchTemplate(roi_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
+    _, gray_val, _, _ = cv2.minMaxLoc(gray_res)
+
+    color_res = cv2.matchTemplate(roi_crop, template, cv2.TM_CCOEFF_NORMED)
+    _, color_val, _, _ = cv2.minMaxLoc(color_res)
+
+    return max(float(gray_val), float(color_val))
+
+
+def _scan_pet_release_candidates(serial: str, detector: GameStateDetector) -> list[dict]:
+    frame = detector.get_frame(serial)
+    if frame is None:
+        print(f"[{serial}] [PET] [WARNING] Could not capture frame for pet grid scan.")
+        return []
+
+    blank_template_path = os.path.join(detector.templates_dir, _BLANK_PET_TEMPLATE)
+    lock_template_path = os.path.join(detector.templates_dir, _PET_LOCK_TEMPLATE)
+    results = []
+
+    for slot_def in _PET_LOCK_ROIS:
+        slot_name = slot_def["slot"]
+        sx1, sy1, sx2, sy2 = slot_def["slot_roi"]
+        lx1, ly1, lx2, ly2 = slot_def["lock_roi"]
+
+        slot_roi = frame[sy1:sy2, sx1:sx2]
+        lock_roi = frame[ly1:ly2, lx1:lx2]
+        blank_conf = _match_pet_template(slot_roi, blank_template_path)
+        is_blank = blank_conf >= _PET_BLANK_THRESHOLD
+        lock_conf = _match_pet_template(lock_roi, lock_template_path)
+        is_locked = (not is_blank) and lock_conf >= _PET_LOCK_THRESHOLD
+
+        if is_blank:
+            status = "BLANK"
+        elif is_locked:
+            status = "LOCKED"
+        else:
+            status = "RELEASE"
+
+        tap_point = ((sx1 + sx2) // 2, (sy1 + sy2) // 2)
+        print(
+            f"[{serial}] [PET] {slot_name.upper()} -> {status} "
+            f"(blank={blank_conf:.3f}, lock={lock_conf:.3f}, tap={tap_point})"
+        )
+        results.append(
+            {
+                "slot": slot_name,
+                "status": status,
+                "tap": tap_point,
+                "slot_roi": slot_def["slot_roi"],
+                "lock_roi": slot_def["lock_roi"],
+                "blank_confidence": blank_conf,
+                "lock_confidence": lock_conf,
+            }
+        )
+
+    return results
 
 
 def _release_single_pet(serial: str, detector: GameStateDetector, tap_point: tuple):
@@ -1470,45 +1664,50 @@ def release_pet(serial: str, detector: GameStateDetector) -> dict:
     adb_helper.tap(serial, 254, 93)
     _human_delay(2)
     adb_helper.tap(serial, 670, 131)
-    _human_delay(2)
+    _human_delay(2.8)
     adb_helper.tap(serial, 50, 135)
     _human_delay(2)
 
-    # 4. Linear release flow (max 5 pets/day)
-    _RELEASE_COUNT = 5
     released = 0
 
-    # Step A: Check slot 8 — if already blank, nothing to release
-    if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
-        print(f"[{serial}] [PET] Slot 8 already empty → nothing to release.")
-    else:
-        # Step B: Release from slot 8 x5
-        print(f"[{serial}] [PET] Releasing from slot 8 (up to {_RELEASE_COUNT})...")
-        for i in range(_RELEASE_COUNT):
-            _release_single_pet(serial, detector, _PET_SLOT_8["tap"])
-            if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
-                released += (i + 1)
-                print(f"[{serial}] [PET] Slot 8 empty after {i + 1} release(s).")
-                break
-        else:
-            # After 5 releases slot 8 still has pet → it's LOCKED
-            # Edge case: sort put locked pet at slot 8, free pet at slot 7
-            print(f"[{serial}] [PET] Slot 8 still occupied after {_RELEASE_COUNT}x → pet is LOCKED.")
-            print(f"[{serial}] [PET] Trying slot 7 fallback (x1)...")
-            _release_single_pet(serial, detector, _PET_SLOT_7["tap"])
+    while True:
+        detector._cache.invalidate()
+        scan_results = _scan_pet_release_candidates(serial, detector)
+        if not scan_results:
+            print(f"[{serial}] [PET] [WARNING] Pet grid scan returned no slots. Stopping release flow.")
+            break
 
-            # After releasing slot 7, grid shifts: locked pet → slot 7, new pet → slot 8
-            if not _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
-                print(f"[{serial}] [PET] Slot 8 has new pet after grid shift. Releasing slot 8 (up to {_RELEASE_COUNT})...")
-                for j in range(_RELEASE_COUNT):
-                    _release_single_pet(serial, detector, _PET_SLOT_8["tap"])
-                    if _is_pet_slot_blank(serial, detector, _PET_SLOT_8["roi"]):
-                        released += (j + 1) + 1  # +1 for slot 7 release
-                        print(f"[{serial}] [PET] Slot 8 empty after {j + 1} release(s).")
-                        break
-            else:
-                released += 1  # Only the slot 7 release counted
-                print(f"[{serial}] [PET] Slot 8 empty after slot 7 release.")
+        locked_slots = [item for item in scan_results if item["status"] == "LOCKED"]
+        release_slots = [item for item in scan_results if item["status"] == "RELEASE"]
+        occupied_count = len(locked_slots) + len(release_slots)
+
+        print(
+            f"[{serial}] [PET] Grid summary: "
+            f"locked={len(locked_slots)} release={len(release_slots)} occupied={occupied_count}"
+        )
+
+        if occupied_count <= _PET_KEEP_COUNT:
+            print(
+                f"[{serial}] [PET] Stop condition reached: locked + release = {occupied_count} <= {_PET_KEEP_COUNT}. "
+                f"Keeping remaining pets."
+            )
+            break
+
+        if not release_slots:
+            print(
+                f"[{serial}] [PET] [WARNING] No release candidates left, but occupied={occupied_count} > {_PET_KEEP_COUNT}. "
+                f"Likely too many locked pets. Stopping safely."
+            )
+            break
+
+        target_slot = release_slots[0]
+        print(
+            f"[{serial}] [PET] Releasing {target_slot['slot'].upper()} at {target_slot['tap']} "
+            f"(blank={target_slot['blank_confidence']:.3f}, lock={target_slot['lock_confidence']:.3f})"
+        )
+        _release_single_pet(serial, detector, target_slot["tap"])
+        released += 1
+        _human_delay(1.5)
 
     # 5. Exit
     print(f"[{serial}] Back x2 to exit Pet screen...")
@@ -1540,6 +1739,69 @@ def _detect_with_retry(serial, detector, target, threshold=0.8, attempts=3, dela
     return None
 
 
+_SEARCH_MENU_TAP = (42, 422)
+_SEARCH_CATEGORY_TAPS = {
+    "darkling": (158, 486),
+    "gold": (320, 485),
+    "wood": (475, 485),
+    "stone": (640, 485),
+    "mana": (795, 485),
+}
+_SEARCH_TAB_ROIS = {
+    "darkling": (80, 370, 260, 425),
+    "gold": (320, 370, 410, 425),
+    "wood": (385, 370, 560, 425),
+    "stone": (545, 370, 720, 425),
+    "mana": (700, 370, 875, 425),
+}
+_SEARCH_BTN_TEMPLATE = os.path.join("activities", "search_btn.png")
+
+
+def _detect_search_menu_current_category(serial: str, detector: GameStateDetector) -> str | None:
+    frame = detector.get_frame(serial)
+    if frame is None:
+        print(f"[{serial}] [SEARCH] [WARNING] Could not capture frame to detect current category.")
+        return None
+
+    template_path = os.path.join(detector.templates_dir, _SEARCH_BTN_TEMPLATE)
+    best_category = None
+    best_score = -1.0
+
+    for category, (x1, y1, x2, y2) in _SEARCH_TAB_ROIS.items():
+        roi = frame[y1:y2, x1:x2]
+        score = _match_pet_template(roi, template_path)
+        print(f"[{serial}] [SEARCH] Category ROI {category.upper()} score={score:.3f}")
+        if score > best_score:
+            best_score = score
+            best_category = category
+
+    print(f"[{serial}] [SEARCH] Current category detected as {best_category} (score={best_score:.3f})")
+    return best_category
+
+
+def _ensure_search_menu_category(serial: str, detector: GameStateDetector, target_category: str) -> str | None:
+    print(f"[{serial}] Opening Search Menu {_SEARCH_MENU_TAP}...")
+    adb_helper.tap(serial, _SEARCH_MENU_TAP[0], _SEARCH_MENU_TAP[1])
+    _human_delay(1.0)
+
+    search_panel = _detect_with_retry(serial, detector, "FARM_SEARCH_BTN", threshold=0.8, attempts=3, delay=1)
+    if not search_panel:
+        print(f"[{serial}] [FAILED] Search panel did not open.")
+        return None
+
+    print(f"[{serial}] Search panel confirmed open.")
+    current_category = _detect_search_menu_current_category(serial, detector)
+    if current_category and current_category == target_category:
+        print(f"[{serial}] [SEARCH] Current category already matches target {target_category.upper()}.")
+        return current_category
+
+    target_tap = _SEARCH_CATEGORY_TAPS[target_category]
+    print(f"[{serial}] [SEARCH] Switching category to {target_category.upper()} at {target_tap}...")
+    adb_helper.tap(serial, target_tap[0], target_tap[1])
+    _human_delay(1.0)
+    return current_category
+
+
 def go_to_farming(
     serial: str,
     detector: GameStateDetector,
@@ -1547,6 +1809,7 @@ def go_to_farming(
     resource_type: str = "wood",
     rotation_shuffle: bool = False,
     legion_resource_plan: list[str] | None = None,
+    max_legions: int = 5,
 ) -> dict:
     """
     Farming Workflow (Anti-Detection Enhanced):
@@ -1567,7 +1830,7 @@ def go_to_farming(
         "gold": (320, 400), "wood": (475, 400),
         "stone": (640, 400), "mana": (795, 400),
     }
-    LEGION_TAPS = [
+    ALL_LEGION_TAPS = [
         (695, 90), (735, 90), (780, 90), (825, 90), (865, 90),
     ]
     ROTATION_ORDER = ["gold", "wood", "stone", "mana"]
@@ -1581,6 +1844,16 @@ def go_to_farming(
     if r_type != "rotation" and r_type not in RESOURCE_TAPS:
         print(f"[{serial}] [ERROR] Unknown resource type: {resource_type}")
         return _fail(f"CONFIG_INVALID_PARAM: Unknown resource type '{resource_type}'")
+
+    try:
+        resolved_max_legions = int(max_legions or 0)
+    except Exception:
+        resolved_max_legions = 0
+    resolved_max_legions = max(0, min(5, resolved_max_legions))
+    if resolved_max_legions <= 0:
+        print(f"[{serial}] No free legion capacity available for farming. Skipping dispatch.")
+        return _ok()
+    LEGION_TAPS = ALL_LEGION_TAPS[:resolved_max_legions]
 
     normalized_legion_plan = None
     if legion_resource_plan:
@@ -1597,6 +1870,7 @@ def go_to_farming(
             normalized_legion_plan.append(value)
 
     print(f"[{serial}] Starting Farming Workflow mode={mode} resource_type={resource_type.upper()}")
+    print(f"[{serial}] Farming legion capacity resolved to {resolved_max_legions} preset(s).")
 
     # 1. Back to lobby OUT_CITY
     result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
@@ -1627,9 +1901,49 @@ def go_to_farming(
         f"(mode={mode}, shuffle={rotation_shuffle})"
     )
     print(f"[{serial}] Legion preset order: {[LEGION_TAPS.index(tap) + 1 for tap in shuffled_legion_taps]}")
+    planned_dispatches = sum(1 for item in resource_plan if item != "skip")
+    required_dispatches = min(3, planned_dispatches)
 
     # 3. Dispatch loop
     consumed_manual_positions = set()
+    total_deployed = 0
+
+    def _dispatch_menu_backup(
+        dispatch_idx: int,
+        legion_tap: tuple[int, int],
+        dispatch_resource: str,
+        search_clicks: int,
+        reason: str,
+    ) -> tuple[str, int]:
+        print(
+            f"[{serial}] [MENU BACKUP] Manual fallback for dispatch #{dispatch_idx + 1} "
+            f"resource={dispatch_resource.upper()} reason={reason}."
+        )
+        mine_result = _search_mine_via_menu(
+            serial,
+            detector,
+            dispatch_resource,
+            RESOURCE_TAPS,
+            SEARCH_TAPS,
+            search_clicks=search_clicks,
+        )
+        if mine_result is None:
+            print(f"[{serial}] [MENU BACKUP] No mine found via menu. Stopping backup.")
+            return "stop", 0
+        if mine_result == "occupied":
+            print(f"[{serial}] [MENU BACKUP] Menu result occupied. Continuing without deploy.")
+            return "continue", 0
+
+        print(f"[{serial}] [MENU BACKUP] Locked mine type: {mine_result.upper()}")
+        if not _gather_and_dispatch_current_mine(
+            serial,
+            detector,
+            legion_tap,
+            LEGION_TAPS,
+        ):
+            return "stop", 0
+        return "continue", 1
+
     for idx, legion_tap in enumerate(shuffled_legion_taps):
         if idx in consumed_manual_positions:
             continue
@@ -1657,7 +1971,7 @@ def go_to_farming(
                 f"\n[{serial}] --- Manual Session {dispatch_resource.upper()} "
                 f"(dispatches {block_indices[0]+1}-{block_indices[-1]+1}) ---"
             )
-            session_result = _run_manual_dispatch_session(
+            session_result, session_deployed = _run_manual_dispatch_session(
                 serial,
                 detector,
                 dispatch_resource,
@@ -1666,8 +1980,30 @@ def go_to_farming(
                 SEARCH_TAPS,
                 LEGION_TAPS,
             )
+            total_deployed += session_deployed
             if session_result == "stop":
                 break
+            if session_result == "manual_no_mine" and session_deployed < len(block_taps):
+                remaining_positions = block_indices[session_deployed:]
+                print(
+                    f"[{serial}] [MENU BACKUP] Manual session deployed "
+                    f"{session_deployed}/{len(block_taps)} for {dispatch_resource.upper()}. "
+                    f"Backing up {len(remaining_positions)} remaining dispatch(es) with menu."
+                )
+                for backup_pos in remaining_positions:
+                    backup_status, backup_deployed = _dispatch_menu_backup(
+                        backup_pos,
+                        shuffled_legion_taps[backup_pos],
+                        dispatch_resource,
+                        search_k_values[backup_pos],
+                        session_result,
+                    )
+                    total_deployed += backup_deployed
+                    if backup_status == "stop":
+                        session_result = "stop"
+                        break
+                if session_result == "stop":
+                    break
             continue
         print(f"\n[{serial}] --- Dispatch #{idx+1} ({method} search, K={k_val}, resource={dispatch_resource.upper()}) ---")
 
@@ -1694,51 +2030,33 @@ def go_to_farming(
         gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=1)
         if not gather_btn:
             print(f"[{serial}] [WARNING] Gather button not visible. Mine popup may not have loaded.")
-            adb_helper.press_back(serial)
-            _human_delay(1)
+            current_state = detector.check_state(serial)
+            if current_state == "IN-GAME LOBBY (OUT_CITY)":
+                print(f"[{serial}] Already at OUT_CITY after missing Gather. Not pressing BACK.")
+            else:
+                print(f"[{serial}] Cleaning up missing Gather state via back_to_lobby()...")
+                back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)", timeout_sec=10)
             break
 
-        _, gx, gy = gather_btn
-        print(f"[{serial}] Tapping Gather Button at detected ({gx}, {gy})...")
-        adb_helper.tap(serial, gx, gy)
-        _human_delay(2)
-
-        # Check if we can create a legion
-        print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
-        create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=3, delay=1)
-
-        if not create_result:
-            print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
-            adb_helper.press_back(serial)
-            _human_delay(2)
+        if not _gather_and_dispatch_current_mine(
+            serial,
+            detector,
+            legion_tap,
+            LEGION_TAPS,
+            gather_btn=gather_btn,
+        ):
             break
 
-        print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
-
-        # Create Legion
-        print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
-        adb_helper.tap(serial, 755, 115)
-        _human_delay(2)
-
-        # Select Legion Preset
-        preset_number = LEGION_TAPS.index(legion_tap) + 1
-        print(f"[{serial}] Selecting Legion Preset #{preset_number} at {legion_tap}...")
-        adb_helper.tap(serial, legion_tap[0], legion_tap[1])
-        _human_delay(1)
-
-        # Dispatch + verify return to world map
-        dispatch_loc = (850, 480)
-        print(f"[{serial}] Tapping March/Dispatch {dispatch_loc}...")
-        adb_helper.tap(serial, dispatch_loc[0], dispatch_loc[1])
-        _human_delay(2)
-
-        state = wait_for_state(serial, detector,
-            ["IN-GAME LOBBY (OUT_CITY)"], timeout_sec=10)
-        if not state:
-            print(f"[{serial}] [WARNING] Did not return to OUT_CITY after dispatch. Recovering...")
-            back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
+        total_deployed += 1
 
     print(f"[{serial}] Farming Deployment Finished.")
+
+    print(f"[{serial}] Farming Deployment Finished. Total deployed count: {total_deployed}")
+    if total_deployed < required_dispatches:
+        return _fail(
+            f"RESOURCE_SLOT_FULL: Only deployed {total_deployed} legions "
+            f"(required {required_dispatches}). Missing CREATE_LEGION or node occupied."
+        )
     return _ok()
 
 
@@ -1762,6 +2080,9 @@ def _plan_farming_dispatches(
     first_seen_order = []
     skip_count = 0
 
+    def _pick_weighted_search_method() -> str:
+        return "menu" if random.random() < 0.70 else "manual"
+
     for item in resource_plan:
         if item == "skip":
             skip_count += 1
@@ -1784,7 +2105,7 @@ def _plan_farming_dispatches(
             elif counts.get(name, 0) >= 2:
                 methods.append("manual")
             else:
-                methods.append(random.choice(["menu", "manual"]))
+                methods.append(_pick_weighted_search_method())
         return legacy_plan, methods
 
     repeated_resources = [name for name in first_seen_order if counts.get(name, 0) >= 2]
@@ -1803,7 +2124,7 @@ def _plan_farming_dispatches(
         elif counts.get(name, 0) >= 2:
             methods.append("manual")
         else:
-            methods.append(random.choice(["menu", "manual"]))
+            methods.append(_pick_weighted_search_method())
 
     return reordered_plan, methods
 
@@ -1822,31 +2143,161 @@ def _shuffle_preset_legions(legion_taps: list[tuple[int, int]]) -> list[tuple[in
     return first_four + [legion_taps[4]]
 
 
+_MANUAL_SCAN_STEP_SEGMENTS = {
+    "R": ((180, 270), (760, 270)),
+    "L": ((760, 270), (180, 270)),
+    "U": ((480, 430), (480, 90)),
+    "D": ((480, 90), (480, 430)),
+}
+_MANUAL_SCAN_SETTLE_S = 1.5
+_MANUAL_SCAN_RADIUS = 3
+_MANUAL_SCAN_SKIP_INNER_RING = 2
+_MANUAL_ICON_DEDUPE_PX = 70
+_MANUAL_MAX_CONSECUTIVE_EMPTY_SWIPES = 15
+
+
+def _build_ring_perimeter(ring: int, clockwise: bool = True) -> list[tuple[int, int]]:
+    if ring <= 0:
+        return []
+
+    coords: list[tuple[int, int]] = []
+    for x in range(-ring, ring + 1):
+        coords.append((x, -ring))
+    for y in range(-ring + 1, ring + 1):
+        coords.append((ring, y))
+    for x in range(ring - 1, -ring - 1, -1):
+        coords.append((x, ring))
+    for y in range(ring - 1, -ring, -1):
+        coords.append((-ring, y))
+
+    if not clockwise:
+        coords = list(reversed(coords))
+
+    start_idx = random.randint(0, len(coords) - 1)
+    return coords[start_idx:] + coords[:start_idx]
+
+
+def _grid_path_to_step_plan(targets: list[tuple[int, int]]) -> list[tuple[str, tuple[tuple[int, int], tuple[int, int]], tuple[int, int]]]:
+    current_x, current_y = 0, 0
+    plan: list[tuple[str, tuple[tuple[int, int], tuple[int, int]], tuple[int, int]]] = []
+
+    for target_x, target_y in targets:
+        while current_x != target_x or current_y != target_y:
+            if current_x != target_x and current_y != target_y:
+                move_axis = random.choice(["x", "y"])
+            elif current_x != target_x:
+                move_axis = "x"
+            else:
+                move_axis = "y"
+
+            if move_axis == "x":
+                step_name = "R" if target_x > current_x else "L"
+                current_x += 1 if step_name == "R" else -1
+            else:
+                step_name = "D" if target_y > current_y else "U"
+                current_y += 1 if step_name == "D" else -1
+
+            plan.append((step_name, _MANUAL_SCAN_STEP_SEGMENTS[step_name], (current_x, current_y)))
+
+    return plan
+
+
+def _build_outward_ring_scan_plan(
+    radius: int = _MANUAL_SCAN_RADIUS,
+    min_ring_first: int = _MANUAL_SCAN_SKIP_INNER_RING,
+) -> list[tuple[str, tuple[tuple[int, int], tuple[int, int]], tuple[int, int]]]:
+    if radius <= 0:
+        return []
+
+    clockwise = random.choice([True, False])
+    ring_order = [ring for ring in range(max(1, min_ring_first), radius + 1)]
+    if min_ring_first > 1:
+        ring_order.extend(range(1, min_ring_first))
+
+    targets: list[tuple[int, int]] = []
+    for ring in ring_order:
+        targets.extend(_build_ring_perimeter(ring, clockwise=clockwise))
+
+    plan = _grid_path_to_step_plan(targets)
+    print(
+        f"[MANUAL SCAN] Outward ring plan radius={radius} "
+        f"ring_order={ring_order} rotation={'clockwise' if clockwise else 'counterclockwise'} "
+        f"steps={len(plan)}"
+    )
+    return plan
+
+
+def _is_near_any_point(point: tuple[int, int], points: list[tuple[int, int]], threshold_px: float = _MANUAL_ICON_DEDUPE_PX) -> bool:
+    for px, py in points:
+        if ((point[0] - px) ** 2 + (point[1] - py) ** 2) ** 0.5 < threshold_px:
+            return True
+    return False
+
+
+def _compute_gather_tap_point(gather_btn: tuple[str, int, int]) -> tuple[int, int]:
+    """Bias gather taps slightly into the body of the button.
+
+    The RSS_GATHER template is text-centric. In practice, tapping a little
+    down/right from the template center is more forgiving when the popup is
+    still settling or the matched text sits near the button edge.
+    """
+    _, gx, gy = gather_btn
+    return min(900, gx + 18), min(500, gy + 10)
+
+
 def _gather_and_dispatch_current_mine(
     serial: str,
     detector: GameStateDetector,
     legion_tap: tuple[int, int],
     legion_taps_master: list[tuple[int, int]],
     gather_btn=None,
-) -> bool:
+    return_status: bool = False,
+) -> bool | tuple[bool, str]:
+    def _finish(ok: bool, status: str) -> bool | tuple[bool, str]:
+        return (ok, status) if return_status else ok
+
     if not gather_btn:
         gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=0.35)
     if not gather_btn:
         print(f"[{serial}] [WARNING] Gather button not visible. Mine popup may not have loaded.")
-        return False
+        return _finish(False, "gather_not_visible")
 
     _, gx, gy = gather_btn
-    print(f"[{serial}] Tapping Gather Button at detected ({gx}, {gy})...")
-    adb_helper.tap(serial, gx, gy)
+    tap_x, tap_y = _compute_gather_tap_point(gather_btn)
+    print(
+        f"[{serial}] Tapping Gather Button at detected ({gx}, {gy}) "
+        f"using click point ({tap_x}, {tap_y})..."
+    )
+    adb_helper.tap(serial, tap_x, tap_y)
     _human_delay(0.55)
 
     print(f"[{serial}] Checking if we can deploy legions (looking for CREATE_LEGION)...")
-    create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=5, delay=0.3)
+    create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=4, delay=0.25)
     if not create_result:
-        print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning to Lobby.")
-        adb_helper.press_back(serial)
-        _human_delay(2)
-        return False
+        gather_still_visible = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.2)
+        if gather_still_visible:
+            retry_x = min(910, tap_x + 18)
+            retry_y = min(505, tap_y + 8)
+            print(
+                f"[{serial}] Gather button still visible after first tap. "
+                f"Retrying safer click at ({retry_x}, {retry_y})..."
+            )
+            adb_helper.tap(serial, retry_x, retry_y)
+            _human_delay(0.65)
+            print(f"[{serial}] Re-checking CREATE_LEGION after gather retry...")
+            create_result = _detect_with_retry(serial, detector, "CREATE_LEGION", threshold=0.8, attempts=5, delay=0.25)
+    if not create_result:
+        current_state = detector.check_state(serial)
+        if current_state == "IN-GAME LOBBY (OUT_CITY)":
+            print(
+                f"[{serial}] CREATE_LEGION not found and already OUT_CITY. "
+                "Likely gather tap missed or popup was dismissed; not pressing BACK."
+            )
+            return _finish(False, "already_out_city")
+
+        print(f"[{serial}] Legions are FULL, node is occupied, or no AP! Returning safely to OUT_CITY.")
+        back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)", timeout_sec=10)
+        return _finish(False, "create_legion_missing")
 
     print(f"[{serial}] Found CREATE_LEGION -> Deploying forces...")
     print(f"[{serial}] Tapping Create Legion Button (755, 115)...")
@@ -1867,7 +2318,7 @@ def _gather_and_dispatch_current_mine(
     if not state:
         print(f"[{serial}] [WARNING] Did not return to OUT_CITY after dispatch. Recovering...")
         back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (OUT_CITY)")
-    return True
+    return _finish(True, "deployed")
 
 
 def _run_manual_dispatch_session(
@@ -1878,7 +2329,7 @@ def _run_manual_dispatch_session(
     resource_taps: dict,
     search_taps: dict,
     legion_taps_master: list[tuple[int, int]],
-) -> str:
+) -> tuple[str, int]:
     anchor_result = _search_mine_via_menu(
         serial,
         detector,
@@ -1889,12 +2340,15 @@ def _run_manual_dispatch_session(
     )
     if anchor_result is None:
         print(f"[{serial}] [MANUAL SESSION] No anchor mine found for {r_type.upper()}.")
-        return "stop"
+        return "manual_no_mine", 0
     if anchor_result == "occupied":
         print(f"[{serial}] [MANUAL SESSION] Anchor mine occupied for {r_type.upper()}. Skipping block.")
-        return "continue"
+        return "manual_no_mine", 0
 
     print(f"[{serial}] [MANUAL SESSION] Anchor mine found ({anchor_result.upper()}). Scanning for nearby alternatives...")
+    print(f"[{serial}] [MANUAL SESSION] Dismissing anchor mine popup before manual scan...")
+    adb_helper.tap(serial, 480, 270)
+    _human_delay(0.8)
 
     icon_targets = {
         "gold": "MANUAL_RSS_GOLD",
@@ -1902,116 +2356,124 @@ def _run_manual_dispatch_session(
         "stone": "MANUAL_RSS_ORE",
         "mana": "MANUAL_RSS_MANA",
     }
-    swipe_segments = {
-        "R": ((180, 270), (760, 270)),
-        "L": ((760, 270), (180, 270)),
-        "U": ((480, 430), (480, 90)),
-        "D": ((480, 90), (480, 430)),
-    }
-
-    clockwise = [("R", (1, 0)), ("D", (0, 1)), ("L", (-1, 0)), ("U", (0, -1))]
-    counterclockwise = [("R", (1, 0)), ("U", (0, -1)), ("L", (-1, 0)), ("D", (0, 1))]
-    base_directions = random.choice([clockwise, counterclockwise])
-    start_idx = random.randint(0, len(base_directions) - 1)
-    directions = base_directions[start_idx:] + base_directions[:start_idx]
-    rotation_name = "clockwise" if base_directions is clockwise else "counterclockwise"
-    print(
-        f"[{serial}] [MANUAL SESSION] Local spiral scan start rotation={rotation_name} "
-        f"start_direction={directions[0][0]}"
-    )
-
-    radius = 3
-    x = 0
-    y = 0
-    step_length = 1
-    step_idx = 0
-    planned_steps = ((radius * 2 + 1) ** 2) - 1
+    plan = _build_outward_ring_scan_plan()
+    planned_steps = len(plan)
     legion_idx = 0
-    skip_detect_once = False
+    blocked_centers: list[tuple[int, int]] = []
+    consecutive_empty_swipes = 0
 
-    while step_idx < planned_steps and legion_idx < len(legion_taps):
-        for dir_idx, (direction_name, (dx, dy)) in enumerate(directions):
-            for _ in range(step_length):
-                if step_idx >= planned_steps or legion_idx >= len(legion_taps):
+    for step_idx, (direction_name, segment, grid_xy) in enumerate(plan, start=1):
+        if legion_idx >= len(legion_taps):
+            break
+
+        print(
+            f"[{serial}] [MANUAL SESSION] Swipe {step_idx}/{planned_steps} "
+            f"dir={direction_name} grid={grid_xy}"
+        )
+        adb_helper.swipe(
+            serial,
+            segment[0][0], segment[0][1],
+            segment[1][0], segment[1][1],
+            1200,
+        )
+        _human_delay(_MANUAL_SCAN_SETTLE_S)
+
+        initial_icon_matches = detector.find_all_icon_matches(serial, target=icon_targets[r_type], threshold=0.75)
+        if not initial_icon_matches:
+            consecutive_empty_swipes += 1
+            if consecutive_empty_swipes >= _MANUAL_MAX_CONSECUTIVE_EMPTY_SWIPES:
+                print(
+                    f"[{serial}] [MANUAL SESSION] Reached consecutive empty swipe limit "
+                    f"{consecutive_empty_swipes}/{_MANUAL_MAX_CONSECUTIVE_EMPTY_SWIPES}. "
+                    f"Stopping manual scan early."
+                )
+                break
+            continue
+        consecutive_empty_swipes = 0
+        same_screen_limit = max(1, len(initial_icon_matches))
+        same_screen_taps = 0
+        current_icon_matches = initial_icon_matches
+
+        while same_screen_taps < same_screen_limit and legion_idx < len(legion_taps):
+            print(
+                f"[{serial}] [MANUAL SESSION] Found {len(current_icon_matches)} nearby {r_type.upper()} "
+                f"icon match(es) on this screen."
+            )
+            dispatched_this_pass = False
+            for icon_x, icon_y in current_icon_matches:
+                candidate_center = (icon_x, icon_y)
+                if _is_near_any_point(candidate_center, blocked_centers):
+                    continue
+
+                print(f"[{serial}] [MANUAL SESSION] Probing icon at ({icon_x}, {icon_y}).")
+                adb_helper.tap(serial, icon_x, icon_y)
+                _human_delay(0.45)
+
+                gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.3)
+                if gather_btn:
+                    print(f"[{serial}] [MANUAL SESSION] Gather available on scanned mine.")
+                    dispatched, dispatch_status = _gather_and_dispatch_current_mine(
+                        serial,
+                        detector,
+                        legion_taps[legion_idx],
+                        legion_taps_master,
+                        gather_btn=gather_btn,
+                        return_status=True,
+                    )
+                    if not dispatched:
+                        blocked_centers.append(candidate_center)
+                        if dispatch_status == "already_out_city":
+                            print(
+                                f"[{serial}] [MANUAL SESSION] Gather attempt returned to OUT_CITY. "
+                                "Treating as miss-tap and continuing scan."
+                            )
+                            _human_delay(0.8)
+                            continue
+                        return "stop", legion_idx
+                    legion_idx += 1
+                    same_screen_taps += 1
+                    dispatched_this_pass = True
                     break
-                nx = x + dx
-                ny = y + dy
-                x, y = nx, ny
-                if abs(nx) > radius or abs(ny) > radius:
+
+                recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
+                attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
+                view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
+                if recall_btn or attack_btn or view_btn:
+                    print(f"[{serial}] [MANUAL SESSION] Candidate icon is occupied/invalid. Trying next match.")
+                    blocked_centers.append(candidate_center)
+                    _human_delay(0.8)
                     continue
 
-                step_idx += 1
-                segment = swipe_segments[direction_name]
+                current_state = detector.check_state(serial)
+                if current_state != "IN-GAME LOBBY (OUT_CITY)":
+                    print(f"[{serial}] [MANUAL SESSION] Unexpected state {current_state}. Recovering with BACK.")
+                    adb_helper.press_back(serial)
+                    _human_delay(1.0)
+                blocked_centers.append(candidate_center)
+
+            if not dispatched_this_pass:
+                break
+            if len(initial_icon_matches) < 2:
+                break
+            if same_screen_taps >= same_screen_limit:
                 print(
-                    f"[{serial}] [MANUAL SESSION] Swipe {step_idx}/{planned_steps} "
-                    f"dir={direction_name} grid=({nx},{ny})"
+                    f"[{serial}] [MANUAL SESSION] Reached same-screen tap limit "
+                    f"{same_screen_taps}/{same_screen_limit}. Moving to next swipe."
                 )
-                adb_helper.swipe(
-                    serial,
-                    segment[0][0], segment[0][1],
-                    segment[1][0], segment[1][1],
-                    1200,
-                )
-                _human_delay(1.5)
+                break
 
-                if skip_detect_once:
-                    print(f"[{serial}] [MANUAL SESSION] Skipping detect immediately after dispatch; moving to next tile.")
-                    skip_detect_once = False
-                    continue
-
-                icon_matches = detector.find_all_icon_matches(serial, target=icon_targets[r_type], threshold=0.75)
-                if not icon_matches:
-                    continue
-                print(
-                    f"[{serial}] [MANUAL SESSION] Found {len(icon_matches)} nearby {r_type.upper()} "
-                    f"icon match(es) on this swipe."
-                )
-                dispatched_this_swipe = False
-                for icon_x, icon_y in icon_matches:
-                    print(f"[{serial}] [MANUAL SESSION] Probing icon at ({icon_x}, {icon_y}).")
-                    adb_helper.tap(serial, icon_x, icon_y)
-                    _human_delay(0.45)
-
-                    gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.3)
-                    if gather_btn:
-                        print(f"[{serial}] [MANUAL SESSION] Gather available on scanned mine.")
-                        if not _gather_and_dispatch_current_mine(
-                            serial,
-                            detector,
-                            legion_taps[legion_idx],
-                            legion_taps_master,
-                            gather_btn=gather_btn,
-                        ):
-                            return "stop"
-                        legion_idx += 1
-                        skip_detect_once = True
-                        dispatched_this_swipe = True
-                        break
-
-                    recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
-                    attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
-                    view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
-                    if recall_btn or attack_btn or view_btn:
-                        print(f"[{serial}] [MANUAL SESSION] Candidate icon is occupied/invalid. Trying next match.")
-                        _human_delay(0.8)
-                        continue
-
-                    current_state = detector.check_state(serial)
-                    if current_state != "IN-GAME LOBBY (OUT_CITY)":
-                        print(f"[{serial}] [MANUAL SESSION] Unexpected state {current_state}. Recovering with BACK.")
-                        adb_helper.press_back(serial)
-                        _human_delay(1.0)
-                if dispatched_this_swipe:
-                    continue
-            if dir_idx % 2 == 1:
-                step_length += 1
+            current_icon_matches = detector.find_all_icon_matches(serial, target=icon_targets[r_type], threshold=0.75)
+            if not current_icon_matches:
+                break
 
     if legion_idx == 0:
         print(f"[{serial}] [MANUAL SESSION] No valid nearby mine found after local scan.")
-        return "stop"
+        return "manual_no_mine", 0
 
     print(f"[{serial}] [MANUAL SESSION] Completed {legion_idx}/{len(legion_taps)} dispatches for {r_type.upper()}.")
-    return "continue"
+    if legion_idx < len(legion_taps):
+        return "manual_no_mine", legion_idx
+    return "continue", legion_idx
 
 
 def _build_resource_plan(total: int, rotation_order: list[str], shuffle: bool = False) -> list[str]:
@@ -2033,12 +2495,12 @@ def _plan_search_clicks(total: int) -> list:
     """Pre-compute K (search click count) for each dispatch.
 
     Weighted distribution favoring K=1:
-        K=1: 40%,  K=2: 30%,  K=3: 20%,  K=4: 10%
+        K=1: 65%,  K=2: 25%,  K=3: 7%,  K=4: 3%
     After any K>=3 is assigned, all subsequent K values cap at 2.
     """
-    weights = [40, 30, 20, 10]  # K=1, K=2, K=3, K=4
+    weights = [65, 25, 7, 3]  # K=1, K=2, K=3, K=4
     choices = [1, 2, 3, 4]
-    capped_weights = [40, 60]   # K=1, K=2 (after deep search)
+    capped_weights = [65, 35]   # K=1, K=2 (after deep search)
     capped_choices = [1, 2]
 
     k_values = []
@@ -2075,6 +2537,80 @@ def _search_mine_via_menu(
         None: no mine found at all
     """
     ALL_TYPES = ["gold", "wood", "stone", "mana"]
+
+    category = _ensure_search_menu_category(serial, detector, r_type)
+    if category is None:
+        return None
+
+    search_x, search_y = search_taps[r_type]
+    print(f"[{serial}] [Anti-Detect] Will tap Search {search_clicks} time(s) to randomize mine selection")
+
+    mine_found = False
+    for click_num in range(1, search_clicks + 1):
+        if click_num > 1:
+            reopened = _ensure_search_menu_category(serial, detector, r_type)
+            if reopened is None:
+                print(f"[{serial}] Search panel didn't reopen. Using last mine.")
+                mine_found = True
+                break
+
+        print(f"[{serial}] Search click {click_num}/{search_clicks}...")
+        adb_helper.tap(serial, search_x, search_y)
+        _human_delay(3)
+
+        detector._screen_cache = None
+        panel_still_open = detector.check_activity(serial, target="FARM_SEARCH_BTN", threshold=0.8)
+
+        if panel_still_open:
+            print(f"[{serial}] [NO MINE] No {r_type} mine nearby on click {click_num}.")
+            break
+
+        mine_found = True
+
+    if not mine_found:
+        print(f"[{serial}] [NO MINE] Trying other resource types...")
+        for alt_type in ALL_TYPES:
+            if alt_type == r_type:
+                continue
+
+            alt_search_x, alt_search_y = search_taps[alt_type]
+            print(f"[{serial}]   Trying {alt_type.upper()}...")
+
+            current_alt = _detect_search_menu_current_category(serial, detector)
+            if current_alt != alt_type:
+                alt_res_x, alt_res_y = resource_taps[alt_type]
+                adb_helper.tap(serial, alt_res_x, alt_res_y)
+                _human_delay(1)
+
+            adb_helper.tap(serial, alt_search_x, alt_search_y)
+            _human_delay(3)
+
+            detector._screen_cache = None
+            still_open = detector.check_activity(serial, target="FARM_SEARCH_BTN", threshold=0.8)
+            if not still_open:
+                print(f"[{serial}]   {alt_type.upper()} mine found! Switching resource type.")
+                r_type = alt_type
+                mine_found = True
+                break
+            else:
+                print(f"[{serial}]   No {alt_type.upper()} mine either.")
+
+    if not mine_found:
+        print(f"[{serial}] [NO MINE] All resource types exhausted. No mines available!")
+        adb_helper.press_back(serial)
+        _human_delay(1)
+        return None
+
+    print(f"[{serial}] Mine found ({r_type.upper()})! Map panned to resource node.")
+
+    view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=2, delay=0.5)
+    if view_btn:
+        print(f"[{serial}] [OCCUPIED] Mine already has our legion (View detected). Dismissing...")
+        adb_helper.tap(serial, 50, 500)
+        _human_delay(1.5)
+        return "occupied"
+
+    return r_type
 
     # ── Open Search Menu ──
     print(f"[{serial}] Opening Search Menu (42, 422)...")
@@ -2203,12 +2739,6 @@ def _search_mine_manual(
         "stone": "MANUAL_RSS_ORE",
         "mana": "MANUAL_RSS_MANA",
     }
-    swipe_segments = {
-        "R": ((180, 270), (760, 270)),
-        "L": ((760, 270), (180, 270)),
-        "U": ((480, 430), (480, 90)),
-        "D": ((480, 90), (480, 430)),
-    }
 
     anchor_result = _search_mine_via_menu(
         serial,
@@ -2222,78 +2752,59 @@ def _search_mine_manual(
         return anchor_result
 
     print(f"[{serial}] [MANUAL SEARCH] Anchor mine found ({anchor_result.upper()}). Skipping first mine by design.")
-    _human_delay(1.2)
+    print(f"[{serial}] [MANUAL SEARCH] Dismissing anchor mine popup before manual scan...")
+    adb_helper.tap(serial, 480, 270)
+    _human_delay(0.8)
 
-    clockwise = [("R", (1, 0)), ("D", (0, 1)), ("L", (-1, 0)), ("U", (0, -1))]
-    counterclockwise = [("R", (1, 0)), ("U", (0, -1)), ("L", (-1, 0)), ("D", (0, 1))]
-    base_directions = random.choice([clockwise, counterclockwise])
-    start_idx = random.randint(0, len(base_directions) - 1)
-    directions = base_directions[start_idx:] + base_directions[:start_idx]
-    rotation_name = "clockwise" if base_directions is clockwise else "counterclockwise"
-    print(
-        f"[{serial}] [MANUAL SEARCH] Local spiral scan start rotation={rotation_name} "
-        f"start_direction={directions[0][0]}"
-    )
+    plan = _build_outward_ring_scan_plan()
+    blocked_centers: list[tuple[int, int]] = []
 
-    radius = 3
-    x = 0
-    y = 0
-    step_length = 1
-    planned_steps = ((radius * 2 + 1) ** 2) - 1
-    step_idx = 0
+    for step_idx, (direction_name, segment, grid_xy) in enumerate(plan, start=1):
+        print(
+            f"[{serial}] [MANUAL SEARCH] Swipe {step_idx}/{len(plan)} "
+            f"dir={direction_name} grid={grid_xy}"
+        )
+        adb_helper.swipe(
+            serial,
+            segment[0][0], segment[0][1],
+            segment[1][0], segment[1][1],
+            1200,
+        )
+        _human_delay(_MANUAL_SCAN_SETTLE_S)
 
-    while step_idx < planned_steps:
-        for dir_idx, (direction_name, (dx, dy)) in enumerate(directions):
-            for _ in range(step_length):
-                nx = x + dx
-                ny = y + dy
-                x, y = nx, ny
-                if abs(nx) > radius or abs(ny) > radius:
-                    continue
+        icon_matches = detector.find_all_icon_matches(serial, target=icon_targets[r_type], threshold=0.75)
+        if not icon_matches:
+            continue
 
-                step_idx += 1
-                segment = swipe_segments[direction_name]
-                print(
-                    f"[{serial}] [MANUAL SEARCH] Swipe {step_idx}/{planned_steps} "
-                    f"dir={direction_name} grid=({nx},{ny})"
-                )
-                adb_helper.swipe(
-                    serial,
-                    segment[0][0], segment[0][1],
-                    segment[1][0], segment[1][1],
-                    1200,
-                )
-                _human_delay(1.5)
+        for icon_x, icon_y in icon_matches:
+            candidate_center = (icon_x, icon_y)
+            if _is_near_any_point(candidate_center, blocked_centers):
+                continue
 
-                icon_match = detector.locate_icon(serial, target=icon_targets[r_type], threshold=0.8)
-                if not icon_match:
-                    continue
+            print(f"[{serial}] [MANUAL SEARCH] Found nearby {r_type.upper()} icon at ({icon_x}, {icon_y}).")
+            adb_helper.tap(serial, icon_x, icon_y)
+            _human_delay(1.0)
 
-                _, icon_x, icon_y = icon_match
-                print(f"[{serial}] [MANUAL SEARCH] Found nearby {r_type.upper()} icon at ({icon_x}, {icon_y}).")
-                adb_helper.tap(serial, icon_x, icon_y)
+            gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.8)
+            if gather_btn:
+                print(f"[{serial}] [MANUAL SEARCH] Gather available on scanned mine.")
+                return r_type
+
+            recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
+            attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
+            view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
+            if recall_btn or attack_btn or view_btn:
+                print(f"[{serial}] [MANUAL SEARCH] Scanned mine is occupied/invalid. Continuing scan on next swipe.")
+                blocked_centers.append(candidate_center)
                 _human_delay(1.0)
+                continue
 
-                gather_btn = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=2, delay=0.8)
-                if gather_btn:
-                    print(f"[{serial}] [MANUAL SEARCH] Gather available on scanned mine.")
-                    return r_type
-
-                recall_btn = _detect_with_retry(serial, detector, "RSS_RECALL", threshold=0.8, attempts=1, delay=0.0)
-                attack_btn = _detect_with_retry(serial, detector, "RSS_ATTACK", threshold=0.8, attempts=1, delay=0.0)
-                view_btn = _detect_with_retry(serial, detector, "RSS_VIEW", threshold=0.8, attempts=1, delay=0.0)
-                if recall_btn or attack_btn or view_btn:
-                    print(f"[{serial}] [MANUAL SEARCH] Scanned mine is occupied/invalid. Continuing scan on next swipe.")
-                    _human_delay(1.0)
-                    continue
-
-                current_state = detector.check_state(serial)
-                if current_state != "IN-GAME LOBBY (OUT_CITY)":
-                    print(f"[{serial}] [MANUAL SEARCH] Unexpected state {current_state}. Recovering with BACK.")
-                    adb_helper.press_back(serial)
-                    _human_delay(1.0)
-            if dir_idx % 2 == 1:
-                step_length += 1
+            current_state = detector.check_state(serial)
+            if current_state != "IN-GAME LOBBY (OUT_CITY)":
+                print(f"[{serial}] [MANUAL SEARCH] Unexpected state {current_state}. Recovering with BACK.")
+                adb_helper.press_back(serial)
+                _human_delay(1.0)
+            blocked_centers.append(candidate_center)
 
     print(f"[{serial}] [MANUAL SEARCH] No valid nearby mine found after local scan.")
     return None
@@ -2372,11 +2883,12 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
         return {"ok": False}
 
     gather_state = _detect_with_retry(serial, detector, "RSS_GATHER", threshold=0.8, attempts=3, delay=1)
+    build_state = None
     if not gather_state:
         # RSS Center may be in Build state — button shows as "Build" instead of "Gather"
-        gather_state = _detect_with_retry(serial, detector, "RSS_BUILD", threshold=0.8, attempts=3, delay=1)
+        build_state = _detect_with_retry(serial, detector, "RSS_BUILD", threshold=0.8, attempts=3, delay=1)
 
-    if not gather_state:
+    if not gather_state and not build_state:
         print(f"[{serial}] Neither Gather nor Build button found. Aborting.")
         save_unknown_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "_unknown_captures")
         os.makedirs(save_unknown_dir, exist_ok=True)
@@ -2388,10 +2900,11 @@ def go_to_rss_center_farm(serial: str, detector: GameStateDetector) -> dict:
             print(f"[{serial}] [DEBUG] Saved no-action RSS Center screen: {debug_path}")
         adb_helper.tap(serial, 50, 500)
         _human_delay(2)
-        print(f"[{serial}] [EDGE] No actionable RSS Center button detected. Dynamic CD = 2h")
-        return {"ok": False, "dynamic_cooldown_sec": EDGE_RECHECK_SEC}
+        print(f"[{serial}] [EDGE] No actionable RSS Center button detected. Rechecking later.")
+        return _fail("TEMPLATE_NO_MATCH: RSS Center button not found", dynamic_cooldown_sec=EDGE_RECHECK_SEC)
 
-    g_x, g_y = gather_state[1], gather_state[2]
+    actionable_state = gather_state or build_state
+    g_x, g_y = actionable_state[1], actionable_state[2]
 
     # --- OCR all info BEFORE tapping (screen changes after tap) ---
     print(f"[{serial}] Reading OCR data from info panel...")
@@ -2589,8 +3102,9 @@ def donate_alliance_technology(serial: str, detector: GameStateDetector) -> dict
 
     if not donate_match:
         print(f"[{serial}] No Donate button found — already donated or tech completed.")
-        adb_helper.press_back(serial)
-        _human_delay(1.0)
+        cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+        if not _is_ok(cleanup_result):
+            return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Alliance Donate screen")
         return _ok()
 
     _, dx, dy = donate_match
@@ -2617,9 +3131,9 @@ def donate_alliance_technology(serial: str, detector: GameStateDetector) -> dict
     print(f"[{serial}] Donate complete — {total_clicks} clicks sent.")
 
     # ── Phase 5: Cleanup ──
-    _human_delay(1.0)
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Alliance Donate screen")
     return _ok()
 
 
@@ -2717,8 +3231,9 @@ def claim_scout_sentry_post(serial: str, detector: GameStateDetector) -> dict:
     print(f"\n[{serial}] Scout Sentry Post done — {total_helps} help(s), {total_claims} claim(s) across {round_num} round(s).")
 
     # ── Phase 3: Cleanup ──
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Scout Sentry Post screen")
     return _ok()
 
 def go_to_alliance_war_loop(serial: str, detector: GameStateDetector, loop_count: int = 1) -> dict:
@@ -2832,8 +3347,45 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
     """
     Trains troops at the specified training houses and tiers.
     """
+    def shuffer(items: list) -> list:
+        shuffled = list(items)
+        random.shuffle(shuffled)
+        return shuffled
+
+    HOUSE_TRAIN_BTN_THRESHOLD = 0.78
+    HOUSE_TRAIN_BTN_SETTLE_SEC = 1.2
+
+    def _wait_for_house_train_button(
+        target_name: str,
+        attempts: int = 2,
+        delay_sec: float = HOUSE_TRAIN_BTN_SETTLE_SEC,
+        threshold: float = HOUSE_TRAIN_BTN_THRESHOLD,
+    ):
+        match = None
+        for attempt in range(attempts):
+            detector._cache.invalidate()
+            match = detector.check_activity(serial, target=target_name, threshold=threshold)
+            if match:
+                name, mx, my = match
+                print(
+                    f"[{serial}] {target_name} detected "
+                    f"at ({mx}, {my}) on attempt {attempt + 1}/{attempts}."
+                )
+                return match
+            if attempt < attempts - 1:
+                print(
+                    f"[{serial}] {target_name} not visible yet at threshold {threshold:.2f}. "
+                    f"Waiting for UI settle ({attempt + 1}/{attempts})..."
+                )
+                _human_delay(delay_sec)
+        return None
+
     if training_list is None:
         training_list = [("infantry", 1)]
+    else:
+        training_list = list(training_list)
+
+    training_list = shuffer(training_list)
         
     print(f"[{serial}] Starting Train Troops workflow for {len(training_list)} houses: {training_list}")
     
@@ -2843,6 +3395,14 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
         "infantry": (379, 318),
         "siege": (195, 290),
         "mage": (278, 247)
+    }
+
+    HOUSE_TRAIN_BUTTONS = {
+        "archer": "ARCHER_TRAIN_BTN",
+        "cavalry": "CAVALRY_TRAIN_BTN",
+        "infantry": "INFANTRY_TRAIN_BTN",
+        "siege": "SIEGE_TRAIN_BTN",
+        "mage": "MAGE_TRAIN_BTN",
     }
     
     TIER_TAPS = {
@@ -2898,16 +3458,41 @@ def train_troops(serial: str, detector: GameStateDetector, training_list: list =
 
         # 2. Tap training house
         hx, hy = HOUSE_TAPS[h_type]
+        house_train_target = HOUSE_TRAIN_BUTTONS[h_type]
         print(f"[{serial}] Tapping {h_type.upper()} House at ({hx}, {hy})...")
         adb_helper.tap(serial, hx, hy)
-        _human_delay(1)
-        adb_helper.tap(serial, hx, hy)
-        _human_delay(2)
-        
-        # 3. Tap training icon relative to house (+90, +20)
-        icon_x = hx + 90
-        icon_y = hy + 20
-        print(f"[{serial}] Tapping TRAINING_ICON at ({icon_x}, {icon_y})...")
+        _human_delay(HOUSE_TRAIN_BTN_SETTLE_SEC)
+
+        # Verify the correct troop panel/button is visible after tapping the house.
+        troop_panel_match = _wait_for_house_train_button(house_train_target, attempts=2)
+        if troop_panel_match:
+            print(f"[{serial}] {house_train_target} detected after first tap.")
+        else:
+            print(f"[{serial}] {house_train_target} not detected. Re-tapping house to claim/reopen training panel...")
+            adb_helper.tap(serial, hx, hy)
+            _human_delay(1.5)
+            troop_panel_match = _wait_for_house_train_button(house_train_target, attempts=2)
+            if troop_panel_match:
+                print(f"[{serial}] {house_train_target} detected after re-tap.")
+            else:
+                print(f"[{serial}] [FAILED] {house_train_target} not detected after claim/reopen sequence.")
+                all_success = False
+                cleanup_state = detector.check_construction(serial)
+                if cleanup_state == "TRAIN_UNITS":
+                    print(f"[{serial}] TRAIN_UNITS still open after failed troop panel detect. Pressing BACK to recover.")
+                    adb_helper.press_back(serial)
+                    _human_delay(1)
+                elif cleanup_state:
+                    print(f"[{serial}] Construction state '{cleanup_state}' still open after failed troop panel detect. Pressing BACK to recover.")
+                    adb_helper.press_back(serial)
+                    _human_delay(1)
+                else:
+                    print(f"[{serial}] No construction screen detected after failed troop panel detect. Skipping BACK to avoid exiting game.")
+                continue
+
+        # 3. Open the training panel once the correct troop type button is confirmed.
+        _, icon_x, icon_y = troop_panel_match
+        print(f"[{serial}] Tapping detected {house_train_target} at ({icon_x}, {icon_y}) to open training panel...")
         adb_helper.tap(serial, icon_x, icon_y)
         _human_delay(2)
         
@@ -3006,10 +3591,9 @@ def claim_alliance_resource(serial: str, detector: GameStateDetector) -> dict:
     
     print(f"[{serial}] -> Claim Alliance Resource completed.")
 
-    adb_helper.press_back(serial)
-    _human_delay(2)
-    adb_helper.press_back(serial)
-    _human_delay(2)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Alliance Resource screen")
     return _ok()
 
 def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all") -> dict:
@@ -3049,25 +3633,157 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
         "events": (500, 25),
         "system": (615, 25)
     }
+    mail_badge_rois = {
+        "alliance": (410, 0, 440, 25),
+        "events": (520, 0, 550, 25),
+        "system": (645, 0, 675, 25),
+    }
     claim_button = (100, 512)
     
     tabs_to_check = ["alliance", "events", "system"] if mail_type == "all" else [mail_type]
+
+    def _normalize_roi(roi: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int]:
+        x1, y1, x2, y2 = roi
+        left, right = sorted((int(x1), int(x2)))
+        top, bottom = sorted((int(y1), int(y2)))
+        return (
+            max(0, min(width, left)),
+            max(0, min(height, top)),
+            max(0, min(width, right)),
+            max(0, min(height, bottom)),
+        )
+
+    def _detect_mail_red_badge(frame: np.ndarray, roi: tuple[int, int, int, int]) -> dict:
+        height, width = frame.shape[:2]
+        x1, y1, x2, y2 = _normalize_roi(roi, width, height)
+        crop = frame[y1:y2, x1:x2]
+        result = {
+            "roi": (x1, y1, x2, y2),
+            "red_pixels": 0,
+            "red_ratio": 0.0,
+            "max_contour_area": 0.0,
+            "has_badge": False,
+        }
+        if crop.size == 0:
+            return result
+
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        lower_red_1 = np.array([0, 140, 170], dtype=np.uint8)
+        upper_red_1 = np.array([8, 255, 255], dtype=np.uint8)
+        lower_red_2 = np.array([172, 140, 170], dtype=np.uint8)
+        upper_red_2 = np.array([180, 255, 255], dtype=np.uint8)
+        hsv_mask = cv2.inRange(hsv, lower_red_1, upper_red_1) | cv2.inRange(hsv, lower_red_2, upper_red_2)
+
+        b, g, r = cv2.split(crop)
+        b_i = b.astype(np.int16)
+        g_i = g.astype(np.int16)
+        r_i = r.astype(np.int16)
+        dominant_red = (
+            (r_i >= 190)
+            & (g_i <= 95)
+            & (b_i <= 95)
+            & ((r_i - g_i) >= 100)
+            & ((r_i - b_i) >= 100)
+        ).astype(np.uint8) * 255
+        mask = cv2.bitwise_and(hsv_mask, dominant_red)
+        kernel = np.ones((2, 2), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        red_pixels = int(cv2.countNonZero(mask))
+        area = max(1, mask.shape[0] * mask.shape[1])
+        red_ratio = red_pixels / area
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        max_contour_area = max((float(cv2.contourArea(c)) for c in contours), default=0.0)
+        has_badge = red_pixels >= 18 and red_ratio >= 0.05 and max_contour_area >= 6.0
+        result.update(
+            {
+                "red_pixels": red_pixels,
+                "red_ratio": red_ratio,
+                "max_contour_area": max_contour_area,
+                "has_badge": has_badge,
+            }
+        )
+        return result
+
+    def _filter_mail_tabs_by_badge(requested_tabs: list[str]) -> list[str]:
+        detector._screen_cache = None
+        frame = detector.screencap_memory(serial)
+        if frame is None:
+            print(f"[{serial}] [MAIL_BADGE] Could not capture badge frame. Falling back to requested tabs: {requested_tabs}")
+            return requested_tabs
+
+        filtered = []
+        for tab in requested_tabs:
+            badge = _detect_mail_red_badge(frame, mail_badge_rois[tab])
+            status = "CHECK" if badge["has_badge"] else "SKIP"
+            print(
+                f"[{serial}] [MAIL_BADGE] {tab} roi={badge['roi']} "
+                f"red_pixels={badge['red_pixels']} ratio={badge['red_ratio']:.2%} "
+                f"contour={badge['max_contour_area']:.1f} -> {status}"
+            )
+            if badge["has_badge"]:
+                filtered.append(tab)
+        return filtered
+
+    tabs_to_check = _filter_mail_tabs_by_badge(tabs_to_check)
+    if not tabs_to_check:
+        print(f"[{serial}] [MAIL_BADGE] No unread/reward mail badge detected. Skipping mail tab taps.")
+
+    def _save_mail_confirm_debug(label: str) -> None:
+        debug_dir = os.environ.get("MAIL_CONFIRM_DEBUG_DIR", "").strip()
+        if not debug_dir:
+            return
+        try:
+            os.makedirs(debug_dir, exist_ok=True)
+            detector._screen_cache = None
+            frame = detector.screencap_memory(serial)
+            if frame is None:
+                print(f"[{serial}] [MAIL_DEBUG] Could not capture {label}.")
+                return
+            safe_serial = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in serial)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            path = os.path.join(debug_dir, f"{ts}_{safe_serial}_{label}.png")
+            cv2.imwrite(path, frame)
+            print(f"[{serial}] [MAIL_DEBUG] Saved {label}: {path}")
+        except Exception as exc:
+            print(f"[{serial}] [MAIL_DEBUG] Failed to save {label}: {exc}")
+
+    def _tap_mail_reward_confirm() -> bool:
+        _human_delay(1.25)
+        _save_mail_confirm_debug("after_claim_before_confirm_detect")
+        confirm = _detect_with_retry(
+            serial,
+            detector,
+            "MAIL_REWARD_CONFIRM_BTN",
+            threshold=0.78,
+            attempts=2,
+            delay=0.30,
+        )
+        if not confirm:
+            _save_mail_confirm_debug("confirm_not_found")
+            print(f"[{serial}] No mail reward confirm popup detected.")
+            return False
+
+        _, cx, cy = confirm
+        print(f"[{serial}] Mail reward confirm found at ({cx}, {cy}). Tapping...")
+        adb_helper.tap(serial, cx, cy)
+        _human_delay(0.8)
+        return True
         
     for tab in tabs_to_check:
         print(f"[{serial}] Checking '{tab.capitalize()}' mail...")
         tab_x, tab_y = tabs[tab]
-        # Tap tab twice: first tap dismisses any reward popup, second selects tab
-        adb_helper.tap(serial, tab_x, tab_y)
-        _human_delay(1)
         adb_helper.tap(serial, tab_x, tab_y)
         _human_delay(2)
         print(f"[{serial}] Tapping Claim ({claim_button[0]}, {claim_button[1]})...")
         adb_helper.tap(serial, claim_button[0], claim_button[1])
-        _human_delay(2)
+        _tap_mail_reward_confirm()
         
     print(f"[{serial}] Closing Mail Menu...")
-    adb_helper.press_back(serial)
-    _human_delay(2)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Mail Menu")
     
     print(f"[{serial}] -> Check Mail completed.")
     return _ok()
@@ -3076,7 +3792,7 @@ def check_mail(serial: str, detector: GameStateDetector, mail_type: str = "all")
 def go_to_pet_token(serial: str, detector: GameStateDetector) -> dict:
     """Navigates to Pet Token area."""
     print(f"[{serial}] Navigating to Pet Token...")
-    adb_helper.tap(serial, 750, 80)
+    adb_helper.tap(serial, 934, 14)
     _human_delay(2)
     adb_helper.swipe(serial, 100, 450, 100, 100, 500)
     _human_delay(1)
@@ -3242,6 +3958,7 @@ def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
         return 0
         
     claimed_count = 0
+    centered_once = False
     
     # 2. Specific Resource Icons to check
     rss_types = ["CITY_RSS_GOLD", "CITY_RSS_WOOD", "CITY_RSS_ORE", "CITY_RSS_MANA"]
@@ -3255,6 +3972,20 @@ def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
             
             if rss_icon:
                 icon_name, icon_x, icon_y = rss_icon
+                if not centered_once:
+                    print(f"[{serial}] First city RSS icon found. Centering view once before tapping...")
+                    centered_icon = _center_icon_once_then_redetect(
+                        serial,
+                        detector,
+                        rss_type,
+                        (icon_x, icon_y),
+                        threshold=0.78,
+                    )
+                    centered_once = True
+                    if centered_icon:
+                        icon_x, icon_y = centered_icon
+                    else:
+                        print(f"[{serial}] [WARNING] Lost {rss_type} after center swipe. Falling back to original tap point.")
                 print(f"[{serial}] Found {rss_type}! Tapping at ({icon_x}, {icon_y})...")
                 adb_helper.tap(serial, icon_x, icon_y)
                 claimed_count += 1
@@ -3265,6 +3996,104 @@ def claim_city_resources(serial: str, detector: GameStateDetector) -> int:
             
     print(f"[{serial}] Finished claiming city resources. Total claimed: {claimed_count}")
     return claimed_count
+
+
+def _clamp_int(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
+
+
+def _locate_icon_fullscreen(
+    serial: str,
+    detector: GameStateDetector,
+    target: str,
+    threshold: float = 0.78,
+):
+    if target not in detector.icon_templates:
+        print(f"[{serial}] [CENTER] Icon target '{target}' is not loaded.")
+        return None
+
+    detector._cache.invalidate()
+    frame = detector.screencap_memory(serial)
+    if frame is None:
+        print(f"[{serial}] [CENTER] Screencap failed while locating {target}.")
+        return None
+
+    screen_gray = detector._get_gray(frame)
+    best = None
+    best_score = 0.0
+
+    for entry in detector.icon_templates[target]:
+        entry_no_roi = dict(entry)
+        entry_no_roi["roi"] = None
+        score, top_left = detector._match_single(
+            screen_gray,
+            entry_no_roi,
+            threshold,
+            use_color=True,
+            screen_color=frame,
+        )
+        if score > best_score:
+            h, w = entry["color"].shape[:2]
+            best_score = float(score)
+            best = (target, int(top_left[0] + w // 2), int(top_left[1] + h // 2), float(score))
+
+    if best and best_score >= threshold:
+        _, x, y, score = best
+        print(f"[{serial}] [CENTER] {target} fullscreen match at ({x}, {y}) conf={score:.3f}")
+        return best
+
+    print(f"[{serial}] [CENTER] {target} fullscreen not found. best_conf={best_score:.3f} threshold={threshold:.2f}")
+    return None
+
+
+def _center_icon_once_then_redetect(
+    serial: str,
+    detector: GameStateDetector,
+    target: str,
+    initial_xy: tuple[int, int],
+    threshold: float = 0.78,
+    desired_center: tuple[int, int] = (480, 270),
+    tolerance_px: int = 65,
+    gain: float = 0.70,
+    duration_ms: int = 850,
+    settle_sec: float = 1.0,
+) -> tuple[int, int] | None:
+    current_x, current_y = initial_xy
+    dx = desired_center[0] - current_x
+    dy = desired_center[1] - current_y
+    dist = (dx * dx + dy * dy) ** 0.5
+
+    print(
+        f"[{serial}] [CENTER] {target} before swipe at ({current_x}, {current_y}); "
+        f"center={desired_center}; dist={dist:.1f}"
+    )
+    if dist > tolerance_px:
+        end_x = _clamp_int(int(desired_center[0] + dx * gain), 180, 780)
+        end_y = _clamp_int(int(desired_center[1] + dy * gain), 90, 430)
+        print(
+            f"[{serial}] [CENTER] Swipe once ({desired_center[0]}, {desired_center[1]}) "
+            f"-> ({end_x}, {end_y}) gain={gain:.2f} duration={duration_ms}ms"
+        )
+        adb_helper.swipe(
+            serial,
+            desired_center[0],
+            desired_center[1],
+            end_x,
+            end_y,
+            duration=duration_ms,
+        )
+        _human_delay(settle_sec)
+    else:
+        print(f"[{serial}] [CENTER] Icon already close enough to center. Skipping center swipe.")
+
+    for attempt in range(1, 3):
+        redetected = _locate_icon_fullscreen(serial, detector, target, threshold=threshold)
+        if redetected:
+            _, rx, ry, _ = redetected
+            return rx, ry
+        if attempt < 2:
+            _human_delay(0.35)
+    return None
 
 
 def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = "elixir", troop_priorities: list = None) -> dict:
@@ -3280,22 +4109,34 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
         return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY lobby")
 
     # 2. Check for Healing Icon
-    print(f"[{serial}] Scanning for Healing Icon...")
+    print(f"[{serial}] Scanning for Healing Icon fullscreen...")
     icon_match = None
     for attempt in range(3):
-        icon_match = detector.locate_icon(serial, target="HEALING_ICON", threshold=0.8)
+        icon_match = _locate_icon_fullscreen(serial, detector, target="HEALING_ICON", threshold=0.78)
         if icon_match:
             break
-        _human_delay(2)
+        _human_delay(0.8)
 
     if not icon_match:
         print(f"[{serial}] No Healing Icon found. Troops are fully healed or icon is missing.")
         return _ok()  # Not an error — nothing to heal
 
-    # 3. Tap Healing Icon
-    _, icon_x, icon_y = icon_match
-    print(f"[{serial}] Found Healing Icon. Tapping at ({icon_x}, {icon_y})...")
-    adb_helper.tap(serial, icon_x, icon_y)
+    # 3. Move the icon closer to center once, then tap the re-detected position.
+    _, icon_x, icon_y, _ = icon_match
+    centered_icon = _center_icon_once_then_redetect(
+        serial,
+        detector,
+        "HEALING_ICON",
+        (icon_x, icon_y),
+        threshold=0.78,
+    )
+    if not centered_icon:
+        print(f"[{serial}] [FAILED] HEALING_ICON was lost after centering swipe.")
+        return _fail("TEMPLATE_NO_MATCH: HEALING_ICON lost after centering swipe")
+
+    tap_x, tap_y = centered_icon
+    print(f"[{serial}] Found Healing Icon after centering. Tapping at ({tap_x}, {tap_y})...")
+    adb_helper.tap(serial, tap_x, tap_y)
 
     # 4. Wait for Elixir Healing screen
     state = wait_for_state(serial, detector, ["ELIXIR_HEALING"], timeout_sec=10, check_mode="construction")
@@ -3303,16 +4144,7 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
         print(f"[{serial}] [FAILED] Did not reach ELIXIR_HEALING screen.")
         return _fail("NAV_TARGET_NOT_REACHED: Did not reach ELIXIR_HEALING screen")
 
-    # 5. Select Healing Method
-    if healing_method.lower() == "resources":
-        print(f"[{serial}] Selecting Resources Healing (777, 155)...")
-        adb_helper.tap(serial, 777, 155)
-    else:
-        print(f"[{serial}] Selecting Elixir Healing (581, 153)...")
-        adb_helper.tap(serial, 581, 153)
-    _human_delay(2)
-
-    # 6. Heal Troops
+    # 5. Heal Troops directly. Do not select the Elixir/Resources tab here.
     HEAL_BTN = (684, 504)
     TROOP_LOCS = {
         "infantry": (494, 203),
@@ -3345,50 +4177,63 @@ def heal_troops(serial: str, detector: GameStateDetector, healing_method: str = 
     adb_helper.tap(serial, HEAL_BTN[0], HEAL_BTN[1])
     _human_delay(3)
 
-    # 7. Press back to return to lobby
+    # 6. Return to lobby
     print(f"[{serial}] Healing completed. Returning to lobby...")
-    adb_helper.press_back(serial)
-    _human_delay(2)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Healing screen")
 
     return _ok()
 
 
 def alliance_help(serial: str, detector: GameStateDetector) -> dict:
     """
-    Alliance Help — single-shot.
-    Navigate to Alliance Menu, detect & tap Help button, return.
+    Alliance Help quick path.
+    From IN_CITY/OUT_CITY lobby, detect the floating need-help button and tap it.
     """
-    print(f"[{serial}] === ALLIANCE HELP (single-shot) ===")
+    print(f"[{serial}] === ALLIANCE HELP QUICK ===")
 
-    result = go_to_alliance(serial, detector)
-    if not _is_ok(result):
-        print(f"[{serial}] [FAILED] Could not reach Alliance Menu.")
-        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Alliance Menu")
+    current_state = detector.check_state(serial)
+    if current_state not in ("IN-GAME LOBBY (IN_CITY)", "IN-GAME LOBBY (OUT_CITY)"):
+        print(f"[{serial}] Current state is {current_state}. Returning to lobby before quick help...")
+        lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+        if not _is_ok(lobby_result):
+            return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach lobby before Alliance Help")
 
-    print(f"[{serial}] Tapping Alliance Help Menu (730, 330)...")
-    adb_helper.tap(serial, 730, 330)
-    _human_delay(3)
+    templates = [
+        ("alliance_need_help_btn", _workflow_template_path("alliance", "alliance_need_help_btn.png")),
+        ("alliance_need_help_btn_2", _workflow_template_path("alliance", "alliance_need_help_btn_2.png")),
+    ]
+    for _, template_path in templates:
+        if not os.path.exists(template_path):
+            return _fail(f"TEMPLATE_MISSING: {template_path}")
 
-    help_match = detector.check_alliance(serial, target="ALLIANCE_HELP", threshold=0.8)
+    detector._cache.invalidate()
+    frame = detector.screencap_memory(serial)
+    if frame is None:
+        return _fail("ADB_CAPTURE_FAILED: Could not capture screen for Alliance Help quick detect")
 
-    if not help_match:
-        print(f"[{serial}] No Alliance Help button detected. Nothing to help with.")
-        adb_helper.press_back(serial)
-        _human_delay(2)
+    roi = (650, 400, 960, 540)
+    best = None
+    for name, template_path in templates:
+        match = _match_template_path_in_frame(frame, template_path, roi, threshold=0.78)
+        if match:
+            confidence, center, box = match
+            print(f"[{serial}] {name} detected at {center} (confidence={confidence:.3f}, box={box}).")
+            if best is None or confidence > best[0]:
+                best = (confidence, center, name)
+        else:
+            print(f"[{serial}] {name} not detected in quick-help ROI.")
+
+    if not best:
+        print(f"[{serial}] No quick Alliance Help button detected. Nothing to help.")
         return _ok()
 
-    _, hx, hy = help_match
-    print(f"[{serial}] Found Alliance Help button at ({hx}, {hy}). Tapping...")
+    confidence, (hx, hy), name = best
+    print(f"[{serial}] Tapping quick Alliance Help '{name}' at ({hx}, {hy}) (confidence={confidence:.3f})...")
     adb_helper.tap(serial, hx, hy)
-    _human_delay(3)
-    print(f"[{serial}] Help completed!")
-
-    adb_helper.press_back(serial)
-    _human_delay(1)
-    adb_helper.press_back(serial)
-    _human_delay(1)
-
-    print(f"[{serial}] === ALLIANCE HELP DONE ===")
+    _human_delay(1.2)
+    print(f"[{serial}] === ALLIANCE HELP QUICK DONE ===")
     return _ok()
 
 
@@ -3541,22 +4386,17 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
         print(f"[{serial}] [FAILED] Could not reach OUT_CITY lobby.")
         return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach OUT_CITY")
 
-    # 2. Open search menu
-    print(f"[{serial}] Opening Search Menu {SEARCH_MENU_TAP}...")
-    adb_helper.tap(serial, SEARCH_MENU_TAP[0], SEARCH_MENU_TAP[1])
-    _human_delay(3)
+    # 2. Open search menu and switch to Darkling category if needed
+    category = _ensure_search_menu_category(serial, detector, "darkling")
+    if category is None:
+        return _fail("NAV_TARGET_NOT_REACHED: Could not open search menu")
 
-    # 3. Select Darkling category
-    print(f"[{serial}] Selecting Darkling menu {DARKLING_MENU_TAP}...")
-    adb_helper.tap(serial, DARKLING_MENU_TAP[0], DARKLING_MENU_TAP[1])
-    _human_delay(2)
-
-    # 4. Select Darkling Legions tab
+    # 3. Select Darkling Legions tab
     print(f"[{serial}] Selecting Darkling Legions tab {DARKLING_LEGIONS_TAB_TAP}...")
     adb_helper.tap(serial, DARKLING_LEGIONS_TAB_TAP[0], DARKLING_LEGIONS_TAB_TAP[1])
     _human_delay(2)
 
-    # 5. Tap action/search button
+    # 4. Tap action/search button
     print(f"[{serial}] Triggering basic attack action {ACTION_BUTTON_TAP}...")
     adb_helper.tap(serial, ACTION_BUTTON_TAP[0], ACTION_BUTTON_TAP[1])
     _human_delay(2)
@@ -3598,6 +4438,130 @@ def attack_darkling_legions_v1_basic(serial: str, detector: GameStateDetector) -
 def check_legion_state(serial: str, detector: GameStateDetector, max_legions: int = 5) -> dict:
     """Thin wrapper — delegates to detector.check_legion_state()."""
     return detector.check_legion_state(serial, max_legions=max_legions)
+
+def recall_idle_legions(serial: str, detector: GameStateDetector, idle_slots: list[int]) -> int:
+    """Recall only the idle legion rows that need recovery."""
+    slot_zones = [
+        (50, 130),
+        (140, 220),
+        (230, 310),
+        (320, 400),
+        (410, 490),
+    ]
+
+    try:
+        recall_matches = detector.find_all_activity_matches(
+            serial, target="LEGION_RECALL_BTN", threshold=0.85
+        )
+    except Exception:
+        recall_matches = []
+
+    print(f"[{serial}] Detected {len(recall_matches)} Recall button(s) on panel.")
+
+    recalled = 0
+    used_matches: set[int] = set()
+    for slot in idle_slots:
+        if slot < 1 or slot > 5:
+            continue
+
+        y_min, y_max = slot_zones[slot - 1]
+        print(f"[{serial}] Looking for Recall button in slot {slot} (Y: {y_min}-{y_max})...")
+
+        zone_matches = [
+            (idx, rx, ry)
+            for idx, (rx, ry) in enumerate(recall_matches)
+            if idx not in used_matches and y_min <= ry <= y_max
+        ]
+        if not zone_matches:
+            print(f"[{serial}] No Recall button found inside slot {slot} zone.")
+            continue
+
+        zone_center_y = (y_min + y_max) / 2.0
+        idx, rx, ry = min(zone_matches, key=lambda item: abs(item[2] - zone_center_y))
+        print(f"[{serial}] Found Recall button at ({rx}, {ry}) for slot {slot}. Tapping...")
+        adb_helper.tap(serial, rx, ry)
+        used_matches.add(idx)
+        recalled += 1
+        _human_delay(2)
+
+    print(f"[{serial}] Recalled {recalled} idle legion(s).")
+    return recalled
+
+
+def run_legion_preflight(
+    serial: str,
+    detector: GameStateDetector,
+    max_legions: int = 5,
+    recall_idle: bool = True,
+) -> dict:
+    """Pre-check legion availability once before account workflows start."""
+    base_result = {
+        "legions_outcity": 0,
+        "legions_idle": 0,
+        "idle_slots": [],
+        "legions_returning": 0,
+        "returning_slots": [],
+        "legions_free": max_legions,
+        "max_legions": max_legions,
+        "detected_label": None,
+        "idle_recalled": 0,
+        "preflight_ran": True,
+    }
+
+    print(
+        f"[{serial}] === LEGION PREFLIGHT (max_legions={max_legions}, recall_idle={recall_idle}) ==="
+    )
+
+    current = detector.check_state(serial)
+    if current != "IN-GAME LOBBY (OUT_CITY)":
+        print(f"[{serial}] Legion preflight aligning to OUT_CITY lobby (current={current})...")
+        lobby_result = back_to_lobby(
+            serial,
+            detector,
+            target_lobby="IN-GAME LOBBY (OUT_CITY)",
+        )
+        if not _is_ok(lobby_result):
+            print(f"[{serial}] [WARNING] Legion preflight could not reach OUT_CITY lobby.")
+            base_result["error"] = "out_city_unreachable"
+            return base_result
+
+    management_match = detector.check_activity(
+        serial, target="LEGIONS_MANAGEMENT", threshold=0.90
+    )
+    if not management_match:
+        final_state = detector.check_state(serial)
+        print(
+            f"[{serial}] No legion management icon found in state '{final_state}'. "
+            f"Treating all {max_legions} legions as free."
+        )
+        return base_result
+
+    _, cx, cy = management_match
+    print(f"[{serial}] Opening Legion Management at ({cx}, {cy})...")
+    adb_helper.tap(serial, cx, cy)
+    _human_delay(3)
+
+    try:
+        result = detector.check_legion_state(serial, max_legions=max_legions) or dict(base_result)
+        result.setdefault("idle_recalled", 0)
+        result["preflight_ran"] = True
+
+        idle_slots = list(result.get("idle_slots") or [])
+        if recall_idle and idle_slots:
+            print(f"[{serial}] Recalling idle legion slots: {idle_slots}")
+            recalled = recall_idle_legions(serial, detector, idle_slots)
+            result["idle_recalled"] = recalled
+            if recalled > 0:
+                _human_delay(2)
+                refreshed = detector.check_legion_state(serial, max_legions=max_legions) or {}
+                refreshed["idle_recalled"] = recalled
+                refreshed["preflight_ran"] = True
+                result = {**result, **refreshed}
+        return result
+    finally:
+        adb_helper.press_back(serial)
+        _human_delay(1)
+
 
 def go_to_check_legions_state(serial: str, detector: GameStateDetector, max_legions: int = 5) -> dict:
     """
@@ -3697,6 +4661,8 @@ def research_technology(serial: str, detector: GameStateDetector, research_type:
     BUFFER_SEC = 120  # 2 minutes buffer for research cooldown
 
     # 1. Navigate to Research Center (V2 — detects research icon on city popup)
+    print(f"[{serial}] Resetting city camera before Research Center navigation...")
+    reset_position(serial)
     result = go_to_construction(serial, detector, "RESEARCH_CENTER", feature="research")
     if not _is_ok(result):
         print(f"[{serial}] [FAILED] Could not navigate to Research Center.")
@@ -3928,13 +4894,12 @@ def claim_daily_vip_gift(serial: str, detector: GameStateDetector) -> dict:
     print(f"[{serial}] [TIMING] Tapping Claim point took {time.time() - t0:.2f}s")
     
     t0 = time.time()
-    # 6. Back x2
-    print(f"[{serial}] Pressing BACK x2 to exit menus...")
-    adb_helper.press_back(serial)
-    _human_delay(1)
-    adb_helper.press_back(serial)
-    _human_delay(1)
-    print(f"[{serial}] [TIMING] Pressing BACK x2 took {time.time() - t0:.2f}s")
+    # 6. Return safely to lobby
+    print(f"[{serial}] Returning safely to lobby...")
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    print(f"[{serial}] [TIMING] Lobby cleanup took {time.time() - t0:.2f}s")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close VIP Gift menus")
     
     print(f"[{serial}] VIP Gift claim workflow finished successfully in {time.time() - workflow_start:.2f}s.")
     return _ok()
@@ -4154,6 +5119,7 @@ def clean_trash_pet_sanctuary(
     detector: GameStateDetector,
     duration: float = 60,
     score_threshold: float = 0.30,
+    navigate: bool = True,
 ) -> dict:
     """
     Clean trash at Pet Sanctuary.
@@ -4177,10 +5143,13 @@ def clean_trash_pet_sanctuary(
     print(f"[{serial}] === CLEAN TRASH PET SANCTUARY ===")
 
     # 1. Navigate to Pet Sanctuary
-    result = go_to_pet_sanctuary(serial, detector)
-    if not _is_ok(result):
-        print(f"[{serial}] [FAILED] Could not reach Pet Sanctuary.")
-        return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Pet Sanctuary")
+    if navigate:
+        result = go_to_pet_sanctuary(serial, detector)
+        if not _is_ok(result):
+            print(f"[{serial}] [FAILED] Could not reach Pet Sanctuary.")
+            return _bubble(result, "NAV_TARGET_NOT_REACHED: Could not reach Pet Sanctuary")
+    else:
+        print(f"[{serial}] [TRASH] Reusing current Pet Sanctuary session without re-navigation.")
 
     # 2. Load baseline image
     templates_dir = detector.templates_dir
@@ -4360,11 +5329,10 @@ def process_season_policies(serial: str, detector: GameStateDetector, account_id
     print(f"[{serial}]   SEASON POLICIES — COMPLETE ({enacted_count} enacted)")
     print(f"[{serial}] ═══════════════════════════════════════════\n")
 
-    print(f"[{serial}] [POLICY] Cleanup: pressing BACK x2 to return to IN_CITY lobby...")
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    print(f"[{serial}] [POLICY] Cleanup: returning safely to IN_CITY lobby...")
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Policy screens")
 
     if result == "REPLENISH_LOCKED":
         return _ok(dynamic_cooldown_sec=86400)  # 24h — not enough points
@@ -4512,12 +5480,184 @@ def reset_position(serial: str):
     print(f"[{serial}] -> Position reset.")
 
 
-def _navigate_to_hall_upgrade(serial: str, detector: GameStateDetector) -> dict:
+_ASSIST_PANEL_ROI = (0, 65, 235, 460)
+_ASSIST_PANEL_OPEN_TAP = (38, 370)
+_ASSIST_PANEL_EXPAND_ROI = (220, 200, 275, 325)
+_ASSIST_HALL_TOGGLE_TAP = (50, 500)
+
+
+def _workflow_template_path(*parts: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", *parts)
+
+
+def _normalize_screen_roi(
+    roi: tuple[int, int, int, int],
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int]:
+    x1, y1, x2, y2 = roi
+    left, right = sorted((int(x1), int(x2)))
+    top, bottom = sorted((int(y1), int(y2)))
+    return (
+        max(0, min(width, left)),
+        max(0, min(height, top)),
+        max(0, min(width, right)),
+        max(0, min(height, bottom)),
+    )
+
+
+def _match_template_path_in_frame(
+    frame: np.ndarray,
+    template_path: str,
+    roi: tuple[int, int, int, int],
+    threshold: float = 0.78,
+) -> tuple[float, tuple[int, int], tuple[int, int, int, int]] | None:
+    if frame is None or not os.path.exists(template_path):
+        return None
+
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = _normalize_screen_roi(roi, width, height)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+
+    template = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
+    if template is None:
+        return None
+    if len(template.shape) == 3 and template.shape[2] == 4:
+        template = template[:, :, :3]
+
+    th, tw = template.shape[:2]
+    if crop.shape[0] < th or crop.shape[1] < tw:
+        return None
+
+    crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    result = cv2.matchTemplate(crop_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+    if max_val < threshold:
+        return None
+
+    top_left = (x1 + max_loc[0], y1 + max_loc[1])
+    center = (top_left[0] + tw // 2, top_left[1] + th // 2)
+    box = (top_left[0], top_left[1], top_left[0] + tw, top_left[1] + th)
+    return float(max_val), center, box
+
+
+def scout_unknown_area(serial: str, detector: GameStateDetector) -> dict:
+    """Use the assist panel to explore any visible unknown scout area."""
+    panel_expand_tpl = _workflow_template_path("icon_markers", "panel_expand_icon.png")
+    scout_icon_tpl = _workflow_template_path("icon_markers", "scout_map_icon.png")
+    scout_explore_tpl = _workflow_template_path("icon_markers", "scout_explore_btn.png")
+
+    print(f"[{serial}] === SCOUT UNKNOWN AREA ===")
+    lobby_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(lobby_result):
+        return _bubble(lobby_result, "NAV_LOBBY_UNREACHABLE: Could not reach IN_CITY before Scout Unknown Area")
+
+    for path in (panel_expand_tpl, scout_icon_tpl, scout_explore_tpl):
+        if not os.path.exists(path):
+            return _fail(f"TEMPLATE_MISSING: {path}")
+
+    def _capture_frame():
+        detector._cache.invalidate()
+        return detector.screencap_memory(serial)
+
+    panel_open = False
+    for attempt in range(3):
+        frame = _capture_frame()
+        if frame is None:
+            return _fail("ADB_CAPTURE_FAILED: Could not capture screen while opening assist panel")
+
+        match = _match_template_path_in_frame(frame, panel_expand_tpl, _ASSIST_PANEL_EXPAND_ROI, threshold=0.78)
+        if match:
+            conf, center, _ = match
+            print(f"[{serial}] Assist panel confirmed open at {center} (confidence={conf:.3f}).")
+            panel_open = True
+            break
+
+        print(f"[{serial}] Assist panel not open. Tapping opener {_ASSIST_PANEL_OPEN_TAP} (attempt {attempt + 1}/3)...")
+        adb_helper.tap(serial, *_ASSIST_PANEL_OPEN_TAP)
+        _human_delay(1.0)
+
+    if not panel_open:
+        return _fail("NAV_TARGET_NOT_REACHED: Assist panel did not open")
+
+    x1, y1, x2, y2 = _ASSIST_PANEL_ROI
+    max_swipes = 6
+    for attempt in range(max_swipes + 1):
+        frame = _capture_frame()
+        if frame is None:
+            return _fail("ADB_CAPTURE_FAILED: Could not capture screen while scanning assist panel")
+
+        scout_match = _match_template_path_in_frame(frame, scout_icon_tpl, _ASSIST_PANEL_ROI, threshold=0.76)
+        if scout_match:
+            conf, center, box = scout_match
+            print(f"[{serial}] Scout map icon found at {center} (confidence={conf:.3f}, box={box}). Tapping...")
+            adb_helper.tap(serial, center[0], center[1])
+            _human_delay(3.0)
+
+            after_tap_frame = _capture_frame()
+            explore_match = (
+                _match_template_path_in_frame(
+                    after_tap_frame,
+                    scout_explore_tpl,
+                    (0, 0, after_tap_frame.shape[1], after_tap_frame.shape[0]),
+                    threshold=0.76,
+                )
+                if after_tap_frame is not None
+                else None
+            )
+            if explore_match:
+                explore_conf, explore_center, explore_box = explore_match
+                print(
+                    f"[{serial}] Scout Explore button found at {explore_center} "
+                    f"(confidence={explore_conf:.3f}, box={explore_box}). Tapping..."
+                )
+                adb_helper.tap(serial, explore_center[0], explore_center[1])
+                _human_delay(1.5)
+            else:
+                print(f"[{serial}] Scout Explore button not visible. Continuing cleanup.")
+
+            print(f"[{serial}] Returning to city via Hall toggle {_ASSIST_HALL_TOGGLE_TAP}...")
+            adb_helper.tap(serial, *_ASSIST_HALL_TOGGLE_TAP)
+            _human_delay(1.0)
+            return _ok()
+
+        if attempt >= max_swipes:
+            print(f"[{serial}] Scout map icon not found after {max_swipes} light swipes. Treating as already fully scouted.")
+            return _ok()
+
+        swipe_x = (x1 + x2) // 2
+        swipe_from_y = 360
+        swipe_to_y = 220
+        print(
+            f"[{serial}] Scout icon not visible. Light panel swipe "
+            f"({swipe_x}, {swipe_from_y}) -> ({swipe_x}, {swipe_to_y}) ({attempt + 1}/{max_swipes})..."
+        )
+        adb_helper.swipe(serial, swipe_x, swipe_from_y, swipe_x, swipe_to_y, 1200)
+        _human_delay(1.0)
+
+    return _ok()
+
+
+def _navigate_to_hall_upgrade(
+    serial: str,
+    detector: GameStateDetector,
+    first_hall_tap_swipe: bool = False,
+) -> dict:
     """
     Navigates to the Hall upgrade screen using V2 go_to_construction.
     """
     print(f"[{serial}] Navigating to Hall upgrade screen...")
-    return go_to_construction(serial, detector, "HALL", feature="upgrade")
+    swipe = (115, 250, 115, 360, 500) if first_hall_tap_swipe else None
+    return go_to_construction(
+        serial,
+        detector,
+        "HALL",
+        feature="upgrade",
+        post_base_tap_swipe=swipe,
+    )
 
 
 def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: int = 5,
@@ -4565,9 +5705,25 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
     print(f"[{serial}] {remaining_slots} builder slot(s) available for upgrade.")
 
     # 2. Navigate to Hall upgrade screen
-    hall_result = _navigate_to_hall_upgrade(serial, detector)
+    hall_result = _navigate_to_hall_upgrade(
+        serial,
+        detector,
+        first_hall_tap_swipe=True,
+    )
     if not _is_ok(hall_result):
-        print(f"[{serial}] Could not enter Hall upgrade screen (Hall may be upgrading). Skipping to fallback...")
+        hall_reason = ""
+        if isinstance(hall_result, dict):
+            hall_reason = str(hall_result.get("error") or "").strip()
+        if hall_reason:
+            print(
+                f"[{serial}] Hall upgrade path unavailable ({hall_reason}). "
+                f"Treating Hall as busy/already upgrading and moving to fallback constructions..."
+            )
+        else:
+            print(
+                f"[{serial}] Hall upgrade path unavailable. "
+                f"Treating Hall as busy/already upgrading and moving to fallback constructions..."
+            )
     else:
         _human_delay(1.0)
 
@@ -4580,6 +5736,7 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
             max_depth=max_depth,
             result=result,
             allow_go_paths=True,
+            root_construction="HALL",
         )
 
     # 4. Fallback: if slots remain but Hall paths exhausted, try other constructions
@@ -4600,6 +5757,12 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
                 print(f"[{serial}] Could not reach IN_CITY for {construction_name}. Skipping.")
                 continue
 
+            print(
+                f"[{serial}] Resetting camera after Hall swipe before fallback "
+                f"navigation to {construction_name}..."
+            )
+            reset_position(serial)
+
             # Use V2 go_to_construction to navigate directly to upgrade screen
             fallback_result = go_to_construction(serial, detector, construction_name, feature="upgrade")
             if not _is_ok(fallback_result):
@@ -4617,6 +5780,7 @@ def upgrade_construction(serial: str, detector: GameStateDetector, max_depth: in
                 max_depth=max_depth,
                 result=result,
                 allow_go_paths=False,
+                root_construction=construction_name,
             )
 
             if remaining_slots <= 0:
@@ -4639,6 +5803,7 @@ def _try_upgrade_or_go(
     max_depth: int,
     result: dict,
     allow_go_paths: bool = True,
+    root_construction: str = "HALL",
 ) -> int:
     """
     Inner recursive function for upgrade_construction.
@@ -4717,14 +5882,19 @@ def _try_upgrade_or_go(
         _human_delay(0.8)
         dismiss_promo_popup(serial, detector)
 
-        # Get alliance help after upgrade
-        if depth == 0:
+        # Get alliance help after upgrade.
+        # Only true Hall-root upgrades should tap the Hall coordinates.
+        current_root = str(root_construction or "HALL").upper()
+        if depth == 0 and current_root == "HALL":
             from backend.core.workflow.construction_data import CONSTRUCTION_TAPS
             hall_coords = CONSTRUCTION_TAPS["HALL"][0]
             print(f"[{serial}] Requesting alliance help (Hall @ {hall_coords})...")
             adb_helper.tap(serial, hall_coords[0], hall_coords[1])
         else:
-            print(f"[{serial}] Requesting alliance help...")
+            print(
+                f"[{serial}] Requesting alliance help "
+                f"(root={current_root}, depth={depth})..."
+            )
             adb_helper.tap(serial, 475, 275)
         _human_delay(0.8)
 
@@ -4795,6 +5965,7 @@ def _try_upgrade_or_go(
             max_depth,
             result,
             allow_go_paths=allow_go_paths,
+            root_construction=root_construction,
         )
 
         # If more paths to process AND slots available, go back to Hall
@@ -4877,7 +6048,7 @@ def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
         serial,
         detector,
         ["QUEST_MENU"],
-        timeout_sec=5,
+        timeout_sec=10,
         check_mode="special",
     )
     if not quest_screen:
@@ -4890,7 +6061,7 @@ def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
                 serial,
                 detector,
                 ["QUEST_MENU"],
-                timeout_sec=5,
+                timeout_sec=10,
                 check_mode="special",
             )
         else:
@@ -4948,8 +6119,9 @@ def claim_quest_reward(serial: str, detector: GameStateDetector) -> dict:
 
     # ── Phase 6: Cleanup ──
     print(f"[{serial}] === CLAIM QUEST REWARD COMPLETE — total {total_claimed} reward(s) claimed ===")
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Quest screen")
     return _ok()
 
 
@@ -5042,8 +6214,9 @@ def claim_daily_gift_and_buy_vip_store(serial: str, detector: GameStateDetector)
 
     # ── Phase 5: Cleanup ──
     print(f"[{serial}] VIP Store done — claimed gift + bought {items_bought} item(s).")
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close VIP Store screen")
     return _ok()
 
 
@@ -5101,8 +6274,16 @@ def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: 
     )
     if not merchant:
         print(f"[{serial}] Goblin Merchant not available (on cooldown). Skipping.")
-        adb_helper.press_back(serial)
-        _human_delay(1.0)
+        swipe_duration = random.randint(650, 1150)
+        print(
+            f"[{serial}] Swiping store panel lightly before cleanup "
+            f"(duration={swipe_duration}ms)..."
+        )
+        adb_helper.swipe(serial, 480, 360, 480, 180, swipe_duration)
+        _human_delay(random.uniform(0.8, 1.3))
+        cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+        if not _is_ok(cleanup_result):
+            return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Merchant cooldown screen")
         return _ok(dynamic_cooldown_sec=3600)
 
     _, mx, my = merchant
@@ -5193,8 +6374,9 @@ def buy_merchant_items(serial: str, detector: GameStateDetector, max_refreshes: 
     detector.diagnostic_mode = False
 
     # ── Cleanup ──
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Merchant shop")
     return _ok()
 
 
@@ -5308,10 +6490,9 @@ def claim_daily_vip_reward(serial: str, detector: GameStateDetector) -> dict:
 
     # Phase 5: Cleanup
     print(f"[{serial}] === CLAIM DAILY VIP REWARD COMPLETE ===")
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
-    adb_helper.press_back(serial)
-    _human_delay(1.0)
+    cleanup_result = back_to_lobby(serial, detector, target_lobby="IN-GAME LOBBY (IN_CITY)")
+    if not _is_ok(cleanup_result):
+        return _bubble(cleanup_result, "NAV_LOBBY_UNREACHABLE: Could not close Daily VIP Reward screen")
     return _ok()
 
 

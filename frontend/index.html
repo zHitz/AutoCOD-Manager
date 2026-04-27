@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/css/components.css">
     <link rel="stylesheet" href="/css/animations.css">
     <link rel="stylesheet" href="/css/workflow.css">
-    <link rel="stylesheet" href="/css/report.v2.css?v=6">
+    <link rel="stylesheet" href="/css/report.v2.css?v=12">
 </head>
 
 <body>
@@ -93,6 +93,14 @@
                     <path d="M7 14l4-4 3 3 5-7"></path>
                 </svg>
                 <span>Report</span>
+            </button>
+            <button class="nav-item" data-page="pet-skills" onclick="router.navigate('pet-skills')">
+                <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 3l2.2 4.5 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5-3.6-3.5 5-.7L12 3z"></path>
+                    <path d="M5 21h14"></path>
+                </svg>
+                <span>Pet Skills</span>
             </button>
             <button class="nav-item" data-page="workflow" onclick="router.navigate('workflow')">
                 <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -250,7 +258,8 @@
     <script src="/js/pages/history.js"></script>
     <script src="/js/pages/emulators.js"></script>
     <script src="/js/pages/accounts.js"></script>
-    <script src="/js/pages/report.js?v=5"></script>
+    <script src="/js/pages/report.js?v=10"></script>
+    <script src="/js/pages/pet-skills.js"></script>
     <script src="/js/pages/workflow.js"></script>
     <script src="/js/pages/scheduled.js"></script>
     <script src="/js/pages/settings.js"></script>

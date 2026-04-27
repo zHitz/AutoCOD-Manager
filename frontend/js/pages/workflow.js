@@ -1170,8 +1170,11 @@ const WF3 = {
             cooldown_min: 30,
             limit_min: 45,
             swap_wait_threshold_min: 5,
+            activity_shuffle_enabled: true,
             shutdown_emu_on_long_wait_enabled: true,
             shutdown_emu_wait_threshold_min: 30,
+            legion_preflight_enabled: false,
+            legion_preflight_recall_idle_enabled: true,
             choose_start_account: false,
             skip_cooldown: false,
             continue_on_error: false,
@@ -1193,6 +1196,9 @@ const WF3 = {
         const swapWaitEl = document.getElementById('misc-swap-wait-threshold');
         const shutdownEmuEnabledEl = document.getElementById('misc-shutdown-emu-long-wait-enabled');
         const shutdownEmuThresholdEl = document.getElementById('misc-shutdown-emu-wait-threshold');
+        const activityShuffleEl = document.getElementById('misc-activity-shuffle-enabled');
+        const legionPreflightEnabledEl = document.getElementById('misc-legion-preflight-enabled');
+        const legionPreflightRecallEl = document.getElementById('misc-legion-preflight-recall-idle-enabled');
         const chooseStartEl = document.getElementById('misc-choose-start-account');
         const skipCdEl = document.getElementById('misc-skip-cooldown');
         const continueOnErrEl = document.getElementById('misc-continue-on-error');
@@ -1206,8 +1212,11 @@ const WF3 = {
             cooldown_min: cdEl ? parseInt(cdEl.value) || 0 : 30,
             limit_min: limitEl ? parseInt(limitEl.value) || 0 : 45,
             swap_wait_threshold_min: swapWaitEl ? parseInt(swapWaitEl.value) || 0 : 5,
+            activity_shuffle_enabled: activityShuffleEl ? activityShuffleEl.checked : true,
             shutdown_emu_on_long_wait_enabled: shutdownEmuEnabledEl ? shutdownEmuEnabledEl.checked : true,
             shutdown_emu_wait_threshold_min: shutdownEmuThresholdEl ? parseInt(shutdownEmuThresholdEl.value) || 0 : 30,
+            legion_preflight_enabled: legionPreflightEnabledEl ? legionPreflightEnabledEl.checked : false,
+            legion_preflight_recall_idle_enabled: legionPreflightRecallEl ? legionPreflightRecallEl.checked : true,
             choose_start_account: chooseStartEl ? chooseStartEl.checked : false,
             skip_cooldown: skipCdEl ? skipCdEl.checked : false,
             continue_on_error: continueOnErrEl ? continueOnErrEl.checked : false,
@@ -1248,8 +1257,11 @@ const WF3 = {
                 misc: {
                     cooldown_min: 30,
                     limit_min: 45,
+                    activity_shuffle_enabled: true,
                     shutdown_emu_on_long_wait_enabled: true,
                     shutdown_emu_wait_threshold_min: 30,
+                    legion_preflight_enabled: false,
+                    legion_preflight_recall_idle_enabled: true,
                 }
             };
         }
@@ -2152,6 +2164,20 @@ const WF3 = {
 
             <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
                 <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-activity-shuffle-enabled" onchange="WF3.saveMiscConfig(${groupId})" ${misc.activity_shuffle_enabled !== false ? 'checked' : ''} style="margin-top: 2px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                            <span>🎲</span> Shuffle Workflow Order
+                        </div>
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            Randomize activity order at the start of each account run. Troop-dependent workflows still keep their safety ordering.
+                        </div>
+                    </div>
+                </label>
+            </div>
+
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
                     <input type="checkbox" id="misc-shutdown-emu-long-wait-enabled" onchange="WF3.saveMiscConfig(${groupId}); WF3.renderMiscForGroup(${groupId})" ${misc.shutdown_emu_on_long_wait_enabled !== false ? 'checked' : ''} style="margin-top: 2px;">
                     <div>
                         <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
@@ -2165,6 +2191,31 @@ const WF3 = {
                 <div style="font-size: 12px; margin-top: 6px; padding-left: 24px;">
                     <input type="number" class="acv-input-num" id="misc-shutdown-emu-wait-threshold" value="${misc.shutdown_emu_wait_threshold_min ?? 30}" min="0" onchange="WF3.saveMiscConfig(${groupId})" style="width: 60px;" ${misc.shutdown_emu_on_long_wait_enabled === false ? 'disabled' : ''}> minute(s)
                     <span style="color: var(--muted-foreground); margin-left: 6px;">Close only when same-emulator wait is longer than this.</span>
+                </div>
+            </div>
+
+            <div class="acv-misc-item" style="border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 8px;">
+                <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="misc-legion-preflight-enabled" onchange="WF3.saveMiscConfig(${groupId}); WF3.renderMiscForGroup(${groupId})" ${misc.legion_preflight_enabled ? 'checked' : ''} style="margin-top: 2px;">
+                    <div>
+                        <div style="font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                            <span>🪖</span> Legion Preflight For Gather RSS
+                        </div>
+                        <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                            After account verification, detect current free legions once and cache that number for Gather Resource.
+                        </div>
+                    </div>
+                </label>
+                <div style="margin-top: 8px; padding-left: 24px;">
+                    <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; ${misc.legion_preflight_enabled ? '' : 'opacity: 0.55;'}">
+                        <input type="checkbox" id="misc-legion-preflight-recall-idle-enabled" onchange="WF3.saveMiscConfig(${groupId})" ${misc.legion_preflight_recall_idle_enabled !== false ? 'checked' : ''} ${misc.legion_preflight_enabled ? '' : 'disabled'} style="margin-top: 2px;">
+                        <div>
+                            <div style="font-weight: 600; margin-bottom: 2px; font-size: 12px;">Recall Idle Legions In Preflight</div>
+                            <div style="font-size: 11px; color: var(--muted-foreground); line-height: 1.3;">
+                                Auto-return idle legions left behind by previous workflow errors before Gather Resource starts.
+                            </div>
+                        </div>
+                    </label>
                 </div>
             </div>
             

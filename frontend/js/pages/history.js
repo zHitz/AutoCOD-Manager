@@ -237,19 +237,32 @@ const HistoryPage = {
         return 'debug-card__code--unknown';
     },
 
+    _getDebugCaptureUrl(capturePath) {
+        const rawPath = String(capturePath || '').trim();
+        if (!rawPath) return '';
+        const parts = rawPath.replace(/\\/g, '/').split('debug_captures/');
+        return parts.length > 1 ? `/debug_captures/${parts[1]}` : '';
+    },
+
+    _formatDurationMs(ms) {
+        const totalSec = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+        if (!totalSec) return '0s';
+        const min = Math.floor(totalSec / 60);
+        const sec = totalSec % 60;
+        if (!min) return `${sec}s`;
+        return `${min}m ${sec}s`;
+    },
+
     _renderDebugCard(log) {
         const time = log.created_at ? this.formatVietnamDateTime(log.created_at) : '--';
         const code = log.error_code || 'UNKNOWN';
         const fn = log.function_name || '--';
         const serial = log.serial || '--';
         const isResolved = !!log.is_resolved;
-        const screenshotPath = log.screenshot_path || '';
         const resolvedNote = log.resolved_note || '';
-        let imgUrl = '';
-        if (screenshotPath) {
-            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
-            if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
-        }
+        const imgUrl = this._getDebugCaptureUrl(log.screenshot_path || '');
+        const videoUrl = this._getDebugCaptureUrl(log.video_path || '');
+        const clipBadge = videoUrl ? `<span class="debug-toolbar__pill">Clip ${this._formatDurationMs(log.video_duration_ms || 0)}</span>` : '';
         return `
             <div class="debug-card ${isResolved ? 'debug-card--resolved' : ''}">
                 ${imgUrl ? `<div class="debug-card__image" onclick="HistoryPage.openLightbox('${imgUrl}')"><img src="${imgUrl}" onerror="this.parentElement.style.display='none'" /><button class="debug-card__copy-btn" onclick="event.stopPropagation(); HistoryPage.copyDebugImage('${imgUrl}', this)"><span>Copy</span></button></div>` : `<div class="debug-card__no-image">No screenshot</div>`}
@@ -257,6 +270,7 @@ const HistoryPage = {
                     <div class="debug-card__header">
                         <span class="debug-card__code ${this._getErrorCodeClass(code)}">${code}</span>
                         ${isResolved ? '<span class="debug-card__status">Resolved</span>' : '<span class="debug-card__status debug-card__status--active">Active</span>'}
+                        ${clipBadge}
                         <span class="debug-card__time">${time}</span>
                     </div>
                     <div class="debug-card__message">${log.error_message || 'No message'}</div>
@@ -266,6 +280,7 @@ const HistoryPage = {
                         ${isResolved
                             ? `<button class="btn btn-outline btn-sm" onclick="HistoryPage.unresolveDebugLog(${log.id})">Unresolve</button>`
                             : `<button class="btn btn-primary btn-sm" onclick="HistoryPage.openDebugResolve(${log.id})">Resolve</button>`}
+                        ${videoUrl ? `<button class="btn btn-outline btn-sm" onclick="HistoryPage.openDebugDetails(${log.id})">Watch clip</button>` : ''}
                         <button class="btn btn-outline btn-sm" onclick="HistoryPage.openDebugDetails(${log.id})">View details</button>
                     </div>
                 </div>
@@ -277,12 +292,7 @@ const HistoryPage = {
         const draft = this.state.debugResolveDraft;
         if (!draft) return '';
         const time = draft.created_at ? this.formatVietnamDateTime(draft.created_at) : '--';
-        const screenshotPath = draft.screenshot_path || '';
-        let imgUrl = '';
-        if (screenshotPath) {
-            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
-            if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
-        }
+        const imgUrl = this._getDebugCaptureUrl(draft.screenshot_path || '');
         return `
             <div class="debug-detail-overlay" id="debug-resolve-overlay" role="presentation">
                 <div class="debug-detail-modal debug-resolve-surface" id="debug-resolve-dialog" role="dialog" aria-modal="true" aria-labelledby="debug-resolve-title" onclick="event.stopPropagation()" tabindex="-1">
@@ -338,13 +348,9 @@ const HistoryPage = {
         if (!log) return '';
         const time = log.created_at ? this.formatVietnamDateTime(log.created_at) : '--';
         const resolvedAt = log.resolved_at ? this.formatVietnamDateTime(log.resolved_at) : '--';
-        const screenshotPath = log.screenshot_path || '';
         const isResolved = !!log.is_resolved;
-        let imgUrl = '';
-        if (screenshotPath) {
-            const parts = screenshotPath.replace(/\\/g, '/').split('debug_captures/');
-            if (parts.length > 1) imgUrl = `/debug_captures/${parts[1]}`;
-        }
+        const imgUrl = this._getDebugCaptureUrl(log.screenshot_path || '');
+        const videoUrl = this._getDebugCaptureUrl(log.video_path || '');
         return `
             <div class="debug-detail-overlay ${this.state.debugDetailClosing ? 'is-closing' : ''}" id="debug-detail-overlay" role="presentation">
                 <div class="debug-detail-modal ${this.state.debugDetailClosing ? 'is-closing' : ''}" id="debug-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="debug-detail-title" onclick="event.stopPropagation()" tabindex="-1">
@@ -365,12 +371,14 @@ const HistoryPage = {
                         <span class="debug-card__code ${this._getErrorCodeClass(log.error_code || 'UNKNOWN')}">${this.escapeHtml(log.error_code || 'UNKNOWN')}</span>
                         <span class="debug-detail-code-row__hint">${this.escapeHtml(log.function_name || '--')}</span>
                     </div>
+                    ${videoUrl ? `<div class="debug-detail-video-wrap"><video class="debug-detail-video" controls preload="metadata" src="${videoUrl}"></video></div>` : ''}
                     ${imgUrl ? `<button class="debug-detail-preview" onclick="HistoryPage.openLightbox('${imgUrl}')"><img src="${imgUrl}" alt="Debug screenshot preview"></button>` : ''}
                     <div class="debug-detail-meta-grid">
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Function</span><span class="debug-detail-stat__value">${this.escapeHtml(log.function_name || '--')}</span></div>
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Serial</span><span class="debug-detail-stat__value">${this.escapeHtml(log.serial || '--')}</span></div>
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Activity</span><span class="debug-detail-stat__value">${this.escapeHtml(log.activity_id || '--')}</span></div>
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Created</span><span class="debug-detail-stat__value">${this.escapeHtml(time)}</span></div>
+                        <div class="debug-detail-stat"><span class="debug-detail-stat__label">Clip</span><span class="debug-detail-stat__value">${videoUrl ? this.escapeHtml(this._formatDurationMs(log.video_duration_ms || 0)) : '--'}</span></div>
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Resolved at</span><span class="debug-detail-stat__value">${this.escapeHtml(resolvedAt)}</span></div>
                         <div class="debug-detail-stat"><span class="debug-detail-stat__label">Resolved by</span><span class="debug-detail-stat__value">${this.escapeHtml(log.resolved_by || '--')}</span></div>
                     </div>

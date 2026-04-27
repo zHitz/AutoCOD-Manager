@@ -71,6 +71,14 @@ const AccountsPage = {
         });
     },
 
+    _formatDeltaMagnitude(value) {
+        const abs = Math.abs(Number(value || 0));
+        if (abs >= 1_000_000_000) return (abs / 1_000_000_000).toFixed(1) + 'B';
+        if (abs >= 1_000_000) return (abs / 1_000_000).toFixed(1) + 'M';
+        if (abs >= 1_000) return (abs / 1_000).toFixed(1) + 'K';
+        return abs.toLocaleString();
+    },
+
     _relativeTime(value) {
         const dt = this._toDate(value);
         if (!dt) return 'Never';
@@ -729,7 +737,7 @@ const AccountsPage = {
                     <table class="accounts-table">
                         <thead style="position: sticky; top: 0; z-index: 10;">
                             <tr>
-                                <th class="th-col th-sortable freeze-col-1 stt-col" style="padding-left:14px;z-index:11;" onclick="AccountsPage.sortBy('account_id')"># ${this._sortIndicator('account_id')}</th>
+                                <th class="th-col th-sortable freeze-col-1 stt-col" style="padding-left:14px;z-index:11;" onclick="AccountsPage.sortBy('account_id')" title="Stable account ID, not row order">ID ${this._sortIndicator('account_id')}</th>
                                 <th class="th-col th-sortable freeze-col-2" style="min-width:110px;z-index:11;" onclick="AccountsPage.sortBy('emulator')">Emulator ${this._sortIndicator('emulator')}</th>
                                 <th class="th-col th-sortable freeze-col-3" style="min-width:140px;z-index:11;border-right:2px solid var(--border);" onclick="AccountsPage.sortBy('name')">Name ${this._sortIndicator('name')}</th>
                                 <th class="th-col th-sortable" style="border-left:1px solid var(--border);font-size:11px;" onclick="AccountsPage.sortBy('game_id')">Game ID ${this._sortIndicator('game_id')}</th>
@@ -839,15 +847,7 @@ const AccountsPage = {
                 if (cached.delta[key] === 0) return '<span class="resource-delta neutral" title="No change">•</span>';
                 const v = cached.delta[key];
                 const isUp = v > 0;
-                
-                // Format value
-                const abs = Math.abs(v);
-                let fmt;
-                if (abs >= 1e9) fmt = (abs / 1e9).toFixed(1) + 'B';
-                else if (abs >= 1e6) fmt = (abs / 1e6).toFixed(1) + 'M';
-                else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
-                else fmt = abs.toLocaleString();
-                
+                const fmt = this._formatDeltaMagnitude(v);
                 return `<span class="resource-delta ${isUp ? 'up' : 'down'}" title="${isUp ? '+' : ''}${v.toLocaleString()}">
                             <span class="delta-icon">${isUp ? '↗' : '↘'}</span>${fmt}
                         </span>`;
@@ -1617,12 +1617,7 @@ const AccountsPage = {
 
     _formatDelta(value) {
         if (!value || value === 0) return '';
-        const abs = Math.abs(value);
-        let formatted;
-        if (abs >= 1_000_000_000) formatted = (abs / 1_000_000_000).toFixed(1) + 'B';
-        else if (abs >= 1_000_000) formatted = (abs / 1_000_000).toFixed(1) + 'M';
-        else if (abs >= 1_000) formatted = (abs / 1_000).toFixed(1) + 'K';
-        else formatted = abs.toLocaleString();
+        const formatted = this._formatDeltaMagnitude(value);
         const isUp = value > 0;
         return `<span class="${isUp ? 'delta-up' : 'delta-down'}"><span class="delta-trend-icon">${isUp ? '↗' : '↘'}</span>${formatted}</span>`;
     },
@@ -1748,12 +1743,7 @@ const AccountsPage = {
             const mkDelta = (key) => {
                 if (!delta || !delta[key] || delta[key] === 0) return '<span id="res-delta-' + key + '" class="delta-loading">—</span>';
                 const v = delta[key];
-                const abs = Math.abs(v);
-                let fmt;
-                if (abs >= 1e9) fmt = (abs / 1e9).toFixed(1) + 'B';
-                else if (abs >= 1e6) fmt = (abs / 1e6).toFixed(1) + 'M';
-                else if (abs >= 1e3) fmt = (abs / 1e3).toFixed(1) + 'K';
-                else fmt = abs.toLocaleString();
+                const fmt = this._formatDeltaMagnitude(v);
                 const up = v > 0;
                 return `<span id="res-delta-${key}" class="${up ? 'delta-up' : 'delta-down'}"><span class="delta-trend-icon">${up ? '↗' : '↘'}</span>${fmt}</span>`;
             };
@@ -1827,7 +1817,7 @@ const AccountsPage = {
                     </div>
                     <div class="pet-right">
                         <span class="pet-badge">Special Currency</span>
-                        <span id="res-delta-pet_token" class="pet-delta">${delta && delta.pet_token ? (delta.pet_token > 0 ? '<span class="delta-up">▲ +' + delta.pet_token.toLocaleString() + '</span>' : '<span class="delta-down">▼ ' + delta.pet_token.toLocaleString() + '</span>') : '<span class="delta-loading">—</span>'}</span>
+                        <span id="res-delta-pet_token" class="pet-delta">${mkDelta('pet_token')}</span>
                     </div>
                 </div>
 

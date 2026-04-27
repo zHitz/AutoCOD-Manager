@@ -27,6 +27,19 @@ const API = {
         return res.json();
     },
 
+    async put(path, body = {}) {
+        const res = await fetch(`${this.BASE}${path}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || err.detail || `HTTP Error ${res.status}: ${res.statusText}`);
+        }
+        return res.json();
+    },
+
     // ── Device endpoints ──
     getDevices() { return this.get('/api/devices'); },
     refreshDevices() { return this.post('/api/devices/refresh'); },
@@ -125,6 +138,27 @@ const API = {
         params.set('to', to);
         return this.get(`/api/reports/accounts/events?${params.toString()}`);
     },
+    getReportWorkflowTimeseries({ gameIds, activityId, metric, from, to, bucket, aggregation }) {
+        const params = new URLSearchParams();
+        params.set('game_ids', (gameIds || []).join(','));
+        params.set('activity_id', activityId);
+        params.set('metric', metric || 'run_count');
+        params.set('from', from);
+        params.set('to', to);
+        params.set('bucket', bucket || 'hour');
+        if (aggregation) params.set('aggregation', aggregation);
+        return this.get(`/api/reports/workflows/timeseries?${params.toString()}`);
+    },
+    getReportAccountEventsFiltered({ gameIds, from, to, activityId }) {
+        const params = new URLSearchParams();
+        params.set('game_ids', (gameIds || []).join(','));
+        params.set('from', from);
+        params.set('to', to);
+        if (activityId) params.set('activity_id', activityId);
+        return this.get(`/api/reports/accounts/events?${params.toString()}`);
+    },
+    updateReportDatapoint(payload) { return this.put('/api/reports/accounts/datapoint', payload || {}); },
+    getWorkflowActivityRegistry() { return this.get('/api/workflow/activity-registry'); },
     getReportTargets({ scopeType, scopeId, metric } = {}) {
         const params = new URLSearchParams();
         if (scopeType) params.set('scope_type', scopeType);
@@ -136,6 +170,29 @@ const API = {
     upsertReportTarget(payload) { return this.post('/api/reports/targets', payload || {}); },
     deleteReportTarget(id) {
         return fetch(`/api/reports/targets/${id}`, { method: 'DELETE' }).then(async (res) => {
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || err.detail || `HTTP Error ${res.status}: ${res.statusText}`);
+            }
+            return res.json();
+        });
+    },
+
+    // Pet Skill Analytics
+    getPetSkillSummary() { return this.get('/api/pet-skills/summary'); },
+    analyzePetSkills() { return this.post('/api/pet-skills/analyze'); },
+    getPetSkillReleases(accountId, limit) {
+        const params = new URLSearchParams();
+        if (accountId) params.set('account_id', accountId);
+        if (limit) params.set('limit', String(limit));
+        const query = params.toString();
+        return this.get(`/api/pet-skills/releases${query ? `?${query}` : ''}`);
+    },
+    getPetSkillReleaseDetail(releaseId) {
+        return this.get(`/api/pet-skills/releases/${encodeURIComponent(releaseId)}`);
+    },
+    deletePetSkillRelease(releaseId) {
+        return fetch(`/api/pet-skills/releases/${encodeURIComponent(releaseId)}`, { method: 'DELETE' }).then(async (res) => {
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || err.detail || `HTTP Error ${res.status}: ${res.statusText}`);
@@ -195,6 +252,21 @@ const API = {
         return fetch(`/api/schedules/${id}`, { method: 'DELETE' }).then(r => r.json());
     },
     executeSchedule(id) { return this.post(`/api/schedules/${id}/execute`); },
+    getRssCenterRebuildRequests(limit = 100) {
+        return this.get(`/api/rss-center/rebuild/requests?limit=${limit}`);
+    },
+    runRssCenterRebuildDispatchOnce() {
+        return this.post('/api/rss-center/rebuild/dispatch/run-once');
+    },
+    cancelRssCenterRebuildRequest(id) {
+        return this.post(`/api/rss-center/rebuild/requests/${id}/cancel`);
+    },
+    retryRssCenterRebuildRequest(id) {
+        return this.post(`/api/rss-center/rebuild/requests/${id}/retry`);
+    },
+    getRssCenterRebuildBuilders() {
+        return this.get('/api/rss-center/rebuild/builders');
+    },
 
     // ── APK Management ──
     getApks() { return this.get('/api/apks'); },

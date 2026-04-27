@@ -3,6 +3,7 @@ import time
 from typing import Callable, Coroutine
 from backend.core.workflow import core_actions
 from backend.core.workflow import adb_helper
+from backend.core.workflow.workflow_video_recorder import video_recorder
 from backend.core.workflow.state_detector import GameStateDetector
 from backend.core import full_scan as full_scan_module
 from backend.storage.database import Database, database as _main_db
@@ -44,6 +45,7 @@ async def execute_recipe(
     emulator_name: str,
     steps: list,
     ws_callback: Callable[[dict], Coroutine] = None,
+    persist_debug_log: bool = True,
 ):
     """
     Executes a list of workflow steps sequentially on the given emulator via ADB.
@@ -59,6 +61,8 @@ async def execute_recipe(
     templates_dir = os.path.join(current_dir, "templates")
 
     detector = GameStateDetector(adb_path=config.adb_path, templates_dir=templates_dir)
+    recorder_session_id = ""
+    recorder_meta = {"video_path": "", "duration_ms": 0}
 
     # Set debug context so _fail() can capture screenshots
     core_actions._set_debug_context(serial, detector)
@@ -148,13 +152,22 @@ async def execute_recipe(
     all_ok = True
     _activity_meta = {}  # Collects metadata from the current step result
     fn_id = "unknown"  # Safe default for error reporting
+    activity_id = ""
 
     try:
+        recorder_session_id = video_recorder.start_session(
+            serial=serial,
+            capture_func=lambda: detector.screencap_memory(serial),
+            fps=1.0,
+            buffer_seconds=45,
+        )
+
         # Step Execution Loop
         for i, step in enumerate(steps):
             fn_id = step.get("function_id")
             config = step.get("config") or {}
             _activity_meta = {}
+            activity_id = step.get("activity_id", "") or activity_id
 
             await log(f"[{i + 1}/{total_steps}] Executing {fn_id}...", "run")
             await progress(i, total_steps)
@@ -237,6 +250,9 @@ async def execute_recipe(
             # ── Full Scan ──
             elif fn_id == "scan_full":
                 import asyncio as _aio
+
+                await log("  Resetting city camera before Full Scan...", "info")
+                await asyncio.to_thread(core_actions.reset_position, serial)
 
                 result = await asyncio.to_thread(
                     full_scan_module.start_full_scan,
@@ -549,16 +565,90 @@ async def execute_recipe(
                 farming_mode = str((config or {}).get("farming_mode", "legacy")).lower()
                 resource_type = (config or {}).get("resource_type", "wood")
                 rotation_shuffle = bool((config or {}).get("rotation_shuffle", False))
+                runtime_legion_preflight_enabled = bool(
+                    (config or {}).get("runtime_legion_preflight_enabled", False)
+                )
+                runtime_legion_recall_idle_enabled = bool(
+                    (config or {}).get("runtime_legion_recall_idle_enabled", True)
+                )
+                runtime_legions_free = (config or {}).get("runtime_legions_free")
+                runtime_legion_max_legions = (config or {}).get("runtime_legion_max_legions")
                 legion_resource_plan = [
                     (config or {}).get(f"legion_{idx}_resource", "wood")
                     for idx in range(1, 6)
                 ]
+                try:
+                    latest_scan = await _db.get_emulator_data(serial=serial)
+                except Exception:
+                    latest_scan = None
+                hall_level = int((latest_scan or {}).get("hall_level", 0) or 0)
+                hall_based_max_legions = 5 if hall_level >= 21 else 4
+                max_legions = hall_based_max_legions
+                legion_recheck_result = None
+
+                if runtime_legion_preflight_enabled:
+                    await log(
+                        "  [INFO] Running fresh legion recheck before gather_resource...",
+                        "info",
+                    )
+                    try:
+                        legion_recheck_result = await asyncio.to_thread(
+                            _run_core_action,
+                            core_actions.run_legion_preflight,
+                            serial,
+                            detector,
+                            hall_based_max_legions,
+                            runtime_legion_recall_idle_enabled,
+                        )
+                    except Exception as exc:
+                        await log(
+                            f"  [WARNING] Legion recheck failed before gather_resource: {exc}",
+                            "warn",
+                        )
+                        legion_recheck_result = None
+
+                if isinstance(legion_recheck_result, dict):
+                    runtime_legions_free = legion_recheck_result.get(
+                        "legions_free", runtime_legions_free
+                    )
+                    runtime_legion_max_legions = legion_recheck_result.get(
+                        "max_legions", runtime_legion_max_legions
+                    )
+                    await log(
+                        "  [INFO] Legion recheck result: "
+                        f"free={legion_recheck_result.get('legions_free')}, "
+                        f"idle={legion_recheck_result.get('legions_idle')}, "
+                        f"returning={legion_recheck_result.get('legions_returning')}, "
+                        f"recalled_idle={legion_recheck_result.get('idle_recalled', 0)}, "
+                        f"detected={legion_recheck_result.get('detected_label')}",
+                        "info",
+                    )
+
+                if runtime_legion_preflight_enabled and runtime_legions_free is not None:
+                    try:
+                        free_legions = max(0, int(runtime_legions_free))
+                    except Exception:
+                        free_legions = hall_based_max_legions
+                    max_legions = min(hall_based_max_legions, free_legions)
                 await log(
                     f"  [DEBUG] nav_to_farming config={config}, farming_mode='{farming_mode}', "
                     f"resource_type='{resource_type}', rotation_shuffle={rotation_shuffle}, "
-                    f"legion_resource_plan={legion_resource_plan}",
+                    f"legion_resource_plan={legion_resource_plan}, hall_level={hall_level}, "
+                    f"hall_based_max_legions={hall_based_max_legions}, "
+                    f"runtime_legion_recall_idle_enabled={runtime_legion_recall_idle_enabled}, "
+                    f"runtime_legions_free={runtime_legions_free}, "
+                    f"runtime_legion_max_legions={runtime_legion_max_legions}, "
+                    f"max_legions={max_legions}",
                     "info",
                 )
+
+                if runtime_legion_preflight_enabled and max_legions <= 0:
+                    await log(
+                        "  [INFO] Legion preflight reports 0 free legions. Skipping gather_resource.",
+                        "info",
+                    )
+                    ok = True
+                    continue
 
                 ok = await asyncio.to_thread(
                     _run_core_action,
@@ -569,6 +659,7 @@ async def execute_recipe(
                     resource_type=resource_type,
                     rotation_shuffle=rotation_shuffle,
                     legion_resource_plan=legion_resource_plan,
+                    max_legions=max_legions,
                 )
 
             elif fn_id == "check_mail":
@@ -738,6 +829,11 @@ async def execute_recipe(
                     _run_core_action, core_actions.claim_scout_sentry_post, serial, detector
                 )
 
+            elif fn_id == "nav_to_scout_unknown_area":
+                ok = await asyncio.to_thread(
+                    _run_core_action, core_actions.scout_unknown_area, serial, detector
+                )
+
             elif fn_id == "nav_to_claim_vip_reward":
                 ok = await asyncio.to_thread(
                     _run_core_action, core_actions.claim_daily_vip_reward, serial, detector
@@ -778,21 +874,6 @@ async def execute_recipe(
                 fail_msg = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
                 await log(f"  ✕ {fail_msg}", "err")
 
-                # Fire-and-forget: save debug log to DB
-                try:
-                    asyncio.create_task(
-                        _main_db.save_debug_log(
-                            serial=serial,
-                            error_code=err_reason.split(":")[0].strip() if err_reason else "UNKNOWN",
-                            error_message=err_reason,
-                            function_name=fn_id,
-                            activity_id=step.get("activity_id", ""),
-                            screenshot_path=_activity_meta.get("debug_screenshot", ""),
-                        )
-                    )
-                except Exception:
-                    pass  # Never block workflow for debug logging
-
                 all_ok = False
                 break
 
@@ -809,12 +890,77 @@ async def execute_recipe(
         if not all_ok:
             err_reason = _activity_meta.get("error", "")
             result["error"] = f"{fn_id}: {err_reason}" if err_reason else f"{fn_id} failed"
+            result["error_code"] = err_reason.split(":")[0].strip() if err_reason else "UNKNOWN"
+            if _activity_meta.get("debug_screenshot"):
+                result["debug_screenshot"] = _activity_meta["debug_screenshot"]
         # Propagate dynamic cooldown if any core_action provided it
         if _activity_meta.get("dynamic_cooldown_sec"):
             result["dynamic_cooldown_sec"] = _activity_meta["dynamic_cooldown_sec"]
+        for meta_key in (
+            "rss_center_signal",
+            "rss_center_reason_code",
+            "rss_center_reason_message",
+            "rss_center_requested_resource_type",
+        ):
+            if _activity_meta.get(meta_key):
+                result[meta_key] = _activity_meta[meta_key]
+
+        if not all_ok and recorder_session_id:
+            recorder_meta = await asyncio.to_thread(
+                video_recorder.save_failure_clip,
+                recorder_session_id,
+                result.get("error_code", fn_id),
+            )
+            recorder_session_id = ""
+            if recorder_meta.get("video_path"):
+                result["debug_video"] = recorder_meta["video_path"]
+                result["debug_video_duration_ms"] = recorder_meta.get("duration_ms", 0)
+        elif recorder_session_id:
+            await asyncio.to_thread(video_recorder.discard_session, recorder_session_id)
+            recorder_session_id = ""
+
+        if not all_ok and persist_debug_log:
+            try:
+                asyncio.create_task(
+                    _main_db.save_debug_log(
+                        serial=serial,
+                        error_code=result.get("error_code", "UNKNOWN"),
+                        error_message=_activity_meta.get("error", result.get("error", "")),
+                        function_name=fn_id,
+                        activity_id=activity_id,
+                        screenshot_path=result.get("debug_screenshot", ""),
+                        video_path=result.get("debug_video", ""),
+                        video_duration_ms=result.get("debug_video_duration_ms", 0),
+                    )
+                )
+            except Exception:
+                pass
         return result
 
     except asyncio.CancelledError:
+        if recorder_session_id:
+            recorder_meta = await asyncio.to_thread(
+                video_recorder.save_failure_clip,
+                recorder_session_id,
+                "CANCELLED",
+            )
+            recorder_session_id = ""
+            if persist_debug_log and recorder_meta.get("video_path"):
+                try:
+                    asyncio.create_task(
+                        _main_db.save_debug_log(
+                            serial=serial,
+                            error_code="CANCELLED",
+                            error_message="Execution cancelled",
+                            function_name=fn_id,
+                            activity_id=activity_id,
+                            screenshot_path="",
+                            video_path=recorder_meta.get("video_path", ""),
+                            video_duration_ms=recorder_meta.get("duration_ms", 0),
+                        )
+                    )
+                except Exception:
+                    pass
         if full_scan_module.is_scan_active(emulator_index):
             await log("Cancellation requested. Stopping active Full Scan...", "warn")
             stop_result = await asyncio.to_thread(
@@ -829,6 +975,29 @@ async def execute_recipe(
         await status("ERROR")
         raise
     except Exception as e:
+        if recorder_session_id:
+            recorder_meta = await asyncio.to_thread(
+                video_recorder.save_failure_clip,
+                recorder_session_id,
+                "EXCEPTION",
+            )
+            recorder_session_id = ""
+            if persist_debug_log and recorder_meta.get("video_path"):
+                try:
+                    asyncio.create_task(
+                        _main_db.save_debug_log(
+                            serial=serial,
+                            error_code="EXCEPTION",
+                            error_message=str(e),
+                            function_name=fn_id,
+                            activity_id=activity_id,
+                            screenshot_path="",
+                            video_path=recorder_meta.get("video_path", ""),
+                            video_duration_ms=recorder_meta.get("duration_ms", 0),
+                        )
+                    )
+                except Exception:
+                    pass
         import traceback
         tb = traceback.format_exc()
         await log(f"Exception during execution: {str(e)}\n{tb}", "err")

@@ -359,14 +359,24 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None, scan
             prev = None
             with sqlite3.connect(_config.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
-                    """SELECT s.*, e.emu_index as emulator_index, e.serial, e.name as emulator_name
-                       FROM scan_snapshots s
-                       JOIN emulators e ON s.emulator_id = e.id
-                       WHERE e.emu_index = ?
-                       ORDER BY s.created_at DESC LIMIT 1""",
-                    (emulator_index,),
-                )
+                if game_id:
+                    cursor = conn.execute(
+                        """SELECT s.*, e.emu_index as emulator_index, e.serial, e.name as emulator_name
+                           FROM scan_snapshots s
+                           JOIN emulators e ON s.emulator_id = e.id
+                           WHERE s.game_id = ?
+                           ORDER BY s.created_at DESC LIMIT 1""",
+                        (game_id,),
+                    )
+                else:
+                    cursor = conn.execute(
+                        """SELECT s.*, e.emu_index as emulator_index, e.serial, e.name as emulator_name
+                           FROM scan_snapshots s
+                           JOIN emulators e ON s.emulator_id = e.id
+                           WHERE e.emu_index = ?
+                           ORDER BY s.created_at DESC LIMIT 1""",
+                        (emulator_index,),
+                    )
                 row = cursor.fetchone()
                 if row:
                     prev = dict(row)
@@ -378,11 +388,12 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None, scan
                     for res_row in res_cursor.fetchall():
                         rd = dict(res_row)
                         rtype = rd["resource_type"]
-                        prev[rtype] = rd.get("bag_value", 0)
+                        prev[rtype] = rd.get("total_value", 0)
 
             if prev:
                 prev_hall = prev.get("hall_level", 0)
                 prev_power = prev.get("power", 0)
+                prev_pet_token = prev.get("pet_token", 0)
 
                 if prev_hall > 0 and hall == 0:
                     _log_scan(
@@ -417,6 +428,17 @@ def _scan_worker(emulator_index: int, emulator_name: str, ws_callback=None, scan
                         emulator_name=emulator_name,
                     )
                     parsed_data["market_level"] = prev_market
+
+                if prev_pet_token > 0 and parsed_data.get("pet_token", 0) == 0:
+                    _log_scan(
+                        serial,
+                        "WARNING",
+                        f"Pet token was {prev_pet_token}, new OCR says 0. Keeping previous value.",
+                        step="validating",
+                        emulator_index=emulator_index,
+                        emulator_name=emulator_name,
+                    )
+                    parsed_data["pet_token"] = prev_pet_token
 
                 for key in ["gold", "wood", "ore", "mana"]:
                     prev_val = prev.get(key, 0) or 0

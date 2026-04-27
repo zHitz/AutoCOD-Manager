@@ -180,6 +180,16 @@
     color: var(--indigo-600);
 }
 
+@media (max-width: 900px) {
+    .pet-skill-grid,
+    .pet-skill-detail-grid,
+    .pet-skill-images,
+    .pet-skill-metrics,
+    .pet-skill-facts {
+        grid-template-columns: 1fr !important;
+    }
+}
+
 .stat-card-emerald {
     background: linear-gradient(to bottom right, hsla(160, 84%, 39%, 0.1), hsla(168, 84%, 39%, 0.1));
     border-color: hsla(160, 84%, 39%, 0.2);
@@ -1861,6 +1871,22 @@
     aspect-ratio: 16 / 9;
     object-fit: cover;
     display: block;
+}
+
+.debug-detail-video-wrap {
+    width: 100%;
+    margin-bottom: 16px;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid hsla(215, 20%, 84%, 0.88);
+    background: hsl(220, 10%, 10%);
+}
+
+.debug-detail-video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    display: block;
+    background: hsl(220, 10%, 8%);
 }
 
 .debug-detail-meta-grid {

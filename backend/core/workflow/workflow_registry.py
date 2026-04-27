@@ -550,6 +550,15 @@ FUNCTION_REGISTRY = [
         "params": [],
     },
     {
+        "id": "nav_to_scout_unknown_area",
+        "label": "Scout Unknown Area",
+        "category": "Core Actions",
+        "icon": "🔎",
+        "color": "#6366f1",
+        "description": "Open assist panel and explore unknown scout areas if available",
+        "params": [],
+    },
+    {
         "id": "nav_to_claim_vip_reward",
         "label": "Claim Daily VIP Reward",
         "category": "Core Actions",
@@ -1142,6 +1151,19 @@ ACTIVITY_REGISTRY = [
         ],
         "config_fields": [],
         "defaults": {"cooldown_enabled": True, "cooldown_minutes": 360, "cooldown_minutes_max": 0},
+    },
+    {
+        "id": "scout_unknown_area",
+        "name": "Scout Unknown Area",
+        "icon": "🔎",
+        "description": "Explore unknown scout areas from the assist panel when available",
+        "weight": "light",
+        "steps": [
+            {"function_id": "startup_to_lobby", "config": {}},
+            {"function_id": "nav_to_scout_unknown_area", "config": {}},
+        ],
+        "config_fields": [],
+        "defaults": {"cooldown_enabled": True, "cooldown_minutes": 60, "cooldown_minutes_max": 0},
     },
 ]
 
