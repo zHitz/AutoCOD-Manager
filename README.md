@@ -1,305 +1,322 @@
 # COD Game Automation Manager
 
-Desktop application for managing LDPlayer emulators, running macro scripts, and performing OCR-based scans on game accounts.
+Desktop automation manager for Call of Dragons workflows running on LDPlayer emulators.
 
-**Stack:** FastAPI (backend) + Vanilla JS SPA (frontend) + pywebview (desktop window)
+The current codebase is a Python desktop app that launches a local FastAPI server, serves a vanilla JavaScript SPA, and opens it inside a `pywebview` window when available.
 
----
+## What The App Does
+
+- Discovers and manages LDPlayer emulator instances
+- Runs recorded macro scripts (`.record` files) through ADB replay
+- Executes workflow and bot activities for grouped game accounts
+- Tracks task/checklist progress per account and per day
+- Stores emulator, account, workflow, macro, and execution history in SQLite
+- Runs OCR-based scans and stores scan snapshots
+- Supports scheduled macro execution in a background scheduler
+- Streams live status to the UI through WebSocket events
+
+## Tech Stack
+
+- Backend: FastAPI, Uvicorn, Pydantic, aiosqlite
+- Desktop shell: pywebview
+- Frontend: static HTML/CSS plus vanilla JavaScript SPA
+- OCR and imaging: OpenCV, NumPy, pytesseract
+- Storage: SQLite
+
+## Current Entry Point
+
+The app starts from [main.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/main.py).
+
+Startup flow:
+
+1. Load configuration from `config.yaml`
+2. Start the FastAPI app from [backend/api.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/api.py)
+3. Serve the frontend from [frontend/index.html](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/index.html)
+4. Open the UI in a native `pywebview` window, or fall back to the browser if `pywebview` is missing
 
 ## Quick Start
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+### Requirements
 
-# Run the app
+- Python 3.10+
+- Windows environment with LDPlayer installed
+- LDPlayer ADB available at the path configured in `config.yaml`
+- Tesseract OCR installed if you use OCR features
+
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+### Run
+
+```bash
 python main.py
 ```
 
-Opens a desktop window via pywebview at `http://127.0.0.1:8000`. Falls back to browser if pywebview is not installed.
+By default the server runs on `http://127.0.0.1:8000` and the desktop window loads that local URL.
 
----
+## Configuration
+
+Runtime configuration is loaded from [config.yaml](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/config.yaml) by [backend/config.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/config.py).
+
+Current config fields:
+
+- `app_version`: app version shown by the backend
+- `adb_path`: path to LDPlayer `adb.exe`
+- `tesseract_path`: path to `tesseract.exe`
+- `resolution`: target emulator resolution
+- `coordinate_map`: coordinate map name from `data/coordinate_maps`
+- `work_dir`: working folder for debug output and related runtime files
+- `debug_screenshots`: enable screenshot/debug artifact generation
+- `db_path`: SQLite database path
+- `server_port`: FastAPI port
+
+The default project database path is `data/cod_manager.db`.
+
+OCR API keys are managed through the config endpoints and are resolved from `api_keys_file` settings in code. Relative paths are resolved from the project root.
+
+## Frontend Pages
+
+The SPA router in [frontend/js/app.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/app.js) currently exposes these main screens:
+
+- `dashboard`: overview and device status
+- `task`: task checklist and daily account activity tracking
+- `runner`: macro and scan actions page
+- `history`: execution and data history views
+- `emulators`: LDPlayer instance management
+- `accounts`: account management
+- `workflow`: workflow builder, bot controls, groups, and monitor views
+- `scheduled`: scheduled macro jobs
+- `settings`: app configuration and operational settings
+
+The frontend is no longer a small flat JS app. It now includes layered code under:
+
+- [frontend/js/application](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/application)
+- [frontend/js/domain](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/domain)
+- [frontend/js/infrastructure](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/infrastructure)
+- [frontend/js/shared](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/shared)
+- [frontend/js/pages](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages)
+
+## Backend Overview
+
+The main FastAPI app lives in [backend/api.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/api.py).
+
+Major backend areas:
+
+- [backend/core](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core): emulator, OCR, scheduler, macro replay, scan orchestration
+- [backend/core/workflow](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/workflow): workflow execution, activity registry, templates, bot orchestration, policy logic
+- [backend/storage](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/storage): SQLite schema and persistence helpers
+- [backend/tasks](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/tasks): task queue integration
+- [backend/websocket.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/websocket.py): live event broadcast manager
+
+## Main Functional Areas
+
+### Emulator Management
+
+The app can list, launch, quit, and inspect LDPlayer instances.
+
+Relevant files:
+
+- [backend/core/emulator.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/emulator.py)
+- [backend/core/ldplayer_manager.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/ldplayer_manager.py)
+- [frontend/js/pages/emulators.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages/emulators.js)
+
+### Macro Replay
+
+Macro execution is built around LDPlayer `.record` files and ADB replay.
+
+Relevant files:
+
+- [backend/core/macro_replay.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/macro_replay.py)
+- [frontend/js/pages/task-runner.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages/task-runner.js)
+
+### OCR Scan Pipeline
+
+OCR-based capture and parsing flows live in the core scan modules.
+
+Relevant files:
+
+- [backend/core/full_scan.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/full_scan.py)
+- [backend/core/screen_capture.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/screen_capture.py)
+- [backend/core/ocr_client.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/ocr_client.py)
+- [backend/core/ocr_engine.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/ocr_engine.py)
+
+### Workflow And Bot System
+
+The workflow area is now one of the largest parts of the project. It includes:
+
+- recipe and template management
+- activity registry and group-specific activity configuration
+- sequential bot execution for account groups
+- execution logs, monitoring, and KPI summaries
+
+Relevant files:
+
+- [backend/core/workflow/workflow_registry.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/workflow/workflow_registry.py)
+- [backend/core/workflow/executor.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/workflow/executor.py)
+- [backend/core/workflow/bot_orchestrator.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/workflow/bot_orchestrator.py)
+- [frontend/js/pages/workflow.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages/workflow.js)
+
+### Task Checklist
+
+The task page is backed by daily per-account activity state in SQLite and supports:
+
+- filtering by date and account group
+- activity coverage tracking
+- manual mark done/undo actions
+- account activity history side panel
+- checklist template persistence
+
+Relevant files:
+
+- [frontend/js/pages/task.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages/task.js)
+- [backend/storage/database.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/storage/database.py)
+- [backend/api.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/api.py)
+
+### Scheduling
+
+The scheduler runs in a background thread and currently handles scheduled macro execution.
+
+Relevant files:
+
+- [backend/core/scheduler.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/scheduler.py)
+- [frontend/js/pages/scheduled.js](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/frontend/js/pages/scheduled.js)
+
+## API Surface
+
+The API has grown substantially. Major route groups currently include:
+
+- `/api/devices`
+- `/api/tasks`
+- `/api/reports`
+- `/api/config`
+- `/api/emulators`
+- `/api/macros`
+- `/api/scan`
+- `/api/accounts`
+- `/api/pending-accounts`
+- `/api/schedules`
+- `/api/apks`
+- `/api/workflow`
+- `/api/bot`
+- `/api/monitor`
+- `/api/groups`
+- `/api/execution`
+- `/api/task/checklist`
+- `/api/task/account-history`
+- `/ws`
+
+For the full list, see [backend/api.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/api.py).
+
+## Database
+
+The database layer is implemented in [backend/storage/database.py](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/storage/database.py).
+
+Important tables include:
+
+- `emulators`
+- `scan_snapshots`
+- `scan_resources`
+- `macros`
+- `macro_runs`
+- `task_runs`
+- `task_run_steps`
+- `audit_logs`
+- `accounts`
+- `pending_accounts`
+- `schedules`
+- `account_groups`
+- `account_activity_logs`
+- `task_daily_state`
+- `task_templates`
+- `task_template_items`
 
 ## Project Structure
 
-```
+```text
 UI_MANAGER/
-├── main.py                  # Entry point: starts FastAPI + pywebview
-├── config.yaml              # App config (ADB path, resolution, ports)
-├── requirements.txt         # Python dependencies
-│
-├── backend/                 # FastAPI backend
-│   ├── api.py               # All REST + WebSocket endpoints
-│   ├── config.py            # Config loader (reads config.yaml)
-│   ├── websocket.py         # WebSocketManager for real-time events
-│   ├── core/                # Core logic modules
-│   │   ├── adb_helper.py    # ADB device discovery & commands
-│   │   ├── emulator.py      # EmulatorManager (ADB-based device registry)
-│   │   ├── ldplayer_manager.py  # LDPlayer CLI wrapper (ldconsole.exe)
-│   │   ├── macro_replay.py  # ★ ADB-based macro replay engine
-│   │   ├── navigator.py     # Screen navigation helper
-│   │   ├── ocr_engine.py    # Tesseract OCR wrapper
-│   │   └── validator.py     # Data validation
-│   ├── models/              # Pydantic models
-│   ├── storage/             # SQLite database layer
-│   └── tasks/               # Task queue (background jobs)
-│
-├── frontend/                # Vanilla JS Single Page Application
-│   ├── index.html           # Main HTML (loads all CSS + JS)
-│   ├── css/
-│   │   ├── design-system.css    # CSS variables, tokens, colors
-│   │   ├── layout.css           # Sidebar, header, grid, tab bar
-│   │   ├── components.css       # Cards, badges, buttons, macro cards
-│   │   └── animations.css       # Transitions, keyframes
-│   └── js/
-│       ├── store.js             # ★ Global State Management (Persistence)
-│       ├── app.js               # SPA router, WebSocket wiring
-│       ├── api.js               # API client (fetch wrapper + WS manager)
-│       ├── components/
-│       │   ├── device-card.js   # Device card component
-│       │   ├── notification.js  # NotificationManager (dropdown)
-│       │   └── toast.js         # Toast notifications
-│       └── pages/
-│           ├── dashboard.js     # Dashboard page (Overview & Quick Scans)
-│           ├── accounts.js      # Game Accounts page (Detailed Stats & Grids)
-│           ├── emulators.js     # Emulator management (all instances)
-│           ├── task-runner.js   # Actions page (tabs + macros + scans)
-│           ├── history.js       # History page
-│           └── settings.js      # Settings page
-│
-├── data/                    # Runtime data
-│   └── coordinate_maps/     # OCR coordinate configs per resolution
-│
-└── SAMPLE/                  # Reference design project
+|-- main.py
+|-- config.yaml
+|-- pyproject.toml
+|-- requirements.txt
+|-- backend/
+|   |-- api.py
+|   |-- config.py
+|   |-- websocket.py
+|   |-- core/
+|   |   |-- emulator.py
+|   |   |-- full_scan.py
+|   |   |-- ldplayer_manager.py
+|   |   |-- macro_replay.py
+|   |   |-- scheduler.py
+|   |   `-- workflow/
+|   |-- storage/
+|   `-- tasks/
+|-- frontend/
+|   |-- index.html
+|   |-- loading.html
+|   |-- css/
+|   `-- js/
+|       |-- app.js
+|       |-- api.js
+|       |-- store.js
+|       |-- application/
+|       |-- components/
+|       |-- domain/
+|       |-- infrastructure/
+|       |-- pages/
+|       `-- shared/
+`-- data/
+    |-- cod_manager.db
+    `-- coordinate_maps/
 ```
 
----
+## Development Commands
 
-## Architecture
+Install dependencies:
 
-### Backend (FastAPI)
-
-**Entry Point:** `main.py` → starts Uvicorn server → `backend/api.py` mounts all routes.
-
-**Config:** `config.yaml` → loaded by `backend/config.py` (singleton `config` object). Key fields:
-- `adb_path`: Path to LDPlayer's `adb.exe` (e.g., `C:\LDPlayer\LDPlayer9\adb.exe`)
-- `resolution`: Target emulator resolution (e.g., `960x540`)
-- `server_port`: API port (default 8000)
-
-**WebSocket:** `backend/websocket.py` — `WebSocketManager` with:
-- `broadcast(event: str, data: dict)` — async, sends to all clients
-- `broadcast_sync(event: str, data: dict)` — sync wrapper for use from threads
-
-### Frontend (Vanilla JS SPA)
-
-**Router:** `app.js` manages page navigation. Each page is a JS object with:
-- `render()` → returns HTML string
-- `init()` → called after DOM insertion (async, fetch data)
-- `destroy()` → cleanup (clear intervals, etc.)
-
-**API Client:** `api.js` provides `API` object with methods like:
-- `API.getDevices()`, `API.getAllEmulators()`, `API.getMacros()`
-- `API.runMacro(index, filename)`, `API.launchEmulator(index)`
-
-**WebSocket Client:** `WSManager` in `api.js` auto-reconnects and dispatches events to page handlers via `page.updateFromWS(event, data)`.
-
----
-
-## Key Features
-
-### 1. Emulator Management (`emulators.js` + `ldplayer_manager.py`)
-
-Lists **ALL** LDPlayer instances (online + offline) via `ldconsole.exe list2`.
-
-| API Endpoint              | Method | Description                    |
-|---------------------------|--------|--------------------------------|
-| `/api/emulators/all`      | GET    | List all instances (index, name, running, resolution, DPI) |
-| `/api/emulators/launch`   | POST   | Start instance by `?index=N`   |
-| `/api/emulators/quit`     | POST   | Stop instance by `?index=N`    |
-
-**Frontend:** `emulators.js` displays instances as cards with Start/Stop buttons and 5s auto-refresh polling.
-
-**LDPlayer Index → ADB Serial mapping:**
-```
-ADB serial = "emulator-{5554 + index * 2}"
-Example: index 1 → emulator-5556
+```bash
+pip install -r requirements.txt
 ```
 
----
+Run the app:
 
-### 2. Macro Replay Engine (`macro_replay.py`)
-
-Parses LDPlayer `.record` files and replays touch operations via ADB.
-
-#### How It Works
-
-1. `.record` files are JSON with `operations[]` array containing `PutMultiTouch` events
-2. Each event has `timing` (ms), `points[]` with `{x, y, id, state}`
-3. `state=1` = touch DOWN, `state=0` = touch UP, empty points = release
-4. Engine detects tap vs swipe by comparing DOWN/UP distance (threshold: 10px)
-5. Runs in **background thread** — non-blocking API
-
-#### Coordinate System
-
-```
-.record coordinates = screen_pixels × COORD_SCALE (20)
-Example: record x=17940 → ADB pixel = 17940/20 = 897 (on 960px wide screen)
+```bash
+python main.py
 ```
 
-**Cross-resolution scaling:** If record was made on 960×540 but target is different:
-```python
-actual_x = (record_x / 20) * (target_width / record_width)
+Configured tooling in [pyproject.toml](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/pyproject.toml):
+
+- `pytest`
+- `pyright`
+- `ruff`
+- `mypy`
+
+Typical commands:
+
+```bash
+pytest
+pyright
+ruff check .
+mypy .
 ```
 
-#### API Endpoints
+Note: this repo currently does not include a dedicated Node-based frontend build pipeline.
 
-| Endpoint              | Method | Description                          |
-|-----------------------|--------|--------------------------------------|
-| `/api/macros/list`    | GET    | List all `.record` files             |
-| `/api/macros/info`    | GET    | Record metadata (`?index=N&filename=X`) |
-| `/api/macros/run`     | POST   | Start replay (`?index=N&filename=X`) → background thread |
-| `/api/macros/stop`    | POST   | Stop running replay                  |
-| `/api/macros/status`  | GET    | Status of all running macros         |
+## Important Runtime Notes
 
-#### `.record` File Format
+- The project is Windows-oriented because it depends on LDPlayer tooling paths and ADB usage patterns.
+- Many workflow modules rely on image templates and coordinate maps under [backend/core/workflow/templates](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/workflow/templates) and [data/coordinate_maps](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/data/coordinate_maps).
+- Some workflow actions still contain placeholders, tuning hooks, and debug assets, so not every activity should be assumed production-complete.
+- The startup hook initializes the database, discovers emulators, and starts the scheduler automatically.
 
-```json
-{
-  "operations": [
-    {
-      "timing": 1588,
-      "operationId": "PutMultiTouch",
-      "points": [{"id": 1, "x": 11040, "y": 4380, "state": 1}]
-    }
-  ],
-  "recordInfo": {
-    "loopType": 0,
-    "loopTimes": 1,
-    "circleDuration": 6150,
-    "resolutionWidth": 960,
-    "resolutionHeight": 540
-  }
-}
-```
+## Additional Docs
 
-#### `.record` File Location
-
-```
-C:\LDPlayer\LDPlayer9\vms\operationRecords\*.record
-```
-
----
-
-### 3. Actions Page (`task-runner.js`)
-
-Three-tab layout with shared Activity Feed:
-
-```
-┌────────────────────────────────────────────────┐
-│ [📱 Target Emulators] [🔴 Recorder] [🔍 Scan] │  ← Tab Bar
-├────────────────────────────────────────────────┤
-│ Tab Content (switches per tab)                 │
-├────────────────────────────────────────────────┤
-│ Activity Feed (shared, shows all events)       │
-└────────────────────────────────────────────────┘
-```
-
-**Tab 1 — Target Emulators:** Checkbox list of RUNNING emulators. Selection persists across tabs via `_selectedEmus` Set.
-
-**Tab 2 — Operation Recorder:** Grid of macro `.record` cards with "Run Script" button. When running:
-- Button changes to "Running..." (disabled)
-- Status bar shows spinner + elapsed timer
-- On completion: green checkmark + duration
-
-**Tab 3 — Scan Operations:** 4 scan cards (Profile, Resources, Hall, Full Scan).
-
-**State Flow:**
-1. User selects emulators in Tab 1
-2. Switches to Tab 2 or 3 → target badge shows "✓ N emulator(s) targeted"
-3. Clicks "Run Script" → `API.runMacro(index, filename)` → backend starts thread
-4. Activity Feed logs events with timestamps
-
----
-
-### 4. Full Scan & OCR Pipeline (`full_scan.py` & `ocr_client.py`)
-
-Performs automated data extraction directly from the game screen using ADB screenshots and OCR, saving structured game metrics into the SQLite Database (`cod_manager.db`).
-
-#### Workflow
-1. Orchestrator triggers screen capture (`L` Grayscale, `autocontrast`, `LANCZOS` 4x upscale) via `screen_capture.py`
-2. OCR Client sends the optimized image to high-performance Cloud OCR (api.ocrapi.cloud)
-3. Regex parser extracts fields: `Lord Name`, `Power`, `Hall Level`, `Market Level`, `Pet Tokens`, `Resources (Gold, Wood, Ore, Mana)`
-4. Data is asynchronously saved to `emulator_data` table without blocking the FastAPI event loop.
-
-| Endpoint                  | Method | Description                                      |
-|---------------------------|--------|--------------------------------------------------|
-| `/api/tasks/run`          | POST   | Trigger `full_scan` orchestrator on a device     |
-| `/api/devices`            | GET    | List active devices injected with persistent DB stats |
-
-
----
-
-## CSS Architecture
-
-```
-design-system.css   → CSS variables (--primary, --border, --radius-lg, etc.)
-layout.css          → Page structure (sidebar, header, grids, tab bar)
-components.css      → UI components (cards, badges, buttons, macro status bars)
-animations.css      → @keyframes and transitions
-```
-
-Key CSS classes for the Actions page:
-- `.actions-tabbar` / `.actions-tab` / `.actions-tab.active` — Tab bar
-- `.tab-panel` / `.tab-panel-header` / `.tab-panel-body` — Tab content panels
-- `.emu-check-item` / `.emu-check-item.selected` — Emulator checkboxes
-- `.macro-card` / `.macro-card-status` — Macro script cards
-- `.macro-running-bar` / `.macro-elapsed` — Running state indicator
-- `.macro-done-bar` — Completion indicator
-- `.tab-count` — Badge counter on tab button
-- `.emu-selected-badge` — Target selection badge in Recorder/Scan tabs
-- `.feed-item` / `.feed-dot.active` / `.feed-dot.done` / `.feed-dot.fail` — Activity Feed
-
----
-
-## WebSocket Events
-
-| Event              | Direction    | Data                                    |
-|--------------------|--------------|-----------------------------------------|
-| `device_update`    | Server → UI  | `{serial, status}`                      |
-| `task_started`     | Server → UI  | `{serial, task_type}`                   |
-| `task_progress`    | Server → UI  | `{serial, step, progress}`              |
-| `task_completed`   | Server → UI  | `{serial, task_type, result}`           |
-| `task_failed`      | Server → UI  | `{serial, error}`                       |
-| `macro_started`    | Server → UI  | `{serial, filename, total_ops, duration_ms}` |
-| `macro_progress`   | Server → UI  | `{serial, filename, completed, total}`  |
-| `macro_completed`  | Server → UI  | `{serial, filename, elapsed_ms}`        |
-| `macro_failed`     | Server → UI  | `{serial, filename, error}`             |
-
-Frontend handles these in `TaskRunnerPage.updateFromWS(event, data)` and `app.js` WS dispatcher.
-
----
-
-## Known Issues / TODO
-
-- [ ] **Tab UI consistency**: Some spacing/styling differences between the 3 tabs need polishing
-- [ ] **Responsive**: Tab bar scrolls horizontally on narrow screens but tab content may overflow
-- [ ] **Robust OCR Regions**: Move towards cropped area OCR scanning (`cod_app_sync_raw.py` integration) rather than full-screen text dumps for higher accuracy.
-
----
-
-## Dependencies
-
-```
-fastapi
-uvicorn
-pyyaml
-pillow
-pytesseract
-aiofiles
-pywebview        # Optional, for native desktop window
-```
-
-## External Tools
-
-- **LDPlayer 9** — `ldconsole.exe` and `adb.exe` at path specified in `config.yaml`
-- **Tesseract OCR** — for OCR scan features (path in `config.yaml`)
+- [GUIDE.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/GUIDE.md)
+- [walkthrough.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/walkthrough.md)
+- [update.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/update.md)
+- [release.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/release.md)
+- [backend/core/WORKFLOW_GUIDE.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/WORKFLOW_GUIDE.md)
+- [backend/core/PRODUCTION_GUIDE.md](C:/Users/16lem/.codex/worktrees/8401/UI_MANAGER/backend/core/PRODUCTION_GUIDE.md)
